@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../constants/app_colors.dart';
 import '../../providers/vendor_provider.dart';
-import '../../services/api_service.dart';
 
 class VendorReviewsScreen extends StatefulWidget {
   const VendorReviewsScreen({super.key});
@@ -12,7 +11,6 @@ class VendorReviewsScreen extends StatefulWidget {
 }
 
 class _VendorReviewsScreenState extends State<VendorReviewsScreen> {
-  final ApiService _api = ApiService();
   final _replyCtrl = TextEditingController();
   int? _replyingTo;
 
@@ -32,7 +30,8 @@ class _VendorReviewsScreenState extends State<VendorReviewsScreen> {
 
   Future<void> _submitReply(int reviewId, int productId) async {
     if (_replyCtrl.text.trim().isEmpty) return;
-    final ok = await _api.replyToReview(
+    final api = context.read<VendorProvider>().apiService;
+    final ok = await api.replyToReview(
         reviewId, productId, _replyCtrl.text.trim());
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

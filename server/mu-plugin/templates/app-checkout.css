@@ -1,0 +1,419 @@
+/**
+ * App Checkout CSS — matches Flutter's zzmore.store design system.
+ *
+ * Color palette:
+ *   Indigo:    #1B2A4A
+ *   Gold:      #E67E14
+ *   Coral:     #DD5333
+ *   Cream:     #F8F2E6
+ *   White:     #FFFFFF
+ *   Ink:       #1A1A2E
+ *   InkSoft:   #8E8E93
+ *
+ * Typography:
+ *   Headings:  'Fraunces', serif
+ *   Body:      'Manrope', -apple-system, sans-serif
+ */
+
+/* =========================================================================
+   Reset & Base
+   ========================================================================= */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #F8F2E6;
+    color: #1A1A2E;
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Fraunces', serif;
+    font-weight: 700;
+    color: #1A1A2E;
+    margin-top: 0;
+}
+
+a {
+    color: #E67E14;
+    text-decoration: none;
+}
+
+/* =========================================================================
+   Main Content
+   ========================================================================= */
+.app-checkout-main {
+    padding: 20px 16px;
+    max-width: 720px;
+    margin: 0 auto;
+}
+
+.app-checkout-container {
+    /* WooCommerce checkout content renders here */
+}
+
+/* =========================================================================
+   WooCommerce Checkout Form Overrides
+   ========================================================================= */
+
+/* --- Form rows / columns --- */
+.woocommerce-checkout .col2-set .col-1,
+.woocommerce-checkout .col2-set .col-2 {
+    float: none;
+    width: 100%;
+    max-width: 100%;
+}
+
+/* --- Inputs --- */
+.woocommerce .input-text,
+.woocommerce select,
+.select2-container .select2-selection--single,
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+    border: 1.5px solid #D1D5DB !important;
+    border-radius: 10px !important;
+    padding: 12px 14px !important;
+    font-size: 14px !important;
+    font-family: 'Manrope', sans-serif !important;
+    background: #FFFFFF !important;
+    color: #1A1A2E !important;
+    min-height: 48px;
+    line-height: 1.5 !important;
+}
+.woocommerce .input-text:focus,
+.woocommerce select:focus {
+    border-color: #E67E14 !important;
+    box-shadow: 0 0 0 3px rgba(230, 126, 20, 0.15) !important;
+    outline: none !important;
+}
+.woocommerce .input-text::placeholder {
+    color: #8E8E93;
+}
+
+/* --- Labels --- */
+.woocommerce form .form-row label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1A1A2E;
+    margin-bottom: 4px;
+}
+.woocommerce form .form-row label .required {
+    color: #DD5333;
+}
+
+/* --- Shipping / Billing sections --- */
+.woocommerce-billing-fields h3,
+.woocommerce-shipping-fields h3,
+#order_review_heading {
+    font-family: 'Fraunces', serif;
+    font-size: 18px;
+    font-weight: 700;
+    color: #1B2A4A;
+    margin-bottom: 16px;
+    padding-bottom: 0;
+}
+
+/* --- Order review table --- */
+.woocommerce-checkout-review-order-table {
+    border: none !important;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #FFFFFF;
+    box-shadow: 0 1px 4px rgba(27, 42, 74, 0.04);
+}
+.woocommerce-checkout-review-order-table th {
+    background: #F8F2E6;
+    font-weight: 700;
+    font-size: 13px;
+    color: #1B2A4A;
+    padding: 12px 14px;
+    text-transform: none;
+    border: none;
+}
+.woocommerce-checkout-review-order-table td {
+    padding: 10px 14px;
+    font-size: 14px;
+    color: #1A1A2E;
+    border-top: 1px solid rgba(27, 42, 74, 0.04);
+    background: #FFFFFF;
+}
+.woocommerce-checkout-review-order-table tfoot th {
+    font-weight: 600;
+    color: #1A1A2E;
+    background: #F8F2E6;
+}
+.woocommerce-checkout-review-order-table tfoot td {
+    font-weight: 700;
+    color: #1A1A2E;
+}
+.woocommerce-checkout-review-order-table .order-total th {
+    font-size: 16px;
+    color: #1B2A4A;
+}
+.woocommerce-checkout-review-order-table .order-total td {
+    font-size: 18px;
+    color: #E67E14;
+    font-weight: 700;
+}
+
+/* --- Cart item thumbnails --- */
+.woocommerce-checkout-review-order-table .product-name img {
+    border-radius: 8px !important;
+    max-width: 56px !important;
+}
+
+/* --- Coupon form --- */
+.woocommerce-form-coupon-toggle {
+    margin-bottom: 12px;
+}
+.woocommerce-form-coupon-toggle .woocommerce-info {
+    background: rgba(27, 42, 74, 0.04);
+    border: none;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: #1A1A2E;
+}
+.woocommerce-form-coupon-toggle .woocommerce-info::before {
+    color: #E67E14;
+}
+.woocommerce-form-coupon {
+    background: #FFFFFF;
+    border: 1px solid rgba(27, 42, 74, 0.06);
+    border-radius: 14px;
+    padding: 16px !important;
+    margin-bottom: 16px !important;
+}
+
+/* --- Payment methods --- */
+#payment {
+    background: #FFFFFF !important;
+    border-radius: 14px !important;
+    border: none !important;
+    box-shadow: 0 1px 4px rgba(27, 42, 74, 0.04);
+}
+#payment ul.payment_methods {
+    padding: 14px !important;
+    border-bottom: 1px solid rgba(27, 42, 74, 0.06) !important;
+}
+#payment ul.payment_methods li {
+    padding: 8px 0;
+}
+#payment ul.payment_methods li input[type="radio"] {
+    accent-color: #E67E14;
+}
+#payment div.payment_box {
+    background: #F8F2E6 !important;
+    border-radius: 10px !important;
+    font-size: 13px;
+    color: #1A1A2E;
+}
+#payment div.payment_box::before {
+    border-bottom-color: #F8F2E6 !important;
+}
+#payment div.form-row.place-order {
+    padding: 16px 14px !important;
+    background: #FFFFFF !important;
+    border-radius: 0 0 14px 14px !important;
+}
+
+/* =========================================================================
+   Buttons
+   ========================================================================= */
+.woocommerce #place_order,
+.woocommerce button.button.alt,
+.woocommerce a.button.alt,
+.woocommerce input.button.alt {
+    background: #E67E14 !important;
+    color: #FFFFFF !important;
+    font-family: 'Manrope', sans-serif !important;
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    padding: 16px 32px !important;
+    border-radius: 14px !important;
+    border: none !important;
+    width: 100%;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+    transition: background 0.2s ease;
+    min-height: 52px;
+}
+.woocommerce #place_order:hover,
+.woocommerce button.button.alt:hover {
+    background: #D47212 !important;
+}
+
+/* Secondary buttons */
+.woocommerce button.button:not(.alt),
+.woocommerce a.button:not(.alt) {
+    background: #FFFFFF !important;
+    color: #1B2A4A !important;
+    border: 1.5px solid #1B2A4A !important;
+    font-family: 'Manrope', sans-serif !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    padding: 12px 20px !important;
+    border-radius: 12px !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+}
+
+/* Apply coupon button */
+.woocommerce-form-coupon .button {
+    background: #E67E14 !important;
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+    border-radius: 10px !important;
+    border: none !important;
+    padding: 12px 20px !important;
+}
+
+/* =========================================================================
+   Order Received Page
+   ========================================================================= */
+.woocommerce-order-received .woocommerce-thankyou-order-received {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: #10B981;
+    margin-bottom: 24px;
+}
+
+.woocommerce-order-received .woocommerce-order-overview {
+    background: #FFFFFF;
+    border-radius: 14px;
+    padding: 16px;
+    border: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+}
+.woocommerce-order-received .woocommerce-order-overview li {
+    border: none;
+    font-size: 14px;
+    color: #1A1A2E;
+    padding: 0;
+    margin: 0;
+}
+.woocommerce-order-received .woocommerce-order-overview li strong {
+    font-weight: 700;
+    color: #1B2A4A;
+}
+
+.woocommerce-order-received .woocommerce-table {
+    background: #FFFFFF;
+    border-radius: 14px;
+    overflow: hidden;
+    border: none;
+}
+.woocommerce-order-received .woocommerce-table th {
+    background: #F8F2E6;
+    font-weight: 700;
+    color: #1B2A4A;
+    font-size: 13px;
+    padding: 12px 14px;
+    border: none;
+}
+.woocommerce-order-received .woocommerce-table td {
+    padding: 10px 14px;
+    font-size: 14px;
+    border-top: 1px solid rgba(27, 42, 74, 0.04);
+}
+
+/* =========================================================================
+   Messages / Notices
+   ========================================================================= */
+.woocommerce-error,
+.woocommerce-info,
+.woocommerce-message {
+    background: #FFFFFF !important;
+    border: none !important;
+    border-radius: 10px !important;
+    padding: 14px 16px !important;
+    font-size: 14px !important;
+    font-family: 'Manrope', sans-serif !important;
+    box-shadow: 0 1px 4px rgba(27, 42, 74, 0.04);
+}
+.woocommerce-error::before {
+    color: #DD5333 !important;
+}
+.woocommerce-message::before {
+    color: #10B981 !important;
+}
+.woocommerce-error {
+    border-left: 4px solid #DD5333 !important;
+}
+.woocommerce-message {
+    border-left: 4px solid #10B981 !important;
+}
+.woocommerce-info {
+    border-left: 4px solid #1B2A4A !important;
+}
+
+/* =========================================================================
+   Select2 Overrides (WooCommerce dropdowns)
+   ========================================================================= */
+.select2-container .select2-selection--single {
+    border: 1.5px solid #D1D5DB !important;
+    border-radius: 10px !important;
+    height: 48px !important;
+    padding: 10px 12px !important;
+    background: #FFFFFF !important;
+}
+.select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 46px !important;
+}
+.select2-dropdown {
+    border: 1.5px solid #D1D5DB !important;
+    border-radius: 10px !important;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(27, 42, 74, 0.1);
+    font-family: 'Manrope', sans-serif !important;
+}
+
+/* =========================================================================
+   Shipping methods
+   ========================================================================= */
+.woocommerce-shipping-methods li {
+    margin-bottom: 6px;
+}
+.woocommerce-shipping-methods input[type="radio"] {
+    accent-color: #E67E14;
+}
+
+/* =========================================================================
+   Terms & Conditions
+   ========================================================================= */
+.woocommerce-terms-and-conditions-wrapper {
+    font-size: 13px;
+    color: #8E8E93;
+}
+.woocommerce-terms-and-conditions-wrapper input[type="checkbox"] {
+    accent-color: #E67E14;
+}
+
+/* =========================================================================
+   Mobile Responsive
+   ========================================================================= */
+@media (max-width: 480px) {
+    .app-checkout-main {
+        padding: 12px 10px;
+    }
+    .woocommerce #place_order {
+        font-size: 15px !important;
+        padding: 14px 16px !important;
+    }
+    .woocommerce-checkout-review-order-table td,
+    .woocommerce-checkout-review-order-table th {
+        padding: 8px 10px;
+        font-size: 13px;
+    }
+}

@@ -4,6 +4,7 @@ import '../constants/app_colors.dart';
 import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/api_service.dart';
+import '../services/storage_service.dart';
 import 'main_screen.dart';
 import 'vendor/vendor_dashboard_screen.dart';
 import 'auth/vendor_register_screen.dart';
@@ -35,7 +36,7 @@ class ProfileScreen extends StatelessWidget {
                       {'icon': Icons.credit_card_outlined, 'label': 'Payment methods', 'route': 'payment'},
                       {'icon': Icons.person_outline, 'label': 'My Account', 'route': 'my_account'},
                       {'icon': Icons.settings_outlined, 'label': 'Settings', 'route': 'settings'},
-                      // Only show Vendor Dashboard for verified vendor accounts
+                      // Vendor Dashboard for verified vendor accounts
                       if (authProvider.isVendor)
                         {'icon': Icons.dashboard_outlined, 'label': 'Vendor Dashboard', 'route': 'vendor_dashboard'},
                     ].map((item) => _buildMenuItem(context, item)),
@@ -488,6 +489,8 @@ class _SavedVendorsPageState extends State<SavedVendorsPage> {
   List<Map<String, dynamic>> _vendors = [];
   bool _isLoading = true;
 
+  final StorageService _storage = StorageService();
+
   @override
   void initState() {
     super.initState();
@@ -496,15 +499,31 @@ class _SavedVendorsPageState extends State<SavedVendorsPage> {
 
   Future<void> _loadSavedVendors() async {
     try {
+      final savedIds = await _storage.getSavedVendorIds();
+      if (savedIds.isEmpty) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
       final api = ApiService();
-      final stores = await api.getDokanStores(perPage: 20);
+      final List<Map<String, dynamic>> vendors = [];
+      for (final id in savedIds) {
+        try {
+          final store = await api.getDokanStore(id);
+          if (store != null) vendors.add(store);
+        } catch (_) {
+          // Skip vendors that fail to load (store may have been deleted)
+        }
+      }
+
       if (mounted) {
         setState(() {
-          _vendors = stores.take(10).toList();
+          _vendors = vendors;
           _isLoading = false;
         });
       }
     } catch (e) {
+      debugPrint('[SavedVendors] Error: $e');
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -818,7 +837,6 @@ class _LoginPageState extends State<LoginPage> {
           const SnackBar(content: Text('Signed in successfully!'), backgroundColor: AppColors.goldColor),
         );
         Navigator.pop(context);
-        // If vendor login, open vendor dashboard
         if (_isVendorLogin) {
           Navigator.push(context,
               MaterialPageRoute(builder: (_) => const VendorDashboardScreen()));

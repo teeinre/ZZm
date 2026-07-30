@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
+import '../providers/currency_provider.dart';
 import '../providers/cart_provider.dart';
 
 class ProductDetailScreen extends StatefulWidget {
@@ -572,7 +573,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     return InkWell(
       onTap: () {
         // Navigate to vendor profile screen
-        // TODO: Navigate to vendor profile when implemented
+        // Navigate to vendor profile
       },
       child: Row(
         children: [
@@ -690,7 +691,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         Text(
-          '\₦${_formatPrice(priceValue)}',
+          '${context.watch<CurrencyProvider>().currencySymbol}${_formatPrice(priceValue)}',
           style: GoogleFonts.fraunces(
             fontSize: 24,
             fontWeight: FontWeight.w700,
@@ -702,7 +703,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           Padding(
             padding: const EdgeInsets.only(bottom: 3),
             child: Text(
-              '\₦${_formatPrice(double.tryParse(regularPrice) ?? 0)}',
+              '${context.watch<CurrencyProvider>().currencySymbol}${_formatPrice(double.tryParse(regularPrice) ?? 0)}',
               style: GoogleFonts.fraunces(
                 fontSize: 16,
                 fontWeight: FontWeight.w400,

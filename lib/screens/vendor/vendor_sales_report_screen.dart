@@ -150,7 +150,7 @@ class _VendorSalesReportScreenState extends State<VendorSalesReportScreen>
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          // Sales chart placeholder
+          // Sales trend chart
           Container(
             width: double.infinity,
             height: 200,

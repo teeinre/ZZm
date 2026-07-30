@@ -24,14 +24,33 @@ class ProductsProvider with ChangeNotifier {
     required this.hiveService,
   });
 
-  List<Product> get products => _products;
-  List<cat_model.Category> get categories => _categories;
+  List<Product> get products => _filterExcluded(_products);
+  List<cat_model.Category> get categories => _filterUncategorized(_categories);
+
+  // ── Helpers ──
+
+  /// Remove the WooCommerce default "Uncategorized" category (slug=uncategorized)
+  /// from any category list.
+  List<cat_model.Category> _filterUncategorized(List<cat_model.Category> cats) {
+    return cats.where((c) => c.slug != 'uncategorized').toList();
+  }
   bool get isLoading => _isLoading;
   bool get isLoadingMore => _isLoadingMore;
   String? get errorMessage => _errorMessage;
   bool get hasMore => _hasMore;
   String? get selectedCategory => _selectedCategory;
   bool get initialized => _initialized;
+
+  /// Filters out products from excluded vendor stores.
+  List<Product> _filterExcluded(List<Product> list) {
+    if (ApiConstants.excludedVendorNames.isEmpty) return list;
+    return list.where((p) {
+      final vendorName = p.vendorName?.toLowerCase() ?? '';
+      return !ApiConstants.excludedVendorNames.any(
+        (excluded) => vendorName.contains(excluded.toLowerCase()),
+      );
+    }).toList();
+  }
 
   Future<void> loadCategories({bool force = false}) async {
     if (_categories.isNotEmpty && !force) return;
@@ -40,17 +59,17 @@ class ProductsProvider with ChangeNotifier {
     try {
       final cachedCategories = hiveService.getCachedCategories();
       if (cachedCategories.isNotEmpty) {
-        _categories = cachedCategories;
+        _categories = _filterUncategorized(cachedCategories);
         notifyListeners();
       }
       final categories = await apiService.getCategories(perPage: 100);
-      _categories = categories;
-      await hiveService.cacheCategories(categories);
+      _categories = _filterUncategorized(categories);
+      await hiveService.cacheCategories(_categories);
       _errorMessage = null;
     } catch (e) {
       _errorMessage = e.toString();
       if (_categories.isEmpty) {
-        _categories = hiveService.getCachedCategories();
+        _categories = _filterUncategorized(hiveService.getCachedCategories());
       }
     }
     _isLoading = false;
@@ -75,23 +94,25 @@ class ProductsProvider with ChangeNotifier {
         category: _selectedCategory,
         search: _searchQuery,
       );
-      if (freshProducts.length < ApiConstants.defaultPerPage) {
-        _hasMore = false;
-      }
+      // Filter out excluded vendor products before storing
+      final filtered = _filterExcluded(freshProducts);
+      // Check pagination on original count to avoid premature `hasMore = false`
+      // when an entire page gets filtered out
       if (_currentPage == 1) {
-        _products = freshProducts;
-        await hiveService.cacheProducts(freshProducts);
+        _products = filtered;
+        await hiveService.cacheProducts(filtered);
       } else {
-        _products.addAll(freshProducts);
+        _products.addAll(filtered);
       }
       _currentPage++;
+      _hasMore = freshProducts.length >= ApiConstants.defaultPerPage;
       _initialized = true;
       _errorMessage = null;
     } catch (e) {
       _errorMessage = e.toString();
       // Only fall back to cache if we haven't loaded anything yet
       if (_products.isEmpty) {
-        _products = hiveService.getCachedProducts();
+        _products = _filterExcluded(hiveService.getCachedProducts());
         _initialized = true;
       }
     }
@@ -119,11 +140,9 @@ class ProductsProvider with ChangeNotifier {
         category: _selectedCategory,
         search: _searchQuery,
       );
-      if (moreProducts.length < ApiConstants.defaultPerPage) {
-        _hasMore = false;
-      }
-      _products.addAll(moreProducts);
+      _products.addAll(_filterExcluded(moreProducts));
       _currentPage++;
+      _hasMore = moreProducts.length >= ApiConstants.defaultPerPage;
     } catch (e) {
       _errorMessage = e.toString();
     }

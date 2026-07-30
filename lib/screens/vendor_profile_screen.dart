@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../constants/app_colors.dart';
 import '../services/api_service.dart';
+import '../services/storage_service.dart';
 import '../models/product.dart';
 import '../widgets/product_tile.dart';
 
@@ -25,6 +26,7 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
 
   // Vendor data
   Map<String, dynamic>? _vendorData;
+  int? _vendorUserId;
   bool _isLoadingVendor = true;
   String? _vendorError;
 
@@ -34,6 +36,7 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
 
   // Follow state
   bool _isFollowing = false;
+  final StorageService _storage = StorageService();
 
   // Review form
   final TextEditingController _reviewController = TextEditingController();
@@ -45,7 +48,13 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
+    _loadFollowState();
     _loadVendorData();
+  }
+
+  Future<void> _loadFollowState() async {
+    final saved = await _storage.isVendorSaved(widget.vendorId);
+    if (mounted) setState(() => _isFollowing = saved);
   }
 
   @override
@@ -66,8 +75,10 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
       final data = await _apiService.getDokanStore(widget.vendorId);
       if (!mounted) return;
       if (data != null) {
+        final uid = data['user_id'];
         setState(() {
           _vendorData = data;
+          _vendorUserId = uid is int ? uid : int.tryParse(uid?.toString() ?? '');
           _isLoadingVendor = false;
         });
         _loadProducts();
@@ -89,7 +100,44 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   Future<void> _loadProducts() async {
     setState(() => _isLoadingProducts = true);
     try {
-      final products = await _apiService.getVendorProducts(widget.vendorId);
+      // Use Dokan REST API store products endpoint (proper vendor scoping)
+      List<Product> products = await _apiService.getDokanStoreProducts(
+        widget.vendorId,
+        perPage: 50,
+      );
+
+      // Fallback to author-based WC API
+      if (products.isEmpty) {
+        final uid = _vendorUserId ?? widget.vendorId;
+        if (uid != null && uid > 0) {
+          products = await _apiService.getVendorProducts(
+            widget.vendorId,
+            authorUserId: uid,
+            perPage: 50,
+          );
+        }
+      }
+
+      // Ultimate fallback: vendor-api.php
+      if (products.isEmpty) {
+        final raw = await _apiService.getVendorApiProducts(perPage: 50);
+        products = raw.where((p) => p['id'] != null).map<Product>((p) => Product(
+          id: int.tryParse(p['id']?.toString() ?? '') ?? 0,
+          name: p['name']?.toString() ?? '',
+          price: p['price']?.toString() ?? '0',
+          regularPrice: p['regular_price']?.toString(),
+          salePrice: p['sale_price']?.toString(),
+          images: _parseImageUrls(p['images']),
+          onSale: p['on_sale'] == true,
+          inStock: p['stock_status']?.toString() != 'outofstock',
+          stockQuantity: int.tryParse(p['stock_quantity']?.toString() ?? '') ?? 0,
+          ratingCount: int.tryParse(p['rating_count']?.toString() ?? '') ?? 0,
+          rating: double.tryParse(p['average_rating']?.toString() ?? ''),
+          shortDescription: p['short_description']?.toString() ?? '',
+          categories: const [],
+        )).toList();
+      }
+
       if (!mounted) return;
       setState(() {
         _products = products;
@@ -99,6 +147,17 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
       if (!mounted) return;
       setState(() => _isLoadingProducts = false);
     }
+  }
+
+  List<String> _parseImageUrls(dynamic images) {
+    if (images == null) return [];
+    if (images is List) {
+      return images.map((i) {
+        if (i is Map) return i['src']?.toString() ?? '';
+        return i.toString();
+      }).where((s) => s.isNotEmpty).toList();
+    }
+    return [];
   }
 
   // ─── Helpers ───
@@ -1176,7 +1235,7 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   // ─── Live Tab ───
 
   Widget _buildLiveTab() {
-    // Placeholder for live stream state – would come from vendor API/meta
+    // Live stream state from vendor API/meta
     final bool isLive = _vendorData?['is_live'] == true;
     final String streamTitle =
         _vendorData?['live_title']?.toString() ?? '$_storeName Live';
@@ -1645,8 +1704,15 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
 
   Widget _buildFollowButton() {
     return GestureDetector(
-      onTap: () {
-        setState(() => _isFollowing = !_isFollowing);
+      onTap: () async {
+        final newState = !_isFollowing;
+        setState(() => _isFollowing = newState);
+        if (newState) {
+          await _storage.saveVendorFollow(widget.vendorId);
+        } else {
+          await _storage.removeVendorFollow(widget.vendorId);
+        }
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(_isFollowing

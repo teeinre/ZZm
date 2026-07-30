@@ -3,19 +3,19 @@ workflows:
   build-ios:
     name: Build iOS (ZZmore Store)
     environment:
-      flutter: stable          # uses latest stable Flutter
-      xcode: latest            # uses latest Xcode
+      flutter: stable
+      xcode: latest
       cocoapods: default
     scripts:
       - name: Install dependencies
         script: flutter pub get
-      - name: Build iOS (without signing - test build)
+      - name: Build iOS IPA
         script: |
-          flutter build ios --no-codesign --release
+          flutter build ipa --release
     artifacts:
       - build/ios/ipa/*.ipa
 
-  # ── Android Build (optional, for reference) ──
+  # ── Android Build ──
   build-android:
     name: Build Android (ZZmore Store)
     environment:

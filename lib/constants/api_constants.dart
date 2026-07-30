@@ -27,8 +27,12 @@ class ApiConstants {
   static const String storeApiBase = '$baseUrl/wc/store/v1';
   static const String storeCartEndpoint = '$storeApiBase/cart';
   static const String storeCartAddItemEndpoint = '$storeApiBase/cart/add-item';
+  static const String storeCartUpdateItemEndpoint = '$storeApiBase/cart/update-item';
+  static const String storeCartRemoveItemEndpoint = '$storeApiBase/cart/remove-item';
   static const String storeCartUpdateCustomerEndpoint = '$storeApiBase/cart/update-customer';
   static const String storeCartSelectShippingRateEndpoint = '$storeApiBase/cart/select-shipping-rate';
+  static const String storeCartApplyCouponEndpoint = '$storeApiBase/cart/apply-coupon';
+  static const String storeCartRemoveCouponEndpoint = '$storeApiBase/cart/remove-coupon';
   static const String storeCheckoutEndpoint = '$storeApiBase/checkout';
 
   // WooCommerce Analytics (used by Dokan vendor dashboard — scoped to authenticated vendor)
@@ -40,6 +44,36 @@ class ApiConstants {
   // WooCommerce shipping zones
   static const String shippingZonesEndpoint = '$wcApiBase/shipping/zones';
   static const String shippingMethodsEndpoint = '$wcApiBase/shipping_methods';
+
+  // Live Streams (Dokan Live Stream module + App bridge)
+  static const String dokanLiveStreamsEndpoint = '$dokanV1Base/livestreams';
+  static const String dokanLiveStreamsAltEndpoint = '$dokanV1Base/live-streams';
+  static const String appLivestreamsEndpoint = '$appV1Base/livestreams';
+
+  // Push Notifications (device token registration)
+  static const String registerDeviceEndpoint = '$appV1Base/register-device';
+  static const String unregisterDeviceEndpoint = '$appV1Base/unregister-device';
+
+  // Woo Report Plugin (custom vendor reporting)
+  static const String wooReportBase = '$baseUrl/woo-report/v1';
+  static const String wooReportVendorStats = '$wooReportBase/vendor-stats';
+  static const String wooReportDashboard = '$wooReportBase/dashboard';
+
+  // Vendor API bypass (vendor-api.php — bypasses REST blockage)
+  // Must point to the WordPress root, NOT under /wp-json/
+  static const String vendorApiBase = 'https://zzmore.store/vendor-api.php';
+
+  // App Bridge (mu-plugin: zzmore-app-checkout.php)
+  static const String appV1Base = '$baseUrl/app/v1';
+
+  // ── Product Exclusion ──
+  /// Vendor store names/slugs whose products should be hidden from customer-facing views.
+  static const List<String> excludedVendorNames = [
+    'zzmore-wholesale',
+  ];
+  static const String appPrepareCheckoutEndpoint = '$appV1Base/prepare-checkout';
+  static const String appEnterCheckoutEndpoint = '$appV1Base/enter-checkout';
+  static const String appOrderEndpoint = '$appV1Base/order'; // append /{id}?key=xxx
 
   // WooCommerce API credentials
   static const String consumerKey = 'ck_537f3489368abb26297c733faf5dafb8b659a411';

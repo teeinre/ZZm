@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../constants/app_colors.dart';
 import '../../providers/vendor_provider.dart';
+import '../../providers/currency_provider.dart';
 import '../../services/api_service.dart';
 
 class VendorProductsScreen extends StatefulWidget {
@@ -17,12 +18,17 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
   String _searchQuery = '';
   String _filterStatus = 'all';
 
+  String get _currency => context.watch<CurrencyProvider>().currencySymbol;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final vendor = context.read<VendorProvider>();
-      vendor.loadVendorProducts(vendorId: vendor.vendorId ?? 0);
+      final vid = vendor.vendorId;
+      if (vid != null && vid > 0) {
+        vendor.loadVendorProducts(vendorId: vid);
+      }
     });
   }
 
@@ -76,7 +82,12 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
                         ? _buildEmptyState()
                         : RefreshIndicator(
                             color: AppColors.goldColor,
-                            onRefresh: () => vendor.loadVendorProducts(),
+                            onRefresh: () async {
+                              final vid = vendor.vendorId;
+                              if (vid != null && vid > 0) {
+                                await vendor.loadVendorProducts(vendorId: vid);
+                              }
+                            },
                             child: ListView.separated(
                               padding: const EdgeInsets.all(16),
                               itemCount: products.length,
@@ -235,19 +246,19 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
                   Row(
                     children: [
                       if (salePrice != null && salePrice.isNotEmpty && salePrice != '0') ...[
-                        Text('\u00A3${double.tryParse(salePrice)?.toStringAsFixed(2) ?? '0.00'}',
+                        Text('$_currency${double.tryParse(salePrice)?.toStringAsFixed(2) ?? '0.00'}',
                             style: const TextStyle(
                                 color: AppColors.coralColor,
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold)),
                         const SizedBox(width: 6),
-                        Text('\u00A3${double.tryParse(regularPrice ?? price)?.toStringAsFixed(2) ?? '0.00'}',
+                        Text('$_currency${double.tryParse(regularPrice ?? price)?.toStringAsFixed(2) ?? '0.00'}',
                             style: const TextStyle(
                                 color: AppColors.inkSoftColor,
                                 fontSize: 12,
                                 decoration: TextDecoration.lineThrough)),
                       ] else ...[
-                        Text('\u00A3${double.tryParse(price)?.toStringAsFixed(2) ?? '0.00'}',
+                        Text('$_currency${double.tryParse(price)?.toStringAsFixed(2) ?? '0.00'}',
                             style: const TextStyle(
                                 color: AppColors.goldColor,
                                 fontSize: 14,
@@ -347,7 +358,7 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
           backgroundColor: ok ? const Color(0xFF10B981) : AppColors.coralColor,
           duration: const Duration(seconds: 2),
         ));
-        if (ok) vendor.loadVendorProducts();
+        if (ok) vendor.loadVendorProducts(vendorId: vendor.vendorId ?? 0);
       }
     } catch (_) {
       if (mounted) {
@@ -360,7 +371,7 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
   }
 
   Future<bool> _updateStatus(int id, String status) async {
-    final api = ApiService();
+    final api = context.read<VendorProvider>().apiService;
     return await api.updateProduct(id, {'status': status});
   }
 
@@ -552,7 +563,7 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
                           text: TextSpan(
                             children: [
                               TextSpan(
-                                text: '\u00A3${double.tryParse(salePrice)?.toStringAsFixed(2) ?? '0.00'}',
+                                text: '$_currency${double.tryParse(salePrice)?.toStringAsFixed(2) ?? '0.00'}',
                                 style: const TextStyle(
                                     color: AppColors.coralColor,
                                     fontSize: 20,
@@ -560,7 +571,7 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
                               ),
                               const TextSpan(text: '  '),
                               TextSpan(
-                                text: '\u00A3${double.tryParse(regularPrice ?? price)?.toStringAsFixed(2) ?? '0.00'}',
+                                text: '$_currency${double.tryParse(regularPrice ?? price)?.toStringAsFixed(2) ?? '0.00'}',
                                 style: const TextStyle(
                                     color: AppColors.inkSoftColor,
                                     fontSize: 16,
@@ -571,7 +582,7 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
                         );
                       }
                       return Text(
-                          '\u00A3${double.tryParse(price)?.toStringAsFixed(2) ?? '0.00'}',
+                          '$_currency${double.tryParse(price)?.toStringAsFixed(2) ?? '0.00'}',
                           style: const TextStyle(
                               color: AppColors.goldColor,
                               fontSize: 20,
@@ -842,6 +853,8 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
   bool _isSaving = false;
   bool _isEdit = false;
 
+  String get _currency => context.watch<CurrencyProvider>().currencySymbol;
+
   // Controllers
   final _nameCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
@@ -888,11 +901,11 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
     if (widget.apiService is ApiService) {
       _api = widget.apiService as ApiService;
     } else {
-      // Fallback: try to access provider's internal api field, or create fresh
+      // Try to access provider's internal api field, or fall back to shared instance
       try {
         _api = (widget.apiService as dynamic)._api as ApiService;
       } catch (_) {
-        _api = ApiService();
+        _api = context.read<VendorProvider>().apiService;
       }
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadFormData());
@@ -1274,9 +1287,9 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Expanded(child: _buildTextField(_regularPriceCtrl, 'Regular Price (\u00A3)', keyboardType: TextInputType.number)),
+                  Expanded(child: _buildTextField(_regularPriceCtrl, 'Regular Price ($_currency)', keyboardType: TextInputType.number)),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildTextField(_salePriceCtrl, 'Sale Price (\u00A3)', keyboardType: TextInputType.number)),
+                  Expanded(child: _buildTextField(_salePriceCtrl, 'Sale Price ($_currency)', keyboardType: TextInputType.number)),
                 ],
               ),
 
@@ -1367,18 +1380,17 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
 
               // Attributes (for variable products)
               if (_productType == 'variable') ...[
-                _buildSectionHeader('Attributes'),
+                _buildSectionHeader('Attributes & Variations'),
                 const SizedBox(height: 4),
                 const Text(
-                  'Define product attributes. Each attribute can have multiple options for creating variations.',
+                  'Define attributes like Size, Color, or Material. Each attribute can have multiple option values.',
                   style: TextStyle(color: AppColors.inkSoftColor, fontSize: 11),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 14),
                 ...List.generate(_attributes.length, (idx) {
-                  final attr = _attributes[idx];
-                  return _buildAttributeEditor(idx, attr);
+                  return _buildAttributeEditor(idx, _attributes[idx]);
                 }),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: () => setState(() => _attributes.add(_ProductAttribute())),
                   icon: const Icon(Icons.add, size: 18),
@@ -1392,8 +1404,8 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
 
                 // Variations
                 if (_isEdit && widget.product != null) ...[
-                  const SizedBox(height: 20),
-                  _buildSectionHeader('Variations'),
+                  const SizedBox(height: 24),
+                  _buildSectionHeader('Generated Variations'),
                   const SizedBox(height: 12),
                   if (_loadingVariations)
                     const Center(child: CircularProgressIndicator(color: AppColors.goldColor))
@@ -1676,94 +1688,307 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
     );
   }
 
-  // ─── Attribute Editor ───
+  // ─── Attribute Editor (enhanced) ───
 
   Widget _buildAttributeEditor(int index, _ProductAttribute attr) {
+    final isActive = _activeAttributeIndex == index;
+    final hasName = attr.name.trim().isNotEmpty;
+    final hasOptions = attr.options.isNotEmpty;
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: AppColors.whiteColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.sandColor),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: hasName ? AppColors.indigoColor.withOpacity(0.15) : AppColors.sandColor,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextFormField(
-                  initialValue: attr.name,
-                  onChanged: (v) => setState(() => _attributes[index].name = v),
-                  decoration: const InputDecoration(
-                    hintText: 'Attribute name (e.g. Color, Size)',
-                    hintStyle: TextStyle(color: AppColors.inkSoftColor, fontSize: 12),
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: EdgeInsets.zero,
+          // Header row
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 0),
+            child: Row(
+              children: [
+                Container(
+                  width: 28, height: 28,
+                  decoration: BoxDecoration(
+                    color: AppColors.indigoColor.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  child: Center(
+                    child: Text('${index + 1}',
+                      style: const TextStyle(
+                        color: AppColors.indigoColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              Row(
-                children: [
-                  Checkbox(
-                    value: attr.variation,
-                    onChanged: (v) => setState(() => _attributes[index].variation = v ?? false),
-                    activeColor: AppColors.goldColor,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: attr.name,
+                    onChanged: (v) => setState(() => _attributes[index].name = v),
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.inkColor),
+                    decoration: InputDecoration(
+                      hintText: 'Attribute name (e.g. Color, Size, Material)',
+                      hintStyle: const TextStyle(fontSize: 12, color: AppColors.inkSoftColor, fontWeight: FontWeight.normal),
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                      errorText: isActive && !hasName && attr.variation
+                          ? 'Name is required for variations'
+                          : null,
+                      errorStyle: const TextStyle(fontSize: 9),
+                    ),
                   ),
-                  const Text('Used for variations', style: TextStyle(fontSize: 10, color: AppColors.inkSoftColor)),
-                ],
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, size: 18, color: AppColors.coralColor),
-                onPressed: () => setState(() => _attributes.removeAt(index)),
-                visualDensity: VisualDensity.compact,
-              ),
-            ],
+                ),
+                // Delete button
+                GestureDetector(
+                  onTap: () => _confirmRemoveAttribute(index),
+                  child: Container(
+                    width: 32, height: 32,
+                    decoration: BoxDecoration(
+                      color: AppColors.coralColor.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.delete_outline, size: 16, color: AppColors.coralColor),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 6),
-          // Option chips
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: [
-              ...List.generate(attr.options.length, (oi) {
-                return Chip(
-                  label: Text(attr.options[oi], style: const TextStyle(fontSize: 11)),
-                  deleteIcon: const Icon(Icons.close, size: 14),
-                  onDeleted: () => setState(() => _attributes[index].options.removeAt(oi)),
-                  backgroundColor: AppColors.goldColor.withOpacity(0.1),
-                  labelStyle: const TextStyle(color: AppColors.goldColor),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                );
-              }),
-              ActionChip(
-                label: Text(_activeAttributeIndex == index ? '- Cancel' : '+ Add value',
-                    style: const TextStyle(fontSize: 10, color: AppColors.goldColor)),
-                onPressed: () => setState(() {
-                  _activeAttributeIndex = _activeAttributeIndex == index ? null : index;
-                }),
-                backgroundColor: Colors.transparent,
-                side: const BorderSide(color: AppColors.goldColor, width: 0.5),
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-              ),
-            ],
+
+          const SizedBox(height: 8),
+
+          // Toggle row
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 6,
+              children: [
+                _buildToggleChip(
+                  label: 'Used for variations',
+                  value: attr.variation,
+                  icon: Icons.layers_outlined,
+                  onChanged: (v) => setState(() => _attributes[index].variation = v),
+                ),
+                _buildToggleChip(
+                  label: 'Visible on product page',
+                  value: attr.visible,
+                  icon: Icons.visibility_outlined,
+                  onChanged: (v) => setState(() => _attributes[index].visible = v),
+                ),
+              ],
+            ),
           ),
-          if (_activeAttributeIndex == index) ...[
-            const SizedBox(height: 8),
-            _buildAttributeInlineForm(index),
+
+          const SizedBox(height: 10),
+
+          // Divider
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Container(height: 1, color: AppColors.sandColor.withOpacity(0.5)),
+          ),
+
+          const SizedBox(height: 10),
+
+          // Option values
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text('Values',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.inkSoftColor,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    if (!hasOptions)
+                      Text('(add at least one)',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.coralColor.withOpacity(0.7),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+
+                // Option chips
+                if (hasOptions)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: List.generate(attr.options.length, (oi) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: AppColors.indigoColor.withOpacity(0.06),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppColors.indigoColor.withOpacity(0.15)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(attr.options[oi],
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.indigoColor,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              GestureDetector(
+                                onTap: () => setState(() {
+                                  _attributes[index].options.removeAt(oi);
+                                }),
+                                child: Icon(Icons.close, size: 13,
+                                  color: AppColors.coralColor.withOpacity(0.6)),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ),
+                  )
+                else
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      attr.variation
+                          ? 'Add option values to generate variations'
+                          : 'Add option values for this attribute',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.inkSoftColor.withOpacity(0.6),
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+
+                // Add value button / inline form
+                if (!isActive)
+                  GestureDetector(
+                    onTap: () => setState(() => _activeAttributeIndex = index),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppColors.goldColor.withOpacity(0.3),
+                          style: BorderStyle.solid,
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add_circle_outline, size: 14, color: AppColors.goldColor),
+                          SizedBox(width: 6),
+                          Text('Add values',
+                            style: TextStyle(fontSize: 11, color: AppColors.goldColor, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  _buildAttributeInlineForm(index),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToggleChip({
+    required String label,
+    required bool value,
+    required IconData icon,
+    required void Function(bool) onChanged,
+  }) {
+    return GestureDetector(
+      onTap: () => onChanged(!value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: value ? AppColors.goldColor.withOpacity(0.08) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: value ? AppColors.goldColor.withOpacity(0.3) : AppColors.sandColor,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13,
+              color: value ? AppColors.goldColor : AppColors.inkSoftColor),
+            const SizedBox(width: 5),
+            Text(label,
+              style: TextStyle(
+                fontSize: 11,
+                color: value ? AppColors.goldColor : AppColors.inkSoftColor,
+                fontWeight: value ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+            const SizedBox(width: 3),
+            Icon(value ? Icons.check_circle : Icons.radio_button_unchecked,
+              size: 12,
+              color: value ? AppColors.goldColor : AppColors.inkSoftColor.withOpacity(0.4)),
           ],
-          const SizedBox(height: 4),
-          Text(
-            'Add values like: Red, Blue, Green | S, M, L, XL',
-            style: TextStyle(color: AppColors.inkSoftColor.withOpacity(0.6), fontSize: 10),
+        ),
+      ),
+    );
+  }
+
+  void _confirmRemoveAttribute(int index) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.whiteColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Remove Attribute', style: TextStyle(fontWeight: FontWeight.w600)),
+        content: Text('Remove "${_attributes[index].name.isNotEmpty ? _attributes[index].name : "this attribute"}" and its values?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.inkSoftColor)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() => _attributes.removeAt(index));
+              if (_activeAttributeIndex == index) _activeAttributeIndex = null;
+              Navigator.pop(ctx);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.coralColor,
+              foregroundColor: AppColors.whiteColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Remove'),
           ),
         ],
       ),
@@ -1773,10 +1998,10 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
   Widget _buildAttributeInlineForm(int attrIndex) {
     final optionCtrl = TextEditingController();
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
       decoration: BoxDecoration(
         color: AppColors.goldColor.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppColors.goldColor.withOpacity(0.2)),
       ),
       child: Column(
@@ -1790,7 +2015,7 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                   autofocus: true,
                   style: const TextStyle(fontSize: 12),
                   decoration: const InputDecoration(
-                    hintText: 'e.g. Red, Blue, Green or S|M|L|XL',
+                    hintText: 'Red, Blue, Green  or  S | M | L',
                     hintStyle: TextStyle(fontSize: 11, color: AppColors.inkSoftColor),
                     border: InputBorder.none,
                     isDense: true,
@@ -1799,7 +2024,7 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                   onSubmitted: (v) => _addValuesToAttribute(attrIndex, v, optionCtrl),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               ElevatedButton(
                 onPressed: () => _addValuesToAttribute(attrIndex, optionCtrl.text, optionCtrl),
                 style: ElevatedButton.styleFrom(
@@ -1811,10 +2036,17 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                 ),
                 child: const Text('Add', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
               ),
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: () {
+                  setState(() => _activeAttributeIndex = null);
+                },
+                child: const Icon(Icons.close, size: 18, color: AppColors.inkSoftColor),
+              ),
             ],
           ),
           const SizedBox(height: 2),
-          Text('Separate values with commas or pipes',
+          Text('Separate values with commas or pipes ( | )',
             style: TextStyle(color: AppColors.inkSoftColor.withOpacity(0.5), fontSize: 10)),
         ],
       ),
@@ -1867,7 +2099,7 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                     style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
                   ),
                   Text(
-                    '\u00A3${double.tryParse(price)?.toStringAsFixed(2) ?? '0.00'}  |  Stock: $quantity',
+                    '$_currency${double.tryParse(price)?.toStringAsFixed(2) ?? '0.00'}  |  Stock: $quantity',
                     style: const TextStyle(color: AppColors.goldColor, fontSize: 12),
                   ),
                 ],
@@ -1997,7 +2229,7 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                   TextField(
                     controller: priceCtrl,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Price (\u00A3)', isDense: true),
+                    decoration: InputDecoration(labelText: 'Price ($_currency)', isDense: true),
                   ),
                   const SizedBox(height: 10),
                   TextField(
