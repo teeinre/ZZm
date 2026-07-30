@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "381378128273",
+    "project_id": "zzmore-store",
+    "storage_bucket": "zzmore-store.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:381378128273:android:d7b1e350ba484b3ba01230",
+        "android_client_info": {
+          "package_name": "store.zzmore.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDf4Wwe2j6C8rc-cVY6HMmPGXOASrJBxf4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Data extraction rules required by Google Play for Android 12+ (API 31+).
+    This declares what user data the app can back up or transfer.
+
+    Set to "none" as we disable backups entirely (allowBackup="false").
+    Update this if you later enable backup with a specific subset of data.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root"/>
+    </device-transfer>
+</data-extraction-rules>
