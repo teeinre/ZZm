@@ -1,19 +1,46 @@
 workflows:
-  # ── iOS Build ──
+  # ── iOS Build (App Store) ──
   build-ios:
     name: Build iOS (ZZmore Store)
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
+      vars:
+        BUNDLE_ID: store.zzmore.app
+        APP_STORE_CONNECT_KEY_ID: Encrypted(...)
+        APP_STORE_CONNECT_ISSUER_ID: Encrypted(...)
+        APP_STORE_CONNECT_PRIVATE_KEY: Encrypted(...)
     scripts:
       - name: Install dependencies
         script: flutter pub get
-      - name: Build iOS IPA
+      - name: Set up code signing
         script: |
-          flutter build ipa --release
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+      - name: Set version from pubspec
+        script: |
+          BUILD_NUMBER=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | cut -d '+' -f2)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
+      - name: Build iOS IPA
+        script: flutter build ipa --release \
+          --export-options-plist=$HOME/export_options.plist
+      - name: Rename IPA
+        script: |
+          IPA_PATH=$(find build/ios/ipa -name "*.ipa" | head -1)
+          mv "$IPA_PATH" build/ios/ipa/Zzmorestore.ipa
     artifacts:
-      - build/ios/ipa/*.ipa
+      - build/ios/ipa/Zzmorestore.ipa
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_ID
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: false
+        submit_to_app_store: false
 
   # ── Android Build ──
   build-android:
@@ -25,5 +52,7 @@ workflows:
         script: flutter pub get
       - name: Build Android APK
         script: flutter build apk --release
+      - name: Rename APK
+        script: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/Zzmorestore.apk
     artifacts:
-      - build/app/outputs/flutter-apk/app-release.apk
+      - build/app/outputs/flutter-apk/Zzmorestore.apk
