@@ -8,29 +8,49 @@ workflows:
       cocoapods: default
       vars:
         BUNDLE_ID: store.zzmore.app
-        APP_STORE_CONNECT_KEY_ID: Encrypted(...)
-        APP_STORE_CONNECT_ISSUER_ID: Encrypted(...)
-        APP_STORE_CONNECT_PRIVATE_KEY: Encrypted(...)
     scripts:
       - name: Install dependencies
         script: flutter pub get
-      - name: Set up code signing
-        script: |
-          keychain initialize
-          app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --type IOS_APP_STORE \
-            --create
       - name: Set version from pubspec
         script: |
           BUILD_NUMBER=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | cut -d '+' -f2)
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
-      - name: Build iOS IPA
-        script: flutter build ipa --release \
-          --export-options-plist=$HOME/export_options.plist
-      - name: Rename IPA
+      - name: Set up code signing
         script: |
-          IPA_PATH=$(find build/ios/ipa -name "*.ipa" | head -1)
-          mv "$IPA_PATH" build/ios/ipa/Zzmorestore.ipa
+          if [ -n "$APP_STORE_CONNECT_PRIVATE_KEY" ]; then
+            echo "API key found — configuring App Store code signing"
+            keychain initialize
+            app-store-connect fetch-signing-files "$BUNDLE_ID" \
+              --type IOS_APP_STORE \
+              --create
+          else
+            echo "No API key set — building unsigned IPA (you must sign it manually)"
+          fi
+      - name: Build iOS IPA
+        script: |
+          if [ -n "$APP_STORE_CONNECT_PRIVATE_KEY" ]; then
+            flutter build ipa --release \
+              --export-options-plist=$HOME/export_options.plist
+          else
+            flutter build ipa --release --no-codesign
+          fi
+      - name: Verify and rename IPA
+        script: |
+          echo "=== Contents of build/ios/ipa/ ==="
+          ls -la build/ios/ipa/ 2>/dev/null || echo "No ipa/ directory yet"
+          echo "=== Searching for IPA anywhere in build/ ==="
+          find build/ -name "*.ipa" 2>/dev/null | head -10
+          echo "=== Searching for .app ==="
+          find build/ -name "*.app" -type d 2>/dev/null | head -5
+          IPA_PATH=$(find build/ -name "*.ipa" | head -1)
+          if [ -n "$IPA_PATH" ]; then
+            mv "$IPA_PATH" build/ios/ipa/Zzmorestore.ipa
+            echo "IPA ready: build/ios/ipa/Zzmorestore.ipa"
+          else
+            echo "No IPA found. Listing all files in build/ios/:"
+            find build/ios -type f 2>/dev/null | head -30
+            exit 1
+          fi
     artifacts:
       - build/ios/ipa/Zzmorestore.ipa
       - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
