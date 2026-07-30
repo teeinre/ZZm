@@ -1,0 +1,126 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Dokan plugin reference directories (not part of the Flutter build)
+/dokan-lite.5.0.9/
+/dokan-pro/
+/dokan vendor streamin/
+
+# iOS CocoaPods & Xcode user data
+**/ios/Pods/
+**/ios/Runner.xcworkspace/xcuserdata/
+**/ios/Runner.xcodeproj/xcuserdata/
+**/ios/Runner.xcodeproj/project.xcworkspace/xcuserdata/
+**/ios/*.xcworkspace/xcuserdata/
+**/ios/Podfile.lock
+
+# Android local properties (contains SDK paths specific to each machine)
+/android/local.properties
+
+# Environment & secrets (uncomment if needed)
+# *.env
+# google-services.json
+# GoogleService-Info.plist
+
+# Android signing keys (already in android/.gitignore, explicit here as backup)
+**/*.jks
+**/*.keystore
+**/key.properties
+
+# Generated documentation
+/IOS_DEPLOYMENT_GUIDE.md
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ─── Project root cleanup: build artifacts, media, temp files ───
+# APK files (build outputs — they belong in /build/)
+/*.apk
+
+# iOS build artifacts downloaded from Codemagic
+/Runner.app/
+
+# Compressed archives
+/*.zip
+/*.tar.gz
+/*.rar
+
+# Video files
+/*.mp4
+/*.mov
+/*.avi
+
+# Installers & executables
+/*.exe
+/*.msi
+/*.msix
+
+# Partial/incomplete downloads
+/*.crdownload
+
+# Random images at root (move to /assets/ if needed)
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/*.svg
+
+# Generated documentation & reference files at root
+/API_INTEGRATION_GUIDE.md
+/ZZmore-Mobile-App-Architecture.md
+/Gemini_Generated_Image_*.png
+/zzmore-app-ui.jsx
+/privacy-policy.html
+/data-deletion.html
+/playstore_screenshots.html
+
+# App store screenshots (not needed in source)
+/playstore_screenshots/
+
+# Codemagic CI — keep the config, ignore artifacts
+codemagic_*.yaml

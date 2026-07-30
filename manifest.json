@@ -1,0 +1,81 @@
+{
+  "background_color": "#ffffff",
+  "description": "Discover the best African products in the UK with ZZMore, your go-to african online shop UK for authentic fashion, accessories, and home goods.",
+  "dir": "ltr",
+  "display": "fullscreen",
+  "name": "ZZmore",
+  "orientation": "any",
+  "scope": "/",
+  "short_name": "ZZmore",
+  "start_url": "https://zzmore.store/",
+  "theme_color": "#e67e14",
+  "icons": [
+    {
+      "src": "https://zzmore.store/wp-content/uploads/2024/09/cropped-zzmore_logo-removebg-preview-e1748954976335-1-32x32.png",
+      "type": "image/png",
+      "sizes": "32x32",
+      "isSquare": true,
+      "isPng": true,
+      "isWebp": false,
+      "isJpg": false,
+      "width": 32,
+      "is512x512": false,
+      "is256x256": false,
+      "is192x192": false
+    },
+    {
+      "src": "https://zzmore.store/wp-content/uploads/2024/09/cropped-zzmore_logo-removebg-preview-e1748954976335-1-192x192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "isSquare": true,
+      "isPng": true,
+      "isWebp": false,
+      "isJpg": false,
+      "width": 192,
+      "is512x512": false,
+      "is256x256": false,
+      "is192x192": true
+    },
+    {
+      "src": "https://zzmore.store/wp-content/uploads/2024/09/cropped-zzmore_logo-removebg-preview-e1748954976335-1-180x180.png",
+      "type": "image/png",
+      "sizes": "180x180",
+      "isSquare": true,
+      "isPng": true,
+      "isWebp": false,
+      "isJpg": false,
+      "width": 180,
+      "is512x512": false,
+      "is256x256": false,
+      "is192x192": false
+    },
+    {
+      "src": "https://zzmore.store/wp-content/uploads/2026/03/zzmore_logo-.webp",
+      "type": "image/webp",
+      "sizes": "150x49",
+      "isSquare": false,
+      "isPng": false,
+      "isWebp": true,
+      "isJpg": false,
+      "width": 150,
+      "is512x512": false,
+      "is256x256": false,
+      "is192x192": false
+    },
+    {
+      "src": "https://zzmore.store/wp-content/uploads/2024/09/cropped-zzmore_logo-removebg-preview-e1748954976335-1-270x270.png",
+      "type": "image/png",
+      "sizes": "270x270",
+      "isSquare": true,
+      "isPng": true,
+      "isWebp": false,
+      "isJpg": false,
+      "width": 270,
+      "is512x512": false,
+      "is256x256": false,
+      "is192x192": false
+    }
+  ],
+  "id": "Zzmore Mobile",
+  "lang": "en"
+}
