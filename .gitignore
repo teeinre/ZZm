@@ -82,6 +82,9 @@ $RECYCLE.BIN/
 # APK files (build outputs — they belong in /build/)
 /*.apk
 
+# iOS build artifacts downloaded from Codemagic
+/Runner.app/
+
 # Compressed archives
 /*.zip
 /*.tar.gz
