@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shimmer/shimmer.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../constants/app_colors.dart';
 import '../providers/products_provider.dart';
 import '../providers/auth_provider.dart';
@@ -12,6 +14,8 @@ import '../widgets/brand_logo.dart';
 import 'main_screen.dart';
 import 'product_detail_screen.dart';
 import 'vendor_profile_screen.dart';
+import 'livestream_viewer_screen.dart';
+import 'all_livestreams_screen.dart';
 
 typedef TabCallback = void Function(int index);
 
@@ -31,6 +35,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _unreadNotifications = 0;
   final ScrollController _scrollController = ScrollController();
   bool _hasLoaded = false;
+
+  // Live streams state
+  List<Map<String, dynamic>> _liveStreams = [];
+  bool _isLoadingStreams = false;
 
   @override
   void initState() {
@@ -58,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!provider.initialized || provider.products.isEmpty) {
         provider.loadProducts(refresh: true);
       }
+      _loadLiveStreams();
       _hasLoaded = true;
     } catch (_) {
       _hasLoaded = true;
@@ -103,8 +112,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       _buildHeader(),
                       const SizedBox(height: 16),
                       _buildSearchBar(),
+                      const SizedBox(height: 16),
+                      _buildLiveStreamSection(),
                       const SizedBox(height: 20),
                       _buildHeroBanner(),
+                      const SizedBox(height: 16),
+                      _buildEventsBanner(),
                       const SizedBox(height: 20),
                       _buildCategories(),
                       const SizedBox(height: 24),
@@ -169,10 +182,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ),
             const SizedBox(height: 8),
-            _buildLocationPicker(),
+            // _buildLocationPicker(), // Location picker commented out for now
             const SizedBox(height: 8),
             Text(
-              auth.isAuthenticated ? 'Welcome back, $displayName' : 'Welcome to ZZmore Store',
+              auth.isAuthenticated ? 'Welcome back, $displayName' : 'Welcome to ZZmore Stores',
               style: const TextStyle(
                 color: AppColors.inkColor,
                 fontSize: 20,
@@ -350,7 +363,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ],
           ),
           const SizedBox(height: 8),
-          const Text('Authentic African goods, straight to your door.',
+          const Text('Get Authentic African Products, Events & Services',
               style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600, fontFamily: 'Fraunces'),
               maxLines: 3,
               overflow: TextOverflow.ellipsis),
@@ -374,6 +387,587 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ─── Events Banner ───
+  Widget _buildEventsBanner() {
+    return GestureDetector(
+      onTap: () {
+        // Launch events page in external browser
+        _launchUrl('https://zzmore.store/zzmore-events/');
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [AppColors.goldColor, Color(0xFFE67E14), AppColors.coralColor],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.goldColor.withOpacity(0.3),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            // Icon decoration
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.event, color: Colors.white, size: 28),
+            ),
+            const SizedBox(width: 16),
+            // Text content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.25),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('EVENTS & EXPERIENCES',
+                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1.2)),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Discover & Book Events',
+                    style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w700,
+                      color: Colors.white, fontFamily: 'Fraunces',
+                    )),
+                  const SizedBox(height: 3),
+                  const Text('Cultural shows, workshops, meetups & more',
+                    style: TextStyle(fontSize: 11, color: Colors.white70)),
+                ],
+              ),
+            ),
+            // Arrow CTA
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.arrow_forward_rounded, color: AppColors.coralColor, size: 20),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _launchUrl(String urlString) async {
+    try {
+      final uri = Uri.parse(urlString);
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // Fallback silently if url_launcher not available or fails
+    }
+  }
+
+  // ─── Live Stream Section ───
+  Future<void> _loadLiveStreams() async {
+    if (_isLoadingStreams) return;
+    setState(() => _isLoadingStreams = true);
+    try {
+      final api = ApiService();
+      final streams = await api.getPublicLivestreams();
+      if (mounted) {
+        setState(() {
+          _liveStreams = streams;
+          _isLoadingStreams = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _liveStreams = [];
+          _isLoadingStreams = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildLiveStreamSection() {
+    if (_isLoadingStreams) {
+      return _buildStreamsLoadingShimmer();
+    }
+
+    if (_liveStreams.isEmpty && !_isLoadingStreams) {
+      return _buildComingSoonCard();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildLiveSectionHeader(),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 280,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.only(right: 20),
+            itemCount: _liveStreams.length + 1, // +1 for "Go Live" CTA
+            itemBuilder: (context, index) {
+              if (index < _liveStreams.length) {
+                return _buildLiveStreamCard(_liveStreams[index], index);
+              }
+              return _buildGoLiveCTA();
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStreamsLoadingShimmer() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildLiveSectionHeader(),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 200,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.only(right: 20),
+            itemCount: 3,
+            itemBuilder: (context, index) => Shimmer.fromColors(
+              baseColor: AppColors.blackPaleColor,
+              highlightColor: AppColors.creamColor,
+              child: Container(
+                width: 170,
+                margin: EdgeInsets.only(right: 12, left: index == 0 ? 0 : 0),
+                decoration: BoxDecoration(
+                  color: AppColors.whiteColor,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: double.infinity, height: 100,
+                      decoration: const BoxDecoration(
+                        color: AppColors.whiteColor,
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(width: 120, height: 14, color: AppColors.whiteColor),
+                          const SizedBox(height: 6),
+                          Container(width: 80, height: 10, color: AppColors.whiteColor),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildComingSoonCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppColors.coralColor.withOpacity(0.12), AppColors.goldColor.withOpacity(0.12)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.coralColor.withOpacity(0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.coralColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.live_tv, color: AppColors.coralColor, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Text('LIVE SHOPPING',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.coralColor, letterSpacing: 1.5)),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.coralColor,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text('COMIING SOON', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.white)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text('Watch vendors showcase their products in real-time.',
+                  style: TextStyle(color: AppColors.inkSoftColor, fontSize: 12)),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: () => widget.onTabSwitch?.call(3), // Navigate to profile
+            icon: Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(
+                color: AppColors.goldColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.add, color: AppColors.goldColor, size: 18),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLiveSectionHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 10, height: 10,
+              decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 8),
+            const Text('LIVE NOW',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.inkColor, letterSpacing: 1.2)),
+          ],
+        ),
+        GestureDetector(
+          onTap: () {
+            Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const AllLivestreamsScreen(),
+            ));
+          },
+          child: const Text('See all', style: TextStyle(color: AppColors.goldColor, fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLiveStreamCard(Map<String, dynamic> stream, int index) {
+    final title = stream['title']?.toString() ?? 'Live Stream';
+    final vendorName = stream['vendor_name']?.toString() ?? stream['store_name']?.toString() ?? 'Vendor';
+    final vendorAvatar = stream['vendor_avatar']?.toString() ?? stream['store_avatar']?.toString() ?? '';
+    final thumbnail = stream['thumbnail']?.toString() ?? '';
+    final viewerCount = stream['viewers']?.toString() ?? '0';
+    final platform = stream['platform']?.toString()?.toLowerCase() ?? '';
+
+    IconData platformIcon;
+    switch (platform) {
+      case 'youtube': platformIcon = Icons.play_circle_outline; break;
+      case 'facebook': platformIcon = Icons.facebook; break;
+      case 'tiktok': platformIcon = Icons.music_note; break;
+      case 'instagram': platformIcon = Icons.camera_alt_outlined; break;
+      default: platformIcon = Icons.live_tv;
+    }
+
+    return GestureDetector(
+      onTap: () {
+        final activeStreams = _liveStreams.where((s) {
+          final status = s['status']?.toString()?.toLowerCase() ?? '';
+          return status == 'live' || status.isEmpty;
+        }).toList();
+        final idx = activeStreams.indexWhere((s) => s['id'] == stream['id']);
+        if (idx >= 0) {
+          Navigator.push(context, MaterialPageRoute(
+            builder: (_) => LivestreamViewerScreen(
+              streams: activeStreams.cast<Map<String, dynamic>>(),
+              initialIndex: idx,
+            ),
+          ));
+        }
+      },
+      child: Container(
+      width: 170,
+      margin: EdgeInsets.only(right: 12, left: index == 0 ? 0 : 0),
+      decoration: BoxDecoration(
+        color: AppColors.whiteColor,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.inkColor.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Thumbnail area
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                child: Container(
+                  width: double.infinity,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [AppColors.indigoColor, AppColors.indigoColor.withOpacity(0.7), AppColors.coralColor.withOpacity(0.5)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: thumbnail.isNotEmpty
+                      ? Image.network(
+                          thumbnail,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Center(
+                            child: Icon(platformIcon, color: Colors.white.withOpacity(0.3), size: 40),
+                          ),
+                          loadingBuilder: (_, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [AppColors.indigoColor, AppColors.indigoColor.withOpacity(0.7), AppColors.coralColor.withOpacity(0.5)],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                              ),
+                              child: const Center(
+                                child: SizedBox(
+                                  width: 24, height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.goldColor),
+                                ),
+                              ),
+                            );
+                          },
+                        )
+                      : Center(
+                          child: Icon(platformIcon, color: Colors.white.withOpacity(0.3), size: 40),
+                        ),
+                ),
+              ),
+              // LIVE badge
+              Positioned(
+                top: 8, left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(6),
+                    boxShadow: [
+                      BoxShadow(color: Colors.red.withOpacity(0.5), blurRadius: 8, spreadRadius: -2),
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _PulsingDot(),
+                      SizedBox(width: 4),
+                      Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.8)),
+                    ],
+                  ),
+                ),
+              ),
+              // Viewer count
+              Positioned(
+                top: 8, right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.visibility, color: Colors.white, size: 10),
+                      const SizedBox(width: 3),
+                      Text(viewerCount, style: const TextStyle(color: Colors.white, fontSize: 10)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // Stream info
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.inkColor)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Container(
+                      width: 20, height: 20,
+                      decoration: BoxDecoration(
+                        color: AppColors.indigoColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Center(
+                        child: Text(
+                          vendorName.isNotEmpty ? vendorName[0].toUpperCase() : 'V',
+                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.indigoColor),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(vendorName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11, color: AppColors.inkSoftColor)),
+                    ),
+                  ],
+                ),
+                // Product info section
+                Builder(
+                  builder: (ctx) {
+                    final productName = stream['product_name']?.toString();
+                    final productPrice = stream['product_price']?.toString();
+                    final productId = stream['product_id'];
+                    if (productName == null || productPrice == null) {
+                      return const SizedBox.shrink();
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.goldColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.shopping_bag_outlined, size: 10, color: AppColors.goldColor),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(productName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: AppColors.goldColor)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('\u00A3$productPrice',
+                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.inkColor)),
+                              GestureDetector(
+                                onTap: () => _addLivestreamProductToCart(ctx, stream),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.goldColor,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.add_shopping_cart, color: Colors.white, size: 14),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        'Add',
+                                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.whiteColor),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildGoLiveCTA() {
+    return Container(
+      width: 170,
+      margin: const EdgeInsets.only(right: 12),
+      decoration: BoxDecoration(
+        color: AppColors.goldColor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.goldColor.withOpacity(0.3), width: 1.5),
+      ),
+      child: InkWell(
+        onTap: () => widget.onTabSwitch?.call(3),
+        borderRadius: BorderRadius.circular(16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 48, height: 48,
+              decoration: BoxDecoration(
+                color: AppColors.goldColor.withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.live_tv, color: AppColors.goldColor, size: 24),
+            ),
+            const SizedBox(height: 10),
+            const Text('Go Live',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.inkColor)),
+            const SizedBox(height: 4),
+            const Text('Stream your products',
+              style: TextStyle(fontSize: 11, color: AppColors.inkSoftColor),
+              textAlign: TextAlign.center),
+          ],
+        ),
       ),
     );
   }
@@ -587,6 +1181,59 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         SnackBar(
           content: Text('Failed to add: $e'),
           backgroundColor: AppColors.coralColor,
+        ),
+      );
+    }
+  }
+
+  /// Add the featured product from a livestream card to the cart.
+  void _addLivestreamProductToCart(BuildContext cardContext, Map<String, dynamic> stream) async {
+    final productName = stream['product_name']?.toString();
+    final productPrice = stream['product_price']?.toString() ?? '0';
+    final productIdRaw = stream['product_id'];
+    if (productName == null) return;
+
+    final productId = productIdRaw is int
+        ? productIdRaw
+        : int.tryParse(productIdRaw?.toString() ?? '0') ?? 0;
+
+    final productImage = stream['product_image']?.toString() ?? '';
+    final vendorName = stream['vendor_name']?.toString();
+
+    final product = Product(
+      id: productId,
+      name: productName,
+      price: productPrice,
+      onSale: false,
+      inStock: true,
+      stockQuantity: 0,
+      images: productImage.isNotEmpty ? [productImage] : [],
+      categories: const [],
+      ratingCount: 0,
+      vendorName: vendorName,
+      vendorId: 0,
+    );
+
+    final cart = context.read<CartProvider>();
+    try {
+      await cart.addToCart(product);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$productName added to cart'),
+          backgroundColor: AppColors.goldColor,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not add to cart. Try again.'),
+          backgroundColor: AppColors.coralColor,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }
@@ -919,6 +1566,57 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Pulsing Dot (LIVE indicator) ───
+class _PulsingDot extends StatefulWidget {
+  const _PulsingDot();
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    )..repeat(reverse: true);
+    _animation = Tween<double>(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _animation.value,
+          child: child,
+        );
+      },
+      child: Container(
+        width: 6,
+        height: 6,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../constants/app_colors.dart';
 import '../constants/api_constants.dart';
 import '../services/api_service.dart';
@@ -22,24 +23,49 @@ class CurrencyProvider with ChangeNotifier {
   Future<void> loadCurrency() async {
     try {
       final api = ApiService();
+      debugPrint('[Currency] Fetching WooCommerce currency settings…');
       final settings = await api.getWooCommerceSettings();
-      if (settings['currency'] != null) {
-        _currencyCode = settings['currency']?.toString() ?? 'GBP';
+      // WooCommerce settings IDs use woocommerce_ prefix
+      if (settings['woocommerce_currency'] != null) {
+        _currencyCode = settings['woocommerce_currency']?.toString() ?? 'GBP';
       }
-      if (settings['currency_symbol'] != null) {
-        _currencySymbol = settings['currency_symbol']?.toString() ?? '\u00A3';
+      if (settings['woocommerce_currency_pos'] != null) {
+        _currencyPosition = settings['woocommerce_currency_pos']?.toString() ?? 'left';
       }
-      if (settings['currency_position'] != null) {
-        _currencyPosition = settings['currency_position']?.toString() ?? 'left';
+      if (settings['woocommerce_price_num_decimals'] != null) {
+        _decimals = int.tryParse(settings['woocommerce_price_num_decimals']?.toString() ?? '2') ?? 2;
       }
-      if (settings['price_num_decimals'] != null) {
-        _decimals = int.tryParse(settings['price_num_decimals']?.toString() ?? '2') ?? 2;
+      if (settings['woocommerce_price_thousand_sep'] != null) {
+        _thousandSeparator = settings['woocommerce_price_thousand_sep']?.toString() ?? ',';
       }
+      if (settings['woocommerce_price_decimal_sep'] != null) {
+        _decimalSeparator = settings['woocommerce_price_decimal_sep']?.toString() ?? '.';
+      }
+      // Derive the currency symbol from the code if not explicitly provided
+      _currencySymbol = _getCurrencySymbol(_currencyCode);
+      _loaded = true;
+      debugPrint('[Currency] Loaded: $_currencyCode $_currencySymbol (pos=$_currencyPosition, decimals=$_decimals)');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[Currency] Failed to load settings: $e. Using defaults (GBP).');
       _loaded = true;
       notifyListeners();
-    } catch (_) {
-      _loaded = true;
-      notifyListeners();
+    }
+  }
+
+  /// Derive a currency symbol from a 3-letter ISO currency code.
+  String _getCurrencySymbol(String code) {
+    switch (code.toUpperCase()) {
+      case 'GBP': return '\u00A3';  // £
+      case 'USD': return '\u0024';  // $
+      case 'EUR': return '\u20AC';  // €
+      case 'NGN': return '\u20A6';  // ₦
+      case 'JPY': return '\u00A5';  // ¥
+      case 'CAD': return '\u0043\u0024'; // C$
+      case 'AUD': return '\u0041\u0024'; // A$
+      case 'INR': return '\u20B9';  // ₹
+      case 'AED': return '\u0625\u002E\u062F'; // إ.د
+      default:   return '$code ';   // fallback: code + space
     }
   }
 

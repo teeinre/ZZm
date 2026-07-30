@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../constants/app_colors.dart';
 import '../../providers/vendor_provider.dart';
-import '../../services/api_service.dart';
 
 class VendorOrdersScreen extends StatefulWidget {
   const VendorOrdersScreen({super.key});
@@ -262,7 +261,6 @@ class VendorOrderDetailScreen extends StatefulWidget {
 }
 
 class _VendorOrderDetailScreenState extends State<VendorOrderDetailScreen> {
-  final ApiService _api = ApiService();
   final _trackingCtrl = TextEditingController();
   bool _isUpdating = false;
   late String _currentStatus;
@@ -309,7 +307,8 @@ class _VendorOrderDetailScreenState extends State<VendorOrderDetailScreen> {
   Future<void> _addTracking() async {
     if (_trackingCtrl.text.trim().isEmpty) return;
     final orderId = widget.order['id'] as int;
-    final ok = await _api.addOrderNote(orderId,
+    final api = widget.vendor.apiService;
+    final ok = await api.addOrderNote(orderId,
         'Tracking number: ${_trackingCtrl.text.trim()}', customerNote: true);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

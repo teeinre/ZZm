@@ -23,6 +23,9 @@ class _VendorStoreSettingsScreenState extends State<VendorStoreSettingsScreen> {
   final _stateCtrl = TextEditingController();
   final _postcodeCtrl = TextEditingController();
   final _countryCtrl = TextEditingController();
+  final _companyNameCtrl = TextEditingController();
+  final _companyIdCtrl = TextEditingController();
+  final _vatNumberCtrl = TextEditingController();
   final _bankNameCtrl = TextEditingController();
   final _bankIbanCtrl = TextEditingController();
   final _accountNameCtrl = TextEditingController();
@@ -31,6 +34,7 @@ class _VendorStoreSettingsScreenState extends State<VendorStoreSettingsScreen> {
   final _socialTwCtrl = TextEditingController();
 
   bool _storeOpen = true;
+  bool _tncEnabled = false;
 
   @override
   void initState() {
@@ -38,38 +42,78 @@ class _VendorStoreSettingsScreenState extends State<VendorStoreSettingsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadSettings());
   }
 
-  Future<void> _loadSettings() async {
-    final vendor = context.read<VendorProvider>();
+  void _loadSettings() async {
+    var vendor = context.read<VendorProvider>();
+
+    // If store info hasn't been loaded yet (dashboard still loading),
+    // trigger a load and wait for it.
+    if (vendor.storeInfo == null && vendor.vendorId != null && vendor.vendorId! > 0) {
+      await vendor.loadStoreInfo(vendor.vendorId!);
+      if (!mounted) return;
+      vendor = context.read<VendorProvider>(); // get updated instance
+    }
+
     final info = vendor.storeInfo;
     if (info != null) {
-      _storeNameCtrl.text = info['store_name']?.toString() ?? '';
-      _phoneCtrl.text = info['phone']?.toString() ?? '';
-      _emailCtrl.text = info['email']?.toString() ?? '';
+      // ── Basic fields (Dokan returns these as top-level keys) ──
+      _storeNameCtrl.text = (info['store_name'] ?? info['shop_name'] ?? info['name'] ?? '').toString();
+      _phoneCtrl.text = (info['phone'] ?? '').toString();
+      _emailCtrl.text = (info['email'] ?? info['store_email'] ?? '').toString();
 
+      // ── Address (Dokan nests this under 'address' or as flat fields) ──
       final addr = info['address'];
       if (addr is Map) {
-        _street1Ctrl.text = addr['street_1']?.toString() ?? '';
-        _street2Ctrl.text = addr['street_2']?.toString() ?? '';
-        _cityCtrl.text = addr['city']?.toString() ?? '';
-        _stateCtrl.text = addr['state']?.toString() ?? '';
-        _postcodeCtrl.text = addr['zip']?.toString() ?? addr['postcode']?.toString() ?? '';
-        _countryCtrl.text = addr['country']?.toString() ?? '';
+        _street1Ctrl.text = (addr['street_1'] ?? addr['street1'] ?? addr['address'] ?? '').toString();
+        _street2Ctrl.text = (addr['street_2'] ?? addr['street2'] ?? '').toString();
+        _cityCtrl.text = (addr['city'] ?? '').toString();
+        _stateCtrl.text = (addr['state'] ?? addr['province'] ?? '').toString();
+        _postcodeCtrl.text = (addr['zip'] ?? addr['postcode'] ?? addr['postal_code'] ?? '').toString();
+        _countryCtrl.text = (addr['country'] ?? '').toString();
+      } else {
+        // Flat field fallback
+        _street1Ctrl.text = (info['address_street_1'] ?? info['street_1'] ?? '').toString();
+        _cityCtrl.text = (info['address_city'] ?? info['city'] ?? '').toString();
+        _postcodeCtrl.text = (info['address_zip'] ?? info['postcode'] ?? '').toString();
       }
 
-      _bankNameCtrl.text = info['bank_name']?.toString() ?? '';
-      _bankIbanCtrl.text = info['bank_iban']?.toString() ?? '';
-      _accountNameCtrl.text = info['company_name']?.toString() ?? '';
+      // ── Company details (Dokan saves to dokan_company_name/company_id_number/vat_number meta) ──
+      _companyNameCtrl.text = (info['company_name'] ?? '').toString();
+      _companyIdCtrl.text = (info['company_id_number'] ?? '').toString();
+      _vatNumberCtrl.text = (info['vat_number'] ?? '').toString();
 
+      // ── T&C toggle ──
+      _tncEnabled = info['tnc_enabled'] == true || info['tnc_enabled'] == 'on';
+
+      // ── Bank details (Dokan stores in 'payment' → 'bank' or as flat fields) ──
+      final payment = info['payment'];
+      Map<String, dynamic>? bank;
+      if (payment is Map) {
+        bank = payment['bank'] is Map ? Map<String, dynamic>.from(payment['bank']) : null;
+      }
+      _bankNameCtrl.text = (bank?['bank_name'] ?? info['bank_name'] ?? '').toString();
+      _bankIbanCtrl.text = (bank?['iban'] ?? info['bank_iban'] ?? info['iban'] ?? '').toString();
+      _accountNameCtrl.text = (bank?['ac_name'] ?? info['account_name'] ?? info['company_name'] ?? '').toString();
+
+      // ── Store open/close ──
       final openClose = info['store_open_close'];
       if (openClose is Map) {
         _storeOpen = openClose['is_open'] == true || openClose['open'] == true;
+      } else {
+        // Dokan may return a simple boolean or string field
+        final isOpen = info['store_open_close'] ?? info['open'] ?? info['is_open'];
+        _storeOpen = isOpen == true || isOpen == 'yes' || isOpen == '1' || isOpen == 'open';
       }
 
+      // ── Social links (Dokan nests under 'social' or as flat fields) ──
       final social = info['social'];
       if (social is Map) {
-        _socialFbCtrl.text = social['fb']?.toString() ?? '';
-        _socialIgCtrl.text = social['instagram']?.toString() ?? '';
-        _socialTwCtrl.text = social['twitter']?.toString() ?? '';
+        _socialFbCtrl.text = (social['fb'] ?? social['facebook'] ?? '').toString();
+        _socialIgCtrl.text = (social['instagram'] ?? social['ig'] ?? '').toString();
+        _socialTwCtrl.text = (social['twitter'] ?? social['tw'] ?? '').toString();
+      } else {
+        _socialFbCtrl.text = (info['social_fb'] ?? info['facebook'] ?? '').toString();
+        _socialIgCtrl.text = (info['social_instagram'] ?? info['instagram'] ?? '').toString();
+        _socialTwCtrl.text = (info['social_twitter'] ?? info['twitter'] ?? '').toString();
       }
 
       setState(() {});
@@ -80,10 +124,15 @@ class _VendorStoreSettingsScreenState extends State<VendorStoreSettingsScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
 
+    // Data structured to match the vendor-bridge endpoint format
+    // (nested payment.bank, payment.paypal, social, store_open_close)
     final data = {
       'store_name': _storeNameCtrl.text.trim(),
       'phone': _phoneCtrl.text.trim(),
-      'email': _emailCtrl.text.trim(),
+      'company_name': _companyNameCtrl.text.trim(),
+      'company_id_number': _companyIdCtrl.text.trim(),
+      'vat_number': _vatNumberCtrl.text.trim(),
+      'tnc_enabled': _tncEnabled,
       'address': {
         'street_1': _street1Ctrl.text.trim(),
         'street_2': _street2Ctrl.text.trim(),
@@ -92,9 +141,13 @@ class _VendorStoreSettingsScreenState extends State<VendorStoreSettingsScreen> {
         'zip': _postcodeCtrl.text.trim(),
         'country': _countryCtrl.text.trim(),
       },
-      'bank_name': _bankNameCtrl.text.trim(),
-      'bank_iban': _bankIbanCtrl.text.trim(),
-      'company_name': _accountNameCtrl.text.trim(),
+      'payment': {
+        'bank': {
+          'bank_name': _bankNameCtrl.text.trim(),
+          'iban': _bankIbanCtrl.text.trim(),
+          'ac_name': _accountNameCtrl.text.trim(),
+        },
+      },
       'store_open_close': {'is_open': _storeOpen},
       'social': {
         'fb': _socialFbCtrl.text.trim(),
@@ -104,13 +157,32 @@ class _VendorStoreSettingsScreenState extends State<VendorStoreSettingsScreen> {
     };
 
     final api = context.read<VendorProvider>().apiService;
-    final ok = await api.updateStoreSettings(data);
+    // Try vendor bridge first, then vendor-api.php bypass (REST-blocked fallback)
+    bool ok = await api.updateVendorBridgeStore(data);
+    if (!ok) {
+      ok = await api.updateVendorApiStore(data);
+    }
     if (mounted) {
       setState(() => _isSaving = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(ok ? 'Settings saved' : 'Failed to save settings'),
-        backgroundColor: ok ? const Color(0xFF10B981) : AppColors.coralColor,
-      ));
+      if (ok) {
+        // Reload store info so the form reflects saved values on next open
+        final vendor = context.read<VendorProvider>();
+        final vid = vendor.vendorId;
+        if (vid != null && vid > 0) {
+          await vendor.loadStoreInfo(vid);
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Settings saved'),
+            backgroundColor: Color(0xFF10B981),
+          ));
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Failed to save settings — check your connection'),
+          backgroundColor: AppColors.coralColor,
+        ));
+      }
     }
   }
 
@@ -125,6 +197,9 @@ class _VendorStoreSettingsScreenState extends State<VendorStoreSettingsScreen> {
     _stateCtrl.dispose();
     _postcodeCtrl.dispose();
     _countryCtrl.dispose();
+    _companyNameCtrl.dispose();
+    _companyIdCtrl.dispose();
+    _vatNumberCtrl.dispose();
     _bankNameCtrl.dispose();
     _bankIbanCtrl.dispose();
     _accountNameCtrl.dispose();
@@ -189,6 +264,26 @@ class _VendorStoreSettingsScreenState extends State<VendorStoreSettingsScreen> {
                 value: _storeOpen,
                 activeColor: AppColors.goldColor,
                 onChanged: (v) => setState(() => _storeOpen = v),
+              ),
+
+              const SizedBox(height: 20),
+              _section('Company Details'),
+              const SizedBox(height: 12),
+              _field(_companyNameCtrl, 'Company Name'),
+              const SizedBox(height: 10),
+              _field(_companyIdCtrl, 'Company ID / EUID Number'),
+              const SizedBox(height: 10),
+              _field(_vatNumberCtrl, 'VAT / TAX ID'),
+              const SizedBox(height: 10),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Terms & Conditions',
+                    style: TextStyle(fontSize: 13, color: AppColors.inkColor)),
+                subtitle: Text(_tncEnabled ? 'Show on store page' : 'Not shown',
+                    style: const TextStyle(fontSize: 11, color: AppColors.inkSoftColor)),
+                value: _tncEnabled,
+                activeColor: AppColors.goldColor,
+                onChanged: (v) => setState(() => _tncEnabled = v),
               ),
 
               const SizedBox(height: 20),

@@ -282,7 +282,7 @@ class VendorAddEditCouponScreen extends StatefulWidget {
 
 class _VendorAddEditCouponScreenState extends State<VendorAddEditCouponScreen> {
   final _formKey = GlobalKey<FormState>();
-  final ApiService _api = ApiService();
+  late final ApiService _api;
   bool _isSaving = false;
   bool _isEdit = false;
 
@@ -299,6 +299,7 @@ class _VendorAddEditCouponScreenState extends State<VendorAddEditCouponScreen> {
   @override
   void initState() {
     super.initState();
+    _api = context.read<VendorProvider>().apiService;
     _isEdit = widget.coupon != null;
     if (widget.coupon != null) {
       final c = widget.coupon!;

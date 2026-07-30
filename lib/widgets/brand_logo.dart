@@ -27,7 +27,7 @@ class BrandLogoFallback extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      'ZZmore Store',
+      'ZZmore Stores',
       style: TextStyle(
         color: AppColors.goldColor,
         fontSize: fontSize,

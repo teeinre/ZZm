@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../../constants/app_colors.dart';
 import '../../providers/vendor_provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../providers/products_provider.dart';
+import '../../providers/currency_provider.dart';
 import 'vendor_products_screen.dart';
 import 'vendor_orders_screen.dart';
 import 'vendor_coupons_screen.dart';
@@ -34,32 +34,56 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
   Future<void> _initDashboard() async {
     final auth = context.read<AuthProvider>();
     final vendor = context.read<VendorProvider>();
-    final productsProvider = context.read<ProductsProvider>();
 
+    // Inject WordPress user ID from JWT — critical for reliable
+    // product/order filtering via the post_author WC API parameter.
+    if (auth.user != null) {
+      vendor.setWordPressUserId(auth.user!.id);
+    }
+
+    // ── STEP 1: Resolve vendor store info ──
     if (auth.user != null && auth.user!.id > 0) {
-      // Use vendor store ID from auth if available, otherwise try to find it
-      if (auth.user!.vendorStoreId != null && auth.user!.vendorStoreId! > 0) {
-        await vendor.loadStoreInfo(auth.user!.vendorStoreId!);
-      } else {
-        // Try to find the vendor store from the user's customer profile
-        // Uses the shared ApiService from ProductsProvider (has JWT auth token)
+      int? resolvedStoreId = auth.user!.vendorStoreId;
+
+      // If vendorStoreId not persisted from login, try to find it live
+      if (resolvedStoreId == null || resolvedStoreId <= 0) {
         try {
-          final customer = await productsProvider.apiService.getCustomerData(auth.user!.id);
-          if (customer != null) {
-            // Some Dokan setups store the shop reference in customer meta
-            await vendor.loadStoreInfo(auth.user!.id);
+          final store = await vendor.apiService.getVendorStoreByUserId(auth.user!.id);
+          if (store != null && store['id'] != null) {
+            resolvedStoreId = store['id'] is int
+                ? store['id'] as int
+                : int.tryParse(store['id']?.toString() ?? '');
           }
-        } catch (_) {}
+        } catch (_) {
+          // Last resort: try loading store by user ID directly
+          try {
+            await vendor.loadStoreInfo(auth.user!.id);
+            resolvedStoreId = vendor.vendorId;
+          } catch (_) {}
+        }
+      }
+
+      if (resolvedStoreId != null && resolvedStoreId > 0) {
+        await vendor.loadStoreInfo(resolvedStoreId);
       }
     }
 
-    if (mounted) {
-      await vendor.loadDashboard();
-      // Also pre-load products for the stats
-      if (vendor.vendorId != null && vendor.vendorId! > 0) {
-        await vendor.loadVendorProducts(vendorId: vendor.vendorId!);
-      }
+    if (!mounted) return;
+
+    // ── STEP 2: Load all vendor data in parallel ──
+    final vid = vendor.vendorId;
+    final futures = <Future<void>>[
+      vendor.loadDashboard(),           // stats, balance, announcements
+      vendor.loadOrders(),
+      vendor.loadCoupons(),
+      vendor.loadReviews(),
+      vendor.loadWithdrawals(),
+    ];
+    // Only load products if we have a valid vendor ID
+    if (vid != null && vid > 0) {
+      futures.add(vendor.loadVendorProducts(vendorId: vid));
     }
+    await Future.wait(futures);
   }
 
   @override
@@ -156,10 +180,12 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
               ),
             ],
           ),
-          body: vendor.isLoadingStats
+          body: vendor.isLoadingStats || vendor.isLoadingStore || vendor.isLoadingOrders || vendor.isLoadingProducts
               ? const Center(
                   child: CircularProgressIndicator(color: AppColors.goldColor))
-              : RefreshIndicator(
+              : vendor.dashboardError != null && !vendor.hasStoreInfo
+                  ? _buildErrorView(vendor)
+                  : RefreshIndicator(
                   color: AppColors.goldColor,
                   onRefresh: () => vendor.loadDashboard(),
                   child: SingleChildScrollView(
@@ -185,8 +211,40 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
     );
   }
 
+  Widget _buildErrorView(VendorProvider vendor) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.cloud_off, size: 48, color: AppColors.inkSoftColor),
+            const SizedBox(height: 16),
+            Text(
+              vendor.dashboardError ?? 'Unable to load dashboard data.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.inkSoftColor, fontSize: 14),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _initDashboard,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Retry'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.goldColor,
+                foregroundColor: AppColors.whiteColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildWelcomeBanner(VendorProvider vendor) {
     final storeName = vendor.storeInfo?['store_name']?.toString() ?? 'Your Store';
+    final currency = context.watch<CurrencyProvider>().currencySymbol;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -247,7 +305,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
                 const Icon(Icons.trending_up, color: AppColors.goldColor, size: 14),
                 const SizedBox(width: 6),
                 Text(
-                    'Earnings: ${vendor.totalEarnings > 0 ? '\u00A3${vendor.totalEarnings.toStringAsFixed(2)}' : 'No data yet'}',
+                    'Earnings: ${vendor.totalEarnings > 0 ? '$currency${vendor.totalEarnings.toStringAsFixed(2)}' : 'No data yet'}',
                     style: const TextStyle(
                         color: AppColors.goldColor,
                         fontSize: 12,
@@ -261,6 +319,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
   }
 
   Widget _buildStatCards(VendorProvider vendor) {
+    final currency = context.watch<CurrencyProvider>().currencySymbol;
     final stats = [
       {
         'icon': Icons.shopping_cart_outlined,
@@ -271,15 +330,13 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       {
         'icon': Icons.monetization_on_outlined,
         'label': 'Total Sales',
-        'value': '\u00A3${vendor.totalSales.toStringAsFixed(2)}',
+        'value': '$currency${vendor.totalSales.toStringAsFixed(2)}',
         'color': AppColors.goldColor,
       },
       {
         'icon': Icons.inventory_2_outlined,
         'label': 'Products',
-        'value': vendor.vendorProducts.isNotEmpty
-            ? '${vendor.vendorProducts.length}'
-            : '-',
+        'value': '${vendor.totalProducts}',
         'color': const Color(0xFF10B981),
       },
       {
@@ -359,8 +416,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       {'icon': Icons.account_balance_wallet, 'label': 'Withdraw', 'color': AppColors.coralColor, 'route': 'withdrawals'},
       {'icon': Icons.settings, 'label': 'Settings', 'color': AppColors.inkSoftColor, 'route': 'settings'},
       {'icon': Icons.bar_chart, 'label': 'Reports', 'color': const Color(0xFF3B82F6), 'route': 'reports'},
-      {'icon': Icons.verified_user, 'label': 'Verification', 'color': const Color(0xFF10B981), 'route': 'verification'},
-      {'icon': Icons.campaign, 'label': 'Notices', 'color': const Color(0xFFF59E0B), 'route': 'announcements'},
+      {'icon': Icons.verified_user, 'label': 'Verified', 'color': const Color(0xFF10B981), 'route': 'verification'},
     ];
 
     return Column(
@@ -393,7 +449,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
                   borderRadius: BorderRadius.circular(14),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
+                      color: Colors.black.withValues(alpha: 0.03),
                       blurRadius: 6,
                       offset: const Offset(0, 2),
                     ),
@@ -406,7 +462,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
                       width: 40,
                       height: 40,
                       decoration: BoxDecoration(
-                        color: (a['color'] as Color).withOpacity(0.1),
+                        color: (a['color'] as Color).withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Icon(a['icon'] as IconData,

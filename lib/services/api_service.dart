@@ -11,6 +11,7 @@ class ApiService {
   String? _authToken;
   String? _storeNonce;
   String? _cartToken;
+  final List<String> storeCookies = [];
 
   ApiService({http.Client? client}) : client = client ?? http.Client();
 
@@ -65,6 +66,11 @@ class ApiService {
     } catch (e) {
       throw Exception('Failed to post data: $e');
     }
+  }
+
+  /// Public POST wrapper — used by notification service for device token registration.
+  Future<http.Response> post(String url, Map<String, dynamic> data, {bool useWcAuth = false, bool requireAuth = false}) {
+    return _post(url, data, useWcAuth: useWcAuth, requireAuth: requireAuth);
   }
 
   Future<http.Response> _put(String url, Map<String, dynamic> data, {bool useWcAuth = false, bool requireAuth = false}) async {
@@ -129,6 +135,11 @@ class ApiService {
   }
 
   http.Response _handleResponse(http.Response response) {
+    // Capture WooCommerce session cookies (needed for WebView checkout)
+    final setCookie = response.headers['set-cookie'];
+    if (setCookie != null) {
+      storeCookies.add(setCookie);
+    }
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return response;
     } else if (response.statusCode == 401) {
@@ -174,17 +185,40 @@ class ApiService {
       );
       final data = jsonDecode(response.body);
       if (data['token'] != null) {
-        _authToken = data['token'];
+        final token = data['token'] as String;
+        _authToken = token;
+        // Extract user ID from JWT payload — the standard JWT Auth plugin
+        // does NOT return user_id in the login response, only inside the token.
+        final userId = _extractUserIdFromJwt(token) ?? (data['user_id'] as int? ?? 0);
         return User(
-          id: data['user_id'] ?? 0,
+          id: userId,
           email: data['user_email'] ?? '',
           username: data['user_display_name']?.toString(),
-          token: data['token'],
+          token: token,
         );
       }
     } catch (_) {
       // Will fall through to return null
     }
+    return null;
+  }
+
+  /// Decode the JWT payload and extract the WordPress user ID.
+  /// The standard JWT Auth for WP REST API token contains:
+  /// { "data": { "user": { "id": "123" } } }
+  int? _extractUserIdFromJwt(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+      final payload = parts[1];
+      // Add base64 padding if missing (JWTs omit padding)
+      final padded = payload.padRight(payload.length + (4 - payload.length % 4) % 4, '=');
+      final decoded = utf8.decode(base64Decode(padded));
+      final json = jsonDecode(decoded) as Map<String, dynamic>;
+      final userId = json['data']?['user']?['id'];
+      if (userId is int) return userId;
+      if (userId is String) return int.tryParse(userId);
+    } catch (_) {}
     return null;
   }
 
@@ -369,6 +403,29 @@ class ApiService {
     }
   }
 
+  /// Fetches shipping methods for a specific shipping zone.
+  Future<List<Map<String, dynamic>>> getShippingZoneMethods(int zoneId) async {
+    try {
+      final url = '${ApiConstants.shippingZonesEndpoint}/$zoneId/methods';
+      final response = await _get(url, useWcAuth: true);
+      final List<dynamic> data = jsonDecode(response.body);
+      return data.map((m) => Map<String, dynamic>.from(m)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Update a shipping zone method (enable/disable, adjust cost, etc.).
+  Future<bool> updateShippingZoneMethod(int zoneId, int instanceId, Map<String, dynamic> data) async {
+    try {
+      final url = '${ApiConstants.shippingZonesEndpoint}/$zoneId/methods/$instanceId';
+      await _put(url, data, useWcAuth: true);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Fetches all WooCommerce shipping zones.
   Future<List<Map<String, dynamic>>> getShippingZones() async {
     final url = ApiConstants.shippingZonesEndpoint;
@@ -395,7 +452,7 @@ class ApiService {
     return directCost ?? 4.99;
   }
 
-  /// Fetches Dokan store/vendor info by ID.
+  /// Fetches Dokan store/vendor info by ID (legacy REST API — use getVendorBridgeStore instead).
   Future<Map<String, dynamic>?> getDokanStore(int storeId) async {
     final url = '${ApiConstants.dokanStoresEndpoint}/$storeId';
     try {
@@ -406,12 +463,63 @@ class ApiService {
     }
   }
 
+  /// Fetches vendor store settings via the reliable vendor-bridge endpoint.
+  /// This reads directly from Dokan's internal PHP objects, bypassing
+  /// the inconsistent Dokan REST API.
+  Future<Map<String, dynamic>?> getVendorBridgeStore() async {
+    final url = '${ApiConstants.baseUrl}/vendor-bridge/v1/store/me';
+    try {
+      final response = await _get(url, useWcAuth: false, requireAuth: true);
+      final body = jsonDecode(response.body);
+      return Map<String, dynamic>.from(body);
+    } catch (e) {
+      debugPrint('[ApiService] getVendorBridgeStore error: $e');
+      // Fall back to legacy Dokan REST API
+      return null;
+    }
+  }
+
+  /// Updates vendor store settings via the vendor-bridge endpoint.
+  Future<bool> updateVendorBridgeStore(Map<String, dynamic> data) async {
+    final url = '${ApiConstants.baseUrl}/vendor-bridge/v1/store/me';
+    try {
+      await _put(url, data, useWcAuth: false, requireAuth: true);
+      return true;
+    } catch (e) {
+      debugPrint('[ApiService] updateVendorBridgeStore error: $e');
+      return false;
+    }
+  }
+
   /// Fetches products for a specific vendor/store.
-  Future<List<Product>> getVendorProducts(int vendorId, {int page = 1, int perPage = 20}) async {
-    var url = '${ApiConstants.productsEndpoint}?store_id=$vendorId&page=$page&per_page=$perPage';
+  /// Uses [authorUserId] (vendor's WP user ID) as primary filter — this is
+  /// the reliable post_author filter. Falls back to store_id if authorUserId
+  /// is not provided.
+  Future<List<Product>> getVendorProducts(int vendorId, {int? authorUserId, int page = 1, int perPage = 20}) async {
+    // Build URL with proper author filter (store_id is not a WC API parameter)
+    var url = '${ApiConstants.productsEndpoint}?page=$page&per_page=$perPage';
+    if (authorUserId != null && authorUserId > 0) {
+      url += '&author=$authorUserId';
+    }
+    // Note: If authorUserId is not provided, products are NOT filtered by vendor.
+    // Callers should always pass authorUserId for vendor-scoped product queries.
     final response = await _get(url, useWcAuth: true);
     final List<dynamic> data = jsonDecode(response.body);
     return data.map((json) => Product.fromJson(Map<String, dynamic>.from(json))).toList();
+  }
+
+  /// Fetches products for a specific Dokan store using the Dokan REST API.
+  /// Uses the public endpoint — no authentication required for browsing.
+  Future<List<Product>> getDokanStoreProducts(int storeId, {int page = 1, int perPage = 20}) async {
+    final url = '${ApiConstants.dokanStoresEndpoint}/$storeId/products?page=$page&per_page=$perPage';
+    try {
+      final response = await _get(url, useWcAuth: false);
+      final List<dynamic> data = jsonDecode(response.body);
+      return data.map((json) => Product.fromJson(Map<String, dynamic>.from(json))).toList();
+    } catch (e) {
+      debugPrint('[ApiService] getDokanStoreProducts error: $e');
+      return [];
+    }
   }
 
   /// Fetches all Dokan stores/vendors.
@@ -581,6 +689,53 @@ class ApiService {
     }
   }
 
+  /// Fetch the currently authenticated WP user profile via REST API.
+  /// Requires a valid JWT token (set via setAuthToken before calling).
+  Future<Map<String, dynamic>?> getCurrentWPUser() async {
+    try {
+      final url = '${ApiConstants.wpApiBase}/users/me';
+      final response = await _get(url, useWcAuth: false, requireAuth: true);
+      return Map<String, dynamic>.from(jsonDecode(response.body));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Update the WP user profile (name, email, etc.) via REST API.
+  /// Requires a valid JWT token.
+  Future<bool> updateWPUser(int userId, Map<String, dynamic> data) async {
+    try {
+      final url = '${ApiConstants.wpApiBase}/users/$userId';
+      await _put(url, data, useWcAuth: false, requireAuth: true);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Find a WooCommerce customer by email (for linking WP user to WC customer).
+  Future<Map<String, dynamic>?> getWCCustomerByEmail(String email) async {
+    try {
+      final url = '${ApiConstants.wcApiBase}/customers?email=${Uri.encodeComponent(email)}';
+      final response = await _get(url, useWcAuth: true);
+      final List<dynamic> data = jsonDecode(response.body);
+      if (data.isNotEmpty) {
+        return Map<String, dynamic>.from(data.first);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Find a WooCommerce customer by WordPress user ID (most reliable lookup).
+  Future<Map<String, dynamic>?> getWCCustomerById(String userId) async {
+    try {
+      final url = '${ApiConstants.wcApiBase}/customers/$userId';
+      final response = await _get(url, useWcAuth: true);
+      return Map<String, dynamic>.from(jsonDecode(response.body));
+    } catch (_) {}
+    return null;
+  }
+
   /// Fetch a single order by ID via WooCommerce API.
   Future<Map<String, dynamic>?> getOrder(int orderId) async {
     try {
@@ -601,6 +756,8 @@ class ApiService {
     String paymentMethod = 'bacs',
     String paymentMethodTitle = 'Direct Bank Transfer',
     List<Map<String, dynamic>>? shippingLines,
+    List<Map<String, dynamic>>? taxLines,
+    List<Map<String, dynamic>>? couponLines,
   }) async {
     try {
       final data = <String, dynamic>{
@@ -614,6 +771,12 @@ class ApiService {
       };
       if (shippingLines != null && shippingLines.isNotEmpty) {
         data['shipping_lines'] = shippingLines;
+      }
+      if (taxLines != null && taxLines.isNotEmpty) {
+        data['tax_lines'] = taxLines;
+      }
+      if (couponLines != null && couponLines.isNotEmpty) {
+        data['coupon_lines'] = couponLines;
       }
       final url = ApiConstants.ordersEndpoint;
       final response = await _post(url, data, useWcAuth: true);
@@ -814,15 +977,90 @@ class ApiService {
     }
   }
 
-  /// Fetch vendor's orders from Dokan.
-  Future<List<Map<String, dynamic>>> getVendorOrders({int page = 1, int perPage = 20, String? status}) async {
+  /// Fetch vendor's orders from Dokan (scoped to the authenticated vendor via JWT).
+  /// Falls back to WC API with per-product filtering if vendorId is provided and the
+  /// Dokan endpoint returns orders not belonging to this vendor.
+  Future<List<Map<String, dynamic>>> getVendorOrders({
+    int page = 1,
+    int perPage = 20,
+    String? status,
+    int? vendorId,
+  }) async {
     try {
       var url = '${ApiConstants.dokanOrdersEndpoint}?page=$page&per_page=$perPage';
       if (status != null) url += '&status=$status';
       final response = await _get(url, useWcAuth: false, requireAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
-      return data.map((o) => Map<String, dynamic>.from(o)).toList();
+      final orders = data.map((o) => Map<String, dynamic>.from(o)).toList();
+
+      // Always filter by vendor when vendorId is known — Dokan's REST API
+      // may leak cross-vendor orders depending on plugin version/auth state.
+      if (vendorId != null && vendorId > 0) {
+        return await _filterOrdersByVendor(orders, vendorId);
+      }
+      return orders;
     } catch (e) {
+      // Fallback: fetch via WC API filtered by vendor's product IDs
+      if (vendorId != null && vendorId > 0) {
+        return await _fetchVendorOrdersViaWcApi(vendorId, page, perPage, status);
+      }
+      return [];
+    }
+  }
+
+  /// Filter orders to only those containing products belonging to the given vendor.
+  Future<List<Map<String, dynamic>>> _filterOrdersByVendor(
+    List<Map<String, dynamic>> orders,
+    int vendorId,
+  ) async {
+    try {
+      // Get vendor's product IDs
+      final vendorProducts = await getVendorProducts(vendorId, perPage: 100);
+      final vendorProductIds = vendorProducts.map((p) => p.id).toSet();
+
+      if (vendorProductIds.isEmpty) return orders; // can't filter — return as-is
+
+      return orders.where((order) {
+        final items = order['line_items'] as List<dynamic>? ?? [];
+        return items.any((item) {
+          final productId = item['product_id'] as int?;
+          return productId != null && vendorProductIds.contains(productId);
+        });
+      }).toList();
+    } catch (_) {
+      return orders;
+    }
+  }
+
+  /// Fetch orders containing the vendor's products via WC API.
+  /// This is a reliable fallback when the Dokan orders endpoint is unavailable.
+  Future<List<Map<String, dynamic>>> _fetchVendorOrdersViaWcApi(
+    int vendorId,
+    int page,
+    int perPage,
+    String? status,
+  ) async {
+    try {
+      final vendorProducts = await getVendorProducts(vendorId, perPage: 100);
+      final vendorProductIds = vendorProducts.map((p) => p.id).toSet();
+      if (vendorProductIds.isEmpty) return [];
+
+      // Fetch all orders, then filter client-side (WC API doesn't support
+      // multi-product filter in a single query efficiently)
+      var url = '${ApiConstants.ordersEndpoint}?page=$page&per_page=$perPage';
+      if (status != null) url += '&status=$status';
+      final response = await _get(url, useWcAuth: true);
+      final List<dynamic> data = jsonDecode(response.body);
+      final allOrders = data.map((o) => Map<String, dynamic>.from(o)).toList();
+
+      return allOrders.where((order) {
+        final items = order['line_items'] as List<dynamic>? ?? [];
+        return items.any((item) {
+          final productId = item['product_id'] as int?;
+          return productId != null && vendorProductIds.contains(productId);
+        });
+      }).toList();
+    } catch (_) {
       return [];
     }
   }
@@ -832,6 +1070,58 @@ class ApiService {
     try {
       final url = '${ApiConstants.ordersEndpoint}/$orderId';
       await _put(url, {'status': status}, useWcAuth: true);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Update an order via Dokan REST API (vendor-scoped via JWT).
+  /// Uses `dokan/v1/orders/{id}` PUT which checks `dokan_get_seller_id_by_order()`
+  /// to ensure the vendor owns this order.
+  Future<bool> updateDokanOrder(int orderId, Map<String, dynamic> data) async {
+    try {
+      final url = '${ApiConstants.dokanOrdersEndpoint}/$orderId';
+      await _put(url, data, requireAuth: true, useWcAuth: false);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Add a note to an order via Dokan REST API (vendor-scoped via JWT).
+  Future<bool> addDokanOrderNote(int orderId, String note, {bool customerNote = false}) async {
+    try {
+      final url = '${ApiConstants.dokanOrdersEndpoint}/$orderId/notes';
+      final data = <String, dynamic>{
+        'note': note,
+        'customer_note': customerNote,
+      };
+      await _post(url, data, requireAuth: true, useWcAuth: false);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Delete a product via Dokan REST API (vendor-scoped via JWT).
+  /// Uses `dokan/v1/products/{id}` DELETE which checks `post_author`.
+  Future<bool> deleteDokanProduct(int id) async {
+    try {
+      final url = '${ApiConstants.dokanV1Base}/products/$id';
+      await _delete(url, requireAuth: true, useWcAuth: false);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Delete a coupon via Dokan REST API (vendor-scoped via JWT).
+  /// Uses `dokan/v1/coupons/{id}` DELETE which checks `post_author`.
+  Future<bool> deleteDokanCoupon(int id) async {
+    try {
+      final url = '${ApiConstants.dokanCouponsEndpoint}/$id';
+      await _delete(url, requireAuth: true, useWcAuth: false);
       return true;
     } catch (e) {
       return false;
@@ -1200,6 +1490,200 @@ class ApiService {
     }
   }
 
+  // ─── Vendor API Helpers (token in query param — LiteSpeed strips Authorization header) ───
+
+  /// Build a vendor-api.php URL with the JWT token as a query parameter.
+  /// LiteSpeed/LSAPI strips the Authorization header, so we pass the token in the URL.
+  String _vendorApiUrl(String pathAndQuery) {
+    if (_authToken != null) {
+      return '$pathAndQuery&token=${Uri.encodeComponent(_authToken!)}';
+    }
+    return pathAndQuery;
+  }
+
+  Future<http.Response> _vendorApiGet(String url) async {
+    return _get(_vendorApiUrl(url), useWcAuth: false, requireAuth: false);
+  }
+
+  Future<http.Response> _vendorApiPost(String url, Map<String, dynamic> data) async {
+    return _post(_vendorApiUrl(url), data, useWcAuth: false, requireAuth: false);
+  }
+
+  // ─── Vendor API Bypass (vendor-api.php — bypasses REST blockage) ───
+
+  /// Fetch vendor reports via vendor-api.php (bypasses REST if /wp-json/ is blocked).
+  Future<Map<String, dynamic>?> getVendorApiReports() async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_reports';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Reports fetch failed: $e');
+    }
+    return null;
+  }
+
+  /// Fetch vendor store info via vendor-api.php.
+  Future<Map<String, dynamic>?> getVendorApiStore() async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_store';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Store fetch failed: $e');
+    }
+    return null;
+  }
+
+  /// Update vendor store settings via vendor-api.php.
+  Future<bool> updateVendorApiStore(Map<String, dynamic> data) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=update_store';
+      final response = await _vendorApiPost(url, data);
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('[VendorAPI] Store update failed: $e');
+      return false;
+    }
+  }
+
+  /// Fetch vendor products via vendor-api.php.
+  Future<List<Map<String, dynamic>>> getVendorApiProducts({int page = 1, int perPage = 20}) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_products&page=$page&per_page=$perPage';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final products = data['products'] as List<dynamic>? ?? [];
+        return products.map((p) => Map<String, dynamic>.from(p)).toList();
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Products fetch failed: $e');
+    }
+    return [];
+  }
+
+  /// Fetch vendor orders via vendor-api.php.
+  Future<List<Map<String, dynamic>>> getVendorApiOrders({String? status, int page = 1, int perPage = 20}) async {
+    try {
+      final statusParam = status != null ? '&status=$status' : '';
+      final url = '${ApiConstants.vendorApiBase}?action=get_orders&page=$page&per_page=$perPage$statusParam';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final orders = data['orders'] as List<dynamic>? ?? [];
+        return orders.map((o) => Map<String, dynamic>.from(o)).toList();
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Orders fetch failed: $e');
+    }
+    return [];
+  }
+
+  /// Fetch vendor balance via vendor-api.php.
+  Future<Map<String, dynamic>?> getVendorApiBalance() async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_balance';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Balance fetch failed: $e');
+    }
+    return null;
+  }
+
+  // ─── Customer / User API Bypass (vendor-api.php) ───
+
+  /// Fetch WordPress user profile data via vendor-api.php.
+  /// Returns display_name, username, email, first_name, last_name, is_vendor.
+  Future<Map<String, dynamic>?> getVendorApiUser() async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_user';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map && data.isNotEmpty) return Map<String, dynamic>.from(data);
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] User fetch failed: $e');
+    }
+    return null;
+  }
+
+  /// Fetch WC customer data (billing, shipping) via vendor-api.php.
+  Future<Map<String, dynamic>?> getVendorApiCustomer() async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_customer';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map && data.isNotEmpty) return Map<String, dynamic>.from(data);
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Customer fetch failed: $e');
+    }
+    return null;
+  }
+
+  /// Update WC customer data (billing, shipping) via vendor-api.php.
+  Future<bool> updateVendorApiCustomer(Map<String, dynamic> data) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=update_customer';
+      final response = await _vendorApiPost(url, data);
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('[VendorAPI] Customer update failed: $e');
+      return false;
+    }
+  }
+
+  /// Update WP user profile via vendor-api.php.
+  /// Uses wp_update_user() — inherits WP's validation.
+  Future<bool> updateVendorApiUser(Map<String, dynamic> data) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=update_user';
+      final response = await _vendorApiPost(url, data);
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('[VendorAPI] User update failed: $e');
+      return false;
+    }
+  }
+
+  /// Update WP user via vendor-api.php — returns raw response so caller can read error codes.
+  Future<Map<String, dynamic>> updateVendorApiUserRaw(Map<String, dynamic> data) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=update_user';
+      final response = await _vendorApiPost(url, data);
+      final body = jsonDecode(response.body);
+      return body is Map ? Map<String, dynamic>.from(body) : {'success': response.statusCode == 200};
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// Fetch user orders via vendor-api.php.
+  Future<List<Map<String, dynamic>>> getVendorApiUserOrders({int page = 1, int perPage = 20}) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_orders_user&page=$page&per_page=$perPage';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final orders = data['orders'] as List<dynamic>? ?? [];
+        return orders.map((o) => Map<String, dynamic>.from(o)).toList();
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] User orders fetch failed: $e');
+    }
+    return [];
+  }
+
   // ─── Dokan Returns/Refunds ───
   Future<List<Map<String, dynamic>>> getDokanRefunds() async {
     try {
@@ -1234,12 +1718,87 @@ class ApiService {
     }
   }
 
+  /// Fetch public live streams for the home page (no auth required).
+  /// Queries the mu-plugin bridge endpoint which pulls data from the DLS
+  /// (Dokan Live Stream) plugin's vendor user-meta storage.
+  Future<List<Map<String, dynamic>>> getPublicLivestreams() async {
+    // Priority 1: App bridge endpoint — renders DLS shortcode + vendor meta server-side
+    try {
+      debugPrint('[LivestreamAPI] Trying: ${ApiConstants.appLivestreamsEndpoint}');
+      final response = await _get(ApiConstants.appLivestreamsEndpoint, useWcAuth: false);
+      if (response.statusCode == 200) {
+        final dynamic body = jsonDecode(response.body);
+        debugPrint('[LivestreamAPI] Got ${body is List ? body.length : 'map'} results from app bridge');
+        if (body is List) return body.map((s) => Map<String, dynamic>.from(s)).toList();
+        if (body is Map && body.containsKey('data')) {
+          final data = body['data'];
+          if (data is List) return data.map((s) => Map<String, dynamic>.from(s)).toList();
+        }
+      } else {
+        debugPrint('[LivestreamAPI] App bridge returned ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[LivestreamAPI] App bridge error: $e');
+    }
+
+    // Priority 2: Dokan REST API + WP API fallbacks
+    final paths = [
+      ApiConstants.dokanLiveStreamsEndpoint,
+      ApiConstants.dokanLiveStreamsAltEndpoint,
+      '${ApiConstants.wpApiBase}/livestreams',
+      '${ApiConstants.wpApiBase}/live-streams',
+    ];
+    for (final path in paths) {
+      try {
+        debugPrint('[LivestreamAPI] Trying fallback: $path');
+        final response = await _get(path, useWcAuth: false);
+        if (response.statusCode == 200) {
+          final dynamic body = jsonDecode(response.body);
+          if (body is List) return body.map((s) => Map<String, dynamic>.from(s)).toList();
+          if (body is Map && body.containsKey('data')) {
+            final data = body['data'];
+            if (data is List) return data.map((s) => Map<String, dynamic>.from(s)).toList();
+          }
+        }
+      } catch (e) {
+        debugPrint('[LivestreamAPI] Fallback $path error: $e');
+      }
+    }
+    debugPrint('[LivestreamAPI] All endpoints failed — returning empty list');
+    return [];
+  }
+
+  /// Fetch vendor reports via Woo Report plugin (custom plugin).
+  Future<Map<String, dynamic>?> getWooReportDashboard() async {
+    try {
+      final url = ApiConstants.wooReportDashboard;
+      final response = await _get(url, useWcAuth: false, requireAuth: true);
+      return Map<String, dynamic>.from(jsonDecode(response.body));
+    } catch (e) {
+      debugPrint('[WooReport] Dashboard fetch failed: $e');
+      return null;
+    }
+  }
+
+  /// Fetch vendor-specific stats via Woo Report plugin.
+  Future<Map<String, dynamic>?> getWooReportVendorStats() async {
+    try {
+      final url = ApiConstants.wooReportVendorStats;
+      final response = await _get(url, useWcAuth: false, requireAuth: true);
+      return Map<String, dynamic>.from(jsonDecode(response.body));
+    } catch (e) {
+      debugPrint('[WooReport] Vendor stats fetch failed: $e');
+      return null;
+    }
+  }
+
   // ─── WooCommerce Settings ───
 
   /// Fetch WooCommerce general settings (currency, etc.)
   Future<Map<String, dynamic>> getWooCommerceSettings() async {
     try {
       final url = '${ApiConstants.wcApiBase}/settings/general';
+      debugPrint('[WC Settings] Fetching from $url');
       final response = await _get(url, useWcAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
       final settings = <String, dynamic>{};
@@ -1248,8 +1807,10 @@ class ApiService {
           settings[item['id']?.toString() ?? ''] = item['value'];
         }
       }
+      debugPrint('[WC Settings] Loaded: currency=${settings['woocommerce_currency']}');
       return settings;
     } catch (e) {
+      debugPrint('[WC Settings] Failed: $e');
       return {
         'currency': 'GBP',
         'currency_symbol': '\u00A3',
@@ -1282,17 +1843,24 @@ class ApiService {
   /// Call this once before building the server-side cart.
   Future<void> fetchStoreNonce() async {
     try {
-      final request = http.Request('GET', Uri.parse(ApiConstants.storeCartEndpoint));
-      request.headers.addAll(_getStoreApiHeaders());
-      final streamed = await client.send(request);
-      final response = await http.Response.fromStream(streamed);
-
+      debugPrint('[StoreAPI] GET cart (init session)');
+      final response = await client.get(
+        Uri.parse(ApiConstants.storeCartEndpoint),
+        headers: _getStoreApiHeaders(),
+      );
+      debugPrint('[StoreAPI] Init response ${response.statusCode}');
       if (response.statusCode >= 200 && response.statusCode < 300) {
         _storeNonce = response.headers['nonce'];
         _cartToken = response.headers['cart-token'];
+        debugPrint('[StoreAPI] Got nonce: ${_storeNonce != null}, cart-token: ${_cartToken != null}');
+        final setCookie = response.headers['set-cookie'];
+        if (setCookie != null) storeCookies.add(setCookie);
+      } else {
+        debugPrint('[StoreAPI] Init FAILED: ${response.statusCode} ${response.body.substring(0, response.body.length > 300 ? 300 : response.body.length)}');
       }
-    } catch (_) {
-      // Nonce fetch failed — Store API checkout won't work
+    } catch (e) {
+      debugPrint('[StoreAPI] Init exception: $e');
+      rethrow;
     }
   }
 
@@ -1306,8 +1874,6 @@ class ApiService {
     int? variationId,
   }) async {
     try {
-      // When a variation is specified, use the variation ID as the cart item ID.
-      // The Store API treats variation IDs as direct product IDs in the cart.
       final effectiveId = (variationId != null && variationId > 0)
           ? variationId
           : productId;
@@ -1317,25 +1883,32 @@ class ApiService {
         'quantity': quantity,
       };
 
-      // If this is a variation, include the variation array with proper attributes
       if (variationId != null && variationId > 0) {
         data['variation'] = <Map<String, String>>[];
       }
 
-      final response = await _rawPost(ApiConstants.storeCartAddItemEndpoint, data);
+      debugPrint('[StoreAPI] addToCart: product=$effectiveId qty=$quantity variationId=$variationId');
+      final response = await _storePost(ApiConstants.storeCartAddItemEndpoint, data);
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        _updateTokensFromResponse(response);
-        return Map<String, dynamic>.from(jsonDecode(response.body));
+        final body = jsonDecode(response.body);
+        if (body is Map) return Map<String, dynamic>.from(body);
+        debugPrint('[StoreAPI] addToCart unexpected response type: ${body.runtimeType}');
+      } else {
+        debugPrint('[StoreAPI] addToCart FAILED: ${response.statusCode}');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[StoreAPI] addToCart exception: $e');
+    }
     return null;
   }
 
   /// Check whether the Store API is available on this site.
   Future<bool> isStoreApiAvailable() async {
     try {
-      final uri = Uri.parse(ApiConstants.storeCartEndpoint);
-      final response = await client.head(uri);
+      final response = await client.get(
+        Uri.parse(ApiConstants.storeCartEndpoint),
+        headers: _getStoreApiHeaders(),
+      );
       return response.statusCode != 404;
     } catch (_) {
       return false;
@@ -1345,15 +1918,22 @@ class ApiService {
   /// Get the current server-side cart (includes shipping rates per package).
   Future<Map<String, dynamic>?> getStoreCart() async {
     try {
-      final request = http.Request('GET', Uri.parse(ApiConstants.storeCartEndpoint));
-      request.headers.addAll(_getStoreApiHeaders());
-      final streamed = await client.send(request);
-      final response = await http.Response.fromStream(streamed);
+      debugPrint('[StoreAPI] GET cart');
+      final response = await client.get(
+        Uri.parse(ApiConstants.storeCartEndpoint),
+        headers: _getStoreApiHeaders(),
+      );
+      _updateTokensFromResponse(response);
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        _updateTokensFromResponse(response);
-        return Map<String, dynamic>.from(jsonDecode(response.body));
+        final body = Map<String, dynamic>.from(jsonDecode(response.body));
+        debugPrint('[StoreAPI] Cart loaded — ${(body["items"] as List?)?.length ?? 0} items, ${(body["payment_methods"] as List?)?.length ?? 0} payments');
+        return body;
+      } else {
+        debugPrint('[StoreAPI] GET cart FAILED: ${response.statusCode} ${response.body.length > 300 ? response.body.substring(0, 300) : response.body}');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[StoreAPI] GET cart exception: $e');
+    }
     return null;
   }
 
@@ -1364,7 +1944,7 @@ class ApiService {
         'billing_address': billing,
         'shipping_address': shipping,
       };
-      final response = await _rawPost(ApiConstants.storeCartUpdateCustomerEndpoint, data);
+      final response = await _storePost(ApiConstants.storeCartUpdateCustomerEndpoint, data);
       if (response.statusCode >= 200 && response.statusCode < 300) {
         _updateTokensFromResponse(response);
         return true;
@@ -1380,7 +1960,46 @@ class ApiService {
         'package_id': packageId,
         'rate_id': rateId,
       };
-      final response = await _rawPost(ApiConstants.storeCartSelectShippingRateEndpoint, data);
+      final response = await _storePost(ApiConstants.storeCartSelectShippingRateEndpoint, data);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Update a cart item's quantity via Store API.
+  Future<bool> updateStoreCartItem(String itemKey, int quantity) async {
+    try {
+      final data = <String, dynamic>{
+        'key': itemKey,
+        'quantity': quantity,
+      };
+      final response = await _storePost(ApiConstants.storeCartUpdateItemEndpoint, data);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Remove an item from the cart via Store API.
+  Future<bool> removeStoreCartItem(String itemKey) async {
+    try {
+      final data = <String, dynamic>{'key': itemKey};
+      final response = await _storePost(ApiConstants.storeCartRemoveItemEndpoint, data);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Apply a coupon code via Store API.
+  Future<bool> applyStoreCoupon(String code) async {
+    try {
+      final data = <String, dynamic>{'code': code};
+      final response = await _storePost(ApiConstants.storeCartApplyCouponEndpoint, data);
       if (response.statusCode >= 200 && response.statusCode < 300) {
         _updateTokensFromResponse(response);
         return true;
@@ -1389,8 +2008,22 @@ class ApiService {
     return false;
   }
 
+  /// Remove a coupon from the cart via Store API.
+  Future<bool> removeStoreCoupon(String code) async {
+    try {
+      final data = <String, dynamic>{'code': code};
+      final response = await _storePost(ApiConstants.storeCartRemoveCouponEndpoint, data);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   /// Place the order via the Store API checkout endpoint.
   /// Returns the order data on success, or null on failure.
+  /// Dokan hooks into woocommerce_store_api_checkout_order_processed to
+  /// automatically split the order into vendor sub-orders.
   Future<Map<String, dynamic>?> storeCheckout({
     required String paymentMethod,
   }) async {
@@ -1398,23 +2031,105 @@ class ApiService {
       final data = <String, dynamic>{
         'payment_method': paymentMethod,
       };
-      final response = await _rawPost(ApiConstants.storeCheckoutEndpoint, data);
+      debugPrint('[StoreAPI] POST checkout — payment: $paymentMethod');
+      final response = await _storePost(ApiConstants.storeCheckoutEndpoint, data);
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        _updateTokensFromResponse(response);
         final body = jsonDecode(response.body);
-        return Map<String, dynamic>.from(body);
+        debugPrint('[StoreAPI] Checkout SUCCESS: ${response.statusCode}');
+        if (body is Map) return Map<String, dynamic>.from(body);
+        debugPrint('[StoreAPI] Checkout unexpected response type: ${body.runtimeType}');
+      } else {
+        debugPrint('[StoreAPI] Checkout FAILED: ${response.statusCode} ${response.body}');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[StoreAPI] Checkout exception: $e');
+    }
     return null;
   }
 
-  /// Send a raw POST to the Store API with proper headers.
-  Future<http.Response> _rawPost(String url, Map<String, dynamic> data) async {
-    final request = http.Request('POST', Uri.parse(url));
-    request.headers.addAll(_getStoreApiHeaders());
-    request.body = jsonEncode(data);
-    final streamed = await client.send(request);
-    return await http.Response.fromStream(streamed);
+  // ─── App Bridge Checkout (mu-plugin) ───
+
+  /// POST /app/v1/prepare-checkout  (JWT-authenticated)
+  /// Sends the local cart items to the server, which stores them in a transient
+  /// and returns a single-use opaque code for the WebView to consume.
+  Future<Map<String, dynamic>> prepareCheckout({
+    required List<Map<String, dynamic>> items,
+    String? email,
+  }) async {
+    debugPrint('[AppBridge] prepare-checkout — ${items.length} items');
+    final response = await _post(
+      ApiConstants.appPrepareCheckoutEndpoint,
+      {
+        'items': items,
+        if (email != null) 'email': email,
+      },
+      useWcAuth: false,
+      requireAuth: true,
+    );
+    if (response.statusCode == 200) {
+      return Map<String, dynamic>.from(jsonDecode(response.body));
+    }
+    final body = jsonDecode(response.body);
+    final msg = body is Map ? body['message']?.toString() : 'Server error';
+    throw Exception(msg ?? 'Failed to prepare checkout (${response.statusCode})');
+  }
+
+  /// GET /app/v1/order/{id}?key=xxx  (JWT-authenticated)
+  /// Fetches verified order data. The server checks that the order key matches
+  /// and that the order belongs to the authenticated user.
+  Future<Map<String, dynamic>?> getAppOrder(int orderId, String orderKey) async {
+    try {
+      final url = '${ApiConstants.appOrderEndpoint}/$orderId?key=${Uri.encodeComponent(orderKey)}';
+      debugPrint('[AppBridge] GET order $orderId');
+      final response = await _get(url, useWcAuth: false, requireAuth: true);
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+      debugPrint('[AppBridge] Order fetch failed: ${response.statusCode}');
+    } catch (e) {
+      debugPrint('[AppBridge] Order fetch exception: $e');
+    }
+    return null;
+  }
+
+  /// Build the enter-checkout WebView URL from a code.
+  Uri buildEnterCheckoutUri(String code) {
+    return Uri.parse('${ApiConstants.appEnterCheckoutEndpoint}?code=${Uri.encodeComponent(code)}');
+  }
+
+  /// Remove all items from the server-side cart (via Store API).
+  /// Call before re-syncing local items to avoid duplicates.
+  Future<void> clearStoreCart() async {
+    try {
+      final cart = await getStoreCart();
+      if (cart == null) return;
+      final items = (cart['items'] as List<dynamic>?) ?? [];
+      for (final item in items) {
+        final key = item is Map ? item['key']?.toString() : null;
+        if (key != null && key.isNotEmpty) {
+          debugPrint('[StoreAPI] Removing cart item: $key');
+          await removeStoreCartItem(key);
+        }
+      }
+    } catch (e) {
+      debugPrint('[StoreAPI] clearCart exception: $e');
+    }
+  }
+
+  /// Send a POST to the Store API using cart-token / nonce headers.
+  Future<http.Response> _storePost(String url, Map<String, dynamic> data) async {
+    debugPrint('[StoreAPI] POST $url');
+    final response = await client.post(
+      Uri.parse(url),
+      headers: _getStoreApiHeaders(),
+      body: jsonEncode(data),
+    );
+    debugPrint('[StoreAPI] ← ${response.statusCode}');
+    _updateTokensFromResponse(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      debugPrint('[StoreAPI] POST FAILED: ${response.statusCode} ${response.body.length > 300 ? response.body.substring(0, 300) : response.body}');
+    }
+    return response;
   }
 
   /// Extract nonce and cart-token from Store API response headers.

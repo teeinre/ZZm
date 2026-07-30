@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../constants/app_colors.dart';
-import '../../services/api_service.dart';
+import '../../providers/vendor_provider.dart';
 
 /// Dokan Quote Credit - Request for Quote (RFQ) management.
 /// This integrates with the Dokan Quote Credit add-on.
@@ -12,7 +13,6 @@ class VendorQuoteCreditScreen extends StatefulWidget {
 }
 
 class _VendorQuoteCreditScreenState extends State<VendorQuoteCreditScreen> {
-  final ApiService _api = ApiService();
   List<Map<String, dynamic>> _quotes = [];
   bool _isLoading = true;
 
@@ -25,8 +25,8 @@ class _VendorQuoteCreditScreenState extends State<VendorQuoteCreditScreen> {
   Future<void> _loadQuotes() async {
     setState(() => _isLoading = true);
     try {
-      // Fetch quotes from Dokan Quote Credit API
-      final quotes = await _api.getDokanQuotes();
+      final api = context.read<VendorProvider>().apiService;
+      final quotes = await api.getDokanQuotes();
       if (mounted) {
         setState(() {
           _quotes = quotes;

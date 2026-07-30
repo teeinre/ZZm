@@ -6,7 +6,8 @@ import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
 import '../models/cart_item.dart';
 import '../widgets/brand_logo.dart';
-import 'checkout_screen.dart';
+import 'checkout_webview_screen.dart';
+import 'profile_screen.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
@@ -465,9 +466,15 @@ class _CartScreenState extends State<CartScreen> {
   Widget _buildCheckoutButton(double total) {
     return ElevatedButton(
       onPressed: () {
+        final auth = context.read<AuthProvider>();
+        if (!auth.isAuthenticated) {
+          // Auth gate: must log in before WebView bridge checkout
+          _showAuthGate();
+          return;
+        }
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => CheckoutScreen(total: total)),
+          MaterialPageRoute(builder: (context) => const CheckoutWebviewScreen()),
         );
       },
       style: ElevatedButton.styleFrom(
@@ -477,7 +484,92 @@ class _CartScreenState extends State<CartScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
         elevation: 0,
       ),
-      child: const Text('Proceed to Checkout', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+      child: const Text('Proceed to Checkout',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  void _showAuthGate() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: AppColors.creamColor,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.inkSoftColor.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.indigoPaleColor,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Icon(Icons.lock_outline, color: AppColors.indigoColor, size: 30),
+            ),
+            const SizedBox(height: 16),
+            const Text('Login Required',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700,
+                    fontFamily: 'Fraunces', color: AppColors.inkColor)),
+            const SizedBox(height: 8),
+            const Text('You need to log in to complete your purchase. '
+                'This keeps your order history and addresses saved for next time.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.inkSoftColor, fontSize: 13)),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const LoginPage()));
+                },
+                icon: const Icon(Icons.login, size: 20),
+                label: const Text('Log In to Checkout'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.goldColor,
+                  foregroundColor: AppColors.whiteColor,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const RegisterPage()));
+                },
+                icon: const Icon(Icons.person_add_outlined, size: 20),
+                label: const Text('Create an Account'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.indigoColor,
+                  side: const BorderSide(color: AppColors.indigoColor),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
     );
   }
 }
