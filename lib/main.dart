@@ -20,16 +20,14 @@ import 'screens/main_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Android 15 edge-to-edge: make system bars transparent so content
-  // can draw behind them. The enableEdgeToEdge() in MainActivity.kt
-  // handles the native side; this configures the Flutter overlay style
-  // to use dark icons on the light cream background.
+  // Android 15+ edge-to-edge: system bars are transparent by default
+  // when using SystemUiMode.edgeToEdge. Only set icon brightness to ensure
+  // visibility against the app's background. Avoid deprecated color properties
+  // (statusBarColor, systemNavigationBarColor, systemNavigationBarDividerColor)
+  // which trigger the deprecated setStatusBarColor / setNavigationBarColor APIs.
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
-    systemNavigationBarColor: Colors.transparent,
     systemNavigationBarIconBrightness: Brightness.dark,
-    systemNavigationBarDividerColor: Colors.transparent,
   ));
 
   // Allow content to draw edge-to-edge behind system bars
