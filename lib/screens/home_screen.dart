@@ -1209,7 +1209,6 @@ Widget _buildGoLiveCTA() {
         : int.tryParse(productIdRaw?.toString() ?? '0') ?? 0;
 
     final productImage = stream['product_image']?.toString() ?? '';
-    final vendorName = stream['vendor_name']?.toString();
 
     final product = Product(
       id: productId,
