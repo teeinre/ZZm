@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
+import '../constants/api_constants.dart';
 import '../models/category.dart' as cat_model;
 import '../models/product.dart';
 import '../services/api_service.dart';
@@ -166,9 +167,12 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> {
   Future<void> _loadProducts() async {
     try {
       final products = await _api.getProducts(page: _page, category: widget.categoryId);
+      // Filter out excluded vendor products
+      final filtered = products.where((p) =>
+          !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName)).toList();
       if (mounted) {
         setState(() {
-          _products = products;
+          _products = filtered;
           _isLoading = false;
           if (products.length < 10) _hasMore = false;
           _page++;
@@ -184,9 +188,12 @@ class _CategoryProductsPageState extends State<CategoryProductsPage> {
     setState(() => _isLoadingMore = true);
     try {
       final more = await _api.getProducts(page: _page, category: widget.categoryId);
+      // Filter out excluded vendor products
+      final moreFiltered = more.where((p) =>
+          !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName)).toList();
       if (mounted) {
         setState(() {
-          _products.addAll(more);
+          _products.addAll(moreFiltered);
           _page++;
           if (more.length < 10) _hasMore = false;
           _isLoadingMore = false;
