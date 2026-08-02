@@ -4,6 +4,8 @@ import '../constants/api_constants.dart';
 
 class VendorProvider with ChangeNotifier {
   final ApiService _api;
+  final HiveService? _hive;
+  bool _dashboardLoaded = false;
   
   /// Public accessor for the shared (JWT-authenticated) ApiService.
   ApiService get apiService => _api;
@@ -13,7 +15,9 @@ class VendorProvider with ChangeNotifier {
   /// product filtering via the reliable post_author parameter.
   int? _wpUserId;
 
-  VendorProvider({ApiService? apiService}) : _api = apiService ?? ApiService();
+  VendorProvider({ApiService? apiService, HiveService? hiveService})
+      : _api = apiService ?? ApiService(),
+        _hive = hiveService;
 
   // Store info
   Map<String, dynamic>? _storeInfo;
@@ -255,6 +259,7 @@ class VendorProvider with ChangeNotifier {
     }
     _isLoadingStore = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   // ─── Dashboard ───
@@ -326,6 +331,7 @@ class VendorProvider with ChangeNotifier {
 
   Future<void> loadDashboard() async {
     await Future.wait([loadDashboardStats(), loadBalance(), loadAnnouncements()]);
+    _persistDashboard();
   }
 
   // ─── Orders ───
@@ -350,6 +356,7 @@ class VendorProvider with ChangeNotifier {
 
     _isLoadingOrders = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   Future<bool> updateOrderStatus(int orderId, String status) async {
@@ -419,6 +426,7 @@ class VendorProvider with ChangeNotifier {
     }
     _isLoadingProducts = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   Future<bool> deleteVendorProduct(int id) async {
@@ -440,6 +448,7 @@ class VendorProvider with ChangeNotifier {
     } catch (_) {}
     _isLoadingWithdrawals = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   Future<bool> requestWithdrawal(double amount, String method) async {
@@ -461,6 +470,7 @@ class VendorProvider with ChangeNotifier {
     } catch (_) {}
     _isLoadingCoupons = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   Future<bool> deleteCouponById(int id) async {
@@ -485,6 +495,7 @@ class VendorProvider with ChangeNotifier {
     }
     _isLoadingReviews = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   // ─── Announcements ───
@@ -497,6 +508,7 @@ class VendorProvider with ChangeNotifier {
     } catch (_) {}
     _isLoadingAnnouncements = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   /// Clear all vendor data (for logout / session isolation).
@@ -505,12 +517,83 @@ class VendorProvider with ChangeNotifier {
     _vendorId = null;
     _dashboardStats = {};
     _balance = {};
-    _orders = [];
-    _vendorProducts = [];
-    _withdrawals = [];
-    _coupons = [];
-    _reviews = [];
-    _announcements = [];
+    _orders.clear();
+    _vendorProducts.clear();
+    _withdrawals.clear();
+    _coupons.clear();
+    _reviews.clear();
+    _announcements.clear();
+    _dashboardLoaded = false;
     notifyListeners();
+  }
+
+  // ── Hive Persistence ──────────────────────────────────────────────────────
+
+  /// Serialise all dashboard data into a single map for caching.
+  Map<String, dynamic> _serializeDashboard() {
+    return {
+      'store_info': _storeInfo,
+      'vendor_id': _vendorId,
+      'dashboard_stats': _dashboardStats,
+      'balance': _balance,
+      'orders': _orders,
+      'vendor_products': _vendorProducts,
+      'withdrawals': _withdrawals,
+      'coupons': _coupons,
+      'reviews': _reviews,
+      'announcements': _announcements,
+      'saved_at': DateTime.now().toIso8601String(),
+    };
+  }
+
+  /// Persist current dashboard state to Hive.
+  Future<void> _persistDashboard() async {
+    if (_hive == null || _vendorId == null) return;
+    await _hive!.saveVendorDashboard(_vendorId!, _serializeDashboard());
+  }
+
+  /// Restore dashboard state from Hive (cache-first, no network).
+  /// Returns `true` if cached data was available and restored.
+  bool _restoreFromCache() {
+    if (_hive == null || _vendorId == null) return false;
+    final cached = _hive!.getCachedVendorDashboard(_vendorId!);
+    if (cached == null) return false;
+
+    _storeInfo = cached['store_info'] is Map
+        ? Map<String, dynamic>.from(cached['store_info'])
+        : null;
+    _dashboardStats = cached['dashboard_stats'] is Map
+        ? Map<String, dynamic>.from(cached['dashboard_stats'])
+        : {};
+    _balance = cached['balance'] is Map
+        ? Map<String, dynamic>.from(cached['balance'])
+        : {};
+    _orders = (cached['orders'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _vendorProducts = (cached['vendor_products'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _withdrawals = (cached['withdrawals'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _coupons = (cached['coupons'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _reviews = (cached['reviews'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _announcements = (cached['announcements'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _dashboardLoaded = true;
+    notifyListeners();
+    return true;
   }
 }

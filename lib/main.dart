@@ -85,7 +85,7 @@ class ZZmoreStoreApp extends StatelessWidget {
           )..initialize(),
         ),
         ChangeNotifierProvider(
-          create: (_) => VendorProvider(apiService: apiService),
+          create: (_) => VendorProvider(apiService: apiService, hiveService: hiveService),
         ),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(

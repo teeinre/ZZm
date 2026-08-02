@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import '../constants/app_colors.dart';
+import '../constants/api_constants.dart';
 import '../models/product.dart';
 import '../providers/cart_provider.dart';
 import '../services/api_service.dart';
@@ -84,6 +85,16 @@ class _AllLivestreamsScreenState extends State<AllLivestreamsScreen> {
   }
 
   void _addStreamProductToCart(Map<String, dynamic> stream) {
+    final vendorName = stream['vendor_name']?.toString() ?? stream['store_name']?.toString() ?? '';
+    if (ApiConstants.isVendorExcluded(name: vendorName)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This product is not available.')),
+        );
+      }
+      return;
+    }
+
     final productName = stream['product_name']?.toString();
     final productPrice = stream['product_price']?.toString() ?? '0';
     final productIdRaw = stream['product_id'];

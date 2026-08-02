@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../constants/app_colors.dart';
+import '../constants/api_constants.dart';
 import '../models/product.dart';
 import '../providers/cart_provider.dart';
 
@@ -621,6 +622,16 @@ class _LivestreamViewerScreenState extends State<LivestreamViewerScreen> {
 
   /// Add the featured product from a livestream stream to the cart.
   void _addStreamProductToCart(Map<String, dynamic> stream) {
+    final vendorName = stream['vendor_name']?.toString() ?? stream['store_name']?.toString() ?? '';
+    if (ApiConstants.isVendorExcluded(name: vendorName)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This product is not available.')),
+        );
+      }
+      return;
+    }
+
     final productName = stream['product_name']?.toString();
     final productPrice = stream['product_price']?.toString() ?? '0';
     final productIdRaw = stream['product_id'];

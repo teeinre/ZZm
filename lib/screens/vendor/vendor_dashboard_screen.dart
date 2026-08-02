@@ -65,12 +65,16 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
 
       if (resolvedStoreId != null && resolvedStoreId > 0) {
         await vendor.loadStoreInfo(resolvedStoreId);
+        vendor._restoreFromCache();
       }
     }
 
     if (!mounted) return;
 
     // ── STEP 2: Load all vendor data in parallel ──
+    if (vendor.storeInfo != null) {
+      debugPrint('Using cached dashboard data while refreshing...');
+    }
     final vid = vendor.vendorId;
     final futures = <Future<void>>[
       vendor.loadDashboard(),           // stats, balance, announcements
