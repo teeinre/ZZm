@@ -65,7 +65,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
 
       if (resolvedStoreId != null && resolvedStoreId > 0) {
         await vendor.loadStoreInfo(resolvedStoreId);
-        vendor._restoreFromCache();
+        vendor.restoreFromCache();
       }
     }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../services/api_service.dart';
 import '../constants/api_constants.dart';
+import '../cache/hive_service.dart';
 
 class VendorProvider with ChangeNotifier {
   final ApiService _api;
@@ -554,7 +555,7 @@ class VendorProvider with ChangeNotifier {
 
   /// Restore dashboard state from Hive (cache-first, no network).
   /// Returns `true` if cached data was available and restored.
-  bool _restoreFromCache() {
+  bool restoreFromCache() {
     if (_hive == null || _vendorId == null) return false;
     final cached = _hive!.getCachedVendorDashboard(_vendorId!);
     if (cached == null) return false;
