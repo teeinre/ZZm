@@ -161,8 +161,9 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
       // Prevents cross-leaked products from endpoint failures or caches.
       products = products.where((p) {
         // 1) If vendor ID is present on product — must match
-        if (p.vendorId != null && p.vendorId > 0) {
-          return p.vendorId == widget.vendorId;
+        final vid = p.vendorId;
+        if (vid != null && vid > 0) {
+          return vid == widget.vendorId;
         }
         // 2) Else match by vendor name (fallback)
         if (p.vendorName != null &&
