@@ -8,6 +8,7 @@ class HiveService {
   static const String categoriesBox = 'categories';
   static const String cartBox = 'cart';
   static const String settingsBox = 'settings';
+  static const String vendorDashboardBox = 'vendorDashboard';
 
   bool _isInitialized = false;
 
@@ -25,6 +26,7 @@ class HiveService {
   Box get categoriesBoxInstance => Hive.box(categoriesBox);
   Box get cartBoxInstance => Hive.box(cartBox);
   Box get settingsBoxInstance => Hive.box(settingsBox);
+  Box get vendorDashboardBoxInstance => Hive.box(vendorDashboardBox);
 
   Future<void> cacheProducts(List<Product> products) async {
     final box = productsBoxInstance;
@@ -77,10 +79,30 @@ class HiveService {
     await settingsBoxInstance.delete(key);
   }
 
+  /// Save vendor dashboard data under a vendor‑specific key.
+  Future<void> saveVendorDashboard(int vendorId, Map<String, dynamic> data) async {
+    final box = vendorDashboardBoxInstance;
+    await box.put('vendor_$vendorId', data);
+  }
+
+  /// Retrieve cached vendor dashboard data.
+  Map<String, dynamic>? getCachedVendorDashboard(int vendorId) {
+    final box = vendorDashboardBoxInstance;
+    final raw = box.get('vendor_$vendorId');
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return null;
+  }
+
+  /// Clear one vendor's cached dashboard.
+  Future<void> clearVendorDashboard(int vendorId) async {
+    await vendorDashboardBoxInstance.delete('vendor_$vendorId');
+  }
+
   Future<void> clearAll() async {
     await productsBoxInstance.clear();
     await categoriesBoxInstance.clear();
     await cartBoxInstance.clear();
+    await vendorDashboardBoxInstance.clear();
   }
 
   Future<void> close() async {

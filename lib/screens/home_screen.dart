@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../constants/app_colors.dart';
+import '../constants/api_constants.dart';
 import '../providers/products_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/location_provider.dart';
@@ -1188,6 +1189,16 @@ Widget _buildGoLiveCTA() {
 
   /// Add the featured product from a livestream card to the cart.
   void _addLivestreamProductToCart(BuildContext cardContext, Map<String, dynamic> stream) async {
+    final vendorName = stream['vendor_name']?.toString() ?? stream['store_name']?.toString() ?? '';
+    if (ApiConstants.isVendorExcluded(name: vendorName)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This product is not available.')),
+        );
+      }
+      return;
+    }
+
     final productName = stream['product_name']?.toString();
     final productPrice = stream['product_price']?.toString() ?? '0';
     final productIdRaw = stream['product_id'];
@@ -1672,9 +1683,12 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
 
     try {
       final results = await _api.getProducts(search: query, perPage: 50);
+      // Filter out excluded vendor products from search results
+      final filtered = results.where((p) =>
+          !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName)).toList();
       if (mounted) {
         setState(() {
-          _results = results;
+          _results = filtered;
           _isSearching = false;
         });
       }
