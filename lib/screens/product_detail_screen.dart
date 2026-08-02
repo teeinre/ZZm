@@ -3,10 +3,13 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
+import '../constants/api_constants.dart';
 import '../models/product.dart';
+import '../models/cart_item.dart';
 import '../services/api_service.dart';
 import '../providers/currency_provider.dart';
 import '../providers/cart_provider.dart';
+import '../screens/vendor_profile_screen.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final Product product;
@@ -36,6 +39,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   bool _isDescriptionExpanded = false;
   bool _isAddingToCart = false;
   final PageController _pageController = PageController();
+
+  // Subscription: interval selection (weekly/monthly/annual)
+  SubscriptionInterval? _subscriptionInterval;
+  bool _isOneTimePurchase = true;
 
   @override
   void initState() {
@@ -286,6 +293,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         await cartProvider.addToCart(
           cartProduct,
           variationId: _selectedVariationId,
+          subscriptionInterval:
+              _isOneTimePurchase ? null : _subscriptionInterval,
         );
       }
 
@@ -318,6 +327,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Guard: block products from excluded vendors (e.g. vendor 126)
+    final isExcluded = ApiConstants.isVendorExcluded(
+        id: widget.product.vendorId, name: widget.product.vendorName);
     return Scaffold(
       backgroundColor: AppColors.creamColor,
       appBar: AppBar(
@@ -338,7 +350,35 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ),
         centerTitle: false,
       ),
-      body: _buildBody(),
+      body: isExcluded ? _buildExcludedVendor() : _buildBody(),
+    );
+  }
+
+  Widget _buildExcludedVendor() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.block, size: 64, color: AppColors.inkSoftColor),
+            const SizedBox(height: 16),
+            Text('Product Not Available',
+                style: GoogleFonts.fraunces(
+                    fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            const Text('This product is no longer listed.',
+                style: TextStyle(color: AppColors.inkSoftColor)),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.goldColor),
+              child: const Text('Go Back'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -551,6 +591,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             const SizedBox(height: 16),
             _buildVariationOptions(),
           ],
+          if (widget.product.isSubscriptionProduct) ...[
+            const SizedBox(height: 20),
+            _buildSubscriptionSelector(),
+          ],
           const SizedBox(height: 20),
           _buildQuantitySelector(),
           const SizedBox(height: 20),
@@ -562,6 +606,200 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     );
   }
 
+  // ─── Subscription Selector ─────────────────────────────────────────────────
+
+  Widget _buildSubscriptionSelector() {
+    final currency = context.watch<CurrencyProvider>().currencySymbol;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.indigoPaleColor.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.goldColor.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.autorenew, size: 18, color: AppColors.goldColor),
+              const SizedBox(width: 8),
+              Text('Subscription Options',
+                  style: GoogleFonts.fraunces(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.inkColor)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // One-time purchase toggle
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isOneTimePurchase = !_isOneTimePurchase;
+                if (_isOneTimePurchase) _subscriptionInterval = null;
+              });
+            },
+            child: Row(
+              children: [
+                Icon(
+                  _isOneTimePurchase
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: _isOneTimePurchase
+                      ? AppColors.goldColor
+                      : AppColors.inkSoftColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                const Text('One-time purchase',
+                    style: TextStyle(color: AppColors.inkColor, fontSize: 13)),
+                const Spacer(),
+                if (!_isOneTimePurchase) ...[
+                  Text(widget.product.price,
+                      style: const TextStyle(
+                          color: AppColors.inkSoftColor,
+                          fontSize: 13,
+                          decoration: TextDecoration.lineThrough)),
+                ],
+              ],
+            ),
+          ),
+          if (!_isOneTimePurchase) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: SubscriptionInterval.values.map((interval) {
+                final selected = _subscriptionInterval == interval;
+                final label = interval == SubscriptionInterval.weekly
+                    ? 'Weekly'
+                    : interval == SubscriptionInterval.monthly
+                        ? 'Monthly'
+                        : 'Annual';
+                final multiplier = interval == SubscriptionInterval.weekly
+                    ? 1.0
+                    : interval == SubscriptionInterval.monthly
+                        ? 4.0
+                        : 42.0;
+                final basePrice =
+                    double.tryParse(widget.product.price) ?? 0.0;
+                final displayPrice = (basePrice * multiplier).toStringAsFixed(2);
+
+                return Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                        left: interval != SubscriptionInterval.weekly ? 6.0 : 0.0,
+                        right: interval != SubscriptionInterval.annual ? 6.0 : 0.0),
+                    child: InkWell(
+                      onTap: () => setState(
+                          () => _subscriptionInterval = interval),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 10, horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? AppColors.goldColor.withOpacity(0.15)
+                              : AppColors.whiteColor,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: selected
+                                ? AppColors.goldColor
+                                : AppColors.sandColor,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Text(label,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: selected
+                                        ? AppColors.goldColor
+                                        : AppColors.inkSoftColor)),
+                            const SizedBox(height: 4),
+                            Text('$currency$displayPrice',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    fontFamily: 'Fraunces',
+                                    color: selected
+                                        ? AppColors.inkColor
+                                        : AppColors.inkSoftColor)),
+                            if (interval == SubscriptionInterval.annual)
+                              Text('($currency${basePrice.toStringAsFixed(2)}/mo)',
+                                  style: const TextStyle(
+                                      fontSize: 9,
+                                      color: AppColors.inkSoftColor)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+            if (widget.product.trialLabel != null) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF10B981).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color: const Color(0xFF10B981).withOpacity(0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.check_circle_outline,
+                        size: 14, color: Color(0xFF10B981)),
+                    const SizedBox(width: 6),
+                    Text(
+                      widget.product.trialLabel!,
+                      style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF10B981)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+          if (_subscriptionInterval != null) ...[
+            const SizedBox(height: 10),
+            Text(getBillingDescription(),
+                style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.inkSoftColor,
+                    fontStyle: FontStyle.italic)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String getBillingDescription() {
+     final currencySymbol =
+         context.read<CurrencyProvider>().currencySymbol;
+     final price = double.tryParse(widget.product.price) ?? 0.0;
+     String desc;
+     switch (_subscriptionInterval) {
+       case SubscriptionInterval.weekly:
+         desc = 'Billed $currencySymbol${price.toStringAsFixed(2)} every week';
+         break;
+       case SubscriptionInterval.monthly:
+         desc = 'Billed $currencySymbol${(price * 4).toStringAsFixed(2)} every month';
+         break;
+       case SubscriptionInterval.annual:
+         desc = 'Billed $currencySymbol${(price * 42).toStringAsFixed(2)} every year';
+         break;
+       case null:
+         return '';
+     }
+     return desc;
+   }
+
   // ─── Vendor Name ──────────────────────────────────────────────────────────
 
   Widget _buildVendorName() {
@@ -572,8 +810,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
     return InkWell(
       onTap: () {
-        // Navigate to vendor profile screen
-        // Navigate to vendor profile
+        if (widget.product.vendorId != null && widget.product.vendorId! > 0 &&
+            !ApiConstants.isVendorExcluded(id: widget.product.vendorId)) {
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => VendorProfileScreen(
+              vendorId: widget.product.vendorId!,
+              vendorName: vendorName,
+            ),
+          ));
+        }
       },
       child: Row(
         children: [

@@ -200,6 +200,12 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
                         const SizedBox(height: 20),
                         _buildQuickActions(),
                         const SizedBox(height: 20),
+                        _buildInventorySummary(vendor),
+                        const SizedBox(height: 20),
+                        _buildEngagementStats(vendor),
+                        const SizedBox(height: 20),
+                        _buildPerformanceReport(vendor),
+                        const SizedBox(height: 20),
                         _buildAnnouncements(vendor),
                         const SizedBox(height: 24),
                       ],
@@ -532,6 +538,339 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
     }
   }
 
+  Widget _buildInventorySummary(VendorProvider vendor) {
+    final total = vendor.totalProducts;
+    final inStock = vendor.inStockProducts;
+    final oos = vendor.outOfStockProducts;
+    final low = vendor.lowStockProducts;
+    final currency = context.watch<CurrencyProvider>().currencySymbol;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Inventory Levels',
+            style: TextStyle(
+                color: AppColors.inkColor,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'Fraunces')),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.whiteColor,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  _inventoryPill(
+                    'Total',
+                    '$total',
+                    color: AppColors.indigoColor,
+                    icon: Icons.inventory_2_outlined,
+                  ),
+                  const SizedBox(width: 10),
+                  _inventoryPill(
+                    'In stock',
+                    '$inStock',
+                    color: const Color(0xFF10B981),
+                    icon: Icons.check_circle_outline,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  _inventoryPill(
+                    'Low stock',
+                    '$low',
+                    color: AppColors.goldColor,
+                    icon: Icons.warning_amber_outlined,
+                  ),
+                  const SizedBox(width: 10),
+                  _inventoryPill(
+                    'Out of stock',
+                    '$oos',
+                    color: AppColors.coralColor,
+                    icon: Icons.remove_circle_outline,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _inventoryPill(String label, String value,
+      {required Color color, required IconData icon}) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(0.18)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(value,
+                      style: TextStyle(
+                          color: AppColors.inkColor,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'Fraunces')),
+                  const SizedBox(height: 1),
+                  Text(label,
+                      style: const TextStyle(
+                          color: AppColors.inkSoftColor, fontSize: 11)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEngagementStats(VendorProvider vendor) {
+    final currency = context.watch<CurrencyProvider>().currencySymbol;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Customer Engagement',
+            style: TextStyle(
+                color: AppColors.inkColor,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'Fraunces')),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.whiteColor,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: AppColors.goldColor.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.star_rate_rounded,
+                              color: AppColors.goldColor, size: 16),
+                        ),
+                        const SizedBox(width: 8),
+                        Text('${vendor.averageRating.toStringAsFixed(1)}',
+                            style: const TextStyle(
+                                color: AppColors.inkColor,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                fontFamily: 'Fraunces')),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    const Text('Average rating',
+                        style: TextStyle(
+                            color: AppColors.inkSoftColor, fontSize: 11)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.whiteColor,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF8B5CF6).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.rate_review_outlined,
+                              color: Color(0xFF8B5CF6), size: 16),
+                        ),
+                        const SizedBox(width: 8),
+                        Text('${vendor.reviewCount}',
+                            style: const TextStyle(
+                                color: AppColors.inkColor,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                fontFamily: 'Fraunces')),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    const Text('Reviews',
+                        style: TextStyle(
+                            color: AppColors.inkSoftColor, fontSize: 11)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.whiteColor,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF06B6D4).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.account_circle_outlined,
+                              color: Color(0xFF06B6D4), size: 16),
+                        ),
+                        const SizedBox(width: 8),
+                        Text('${vendor.completedOrders}',
+                            style: const TextStyle(
+                                color: AppColors.inkColor,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                fontFamily: 'Fraunces')),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    const Text('Completed orders',
+                        style: TextStyle(
+                            color: AppColors.inkSoftColor, fontSize: 11)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPerformanceReport(VendorProvider vendor) {
+    final currency = context.watch<CurrencyProvider>().currencySymbol;
+    final rate = vendor.completedOrderRate;
+    final aov = vendor.averageOrderValue;
+    final withdrawn = vendor.withdrawnTotal;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Performance Report',
+            style: TextStyle(
+                color: AppColors.inkColor,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'Fraunces')),
+        const SizedBox(height: 12),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.whiteColor,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            children: [
+              _perfRow('Fulfillment rate', '${(rate * 100).toStringAsFixed(0)}%',
+                  rate >= 0.9
+                      ? const Color(0xFF10B981)
+                      : rate >= 0.7
+                          ? AppColors.goldColor
+                          : AppColors.coralColor,
+                  Icons.track_changes_outlined),
+              const Divider(height: 22),
+              _perfRow('Average order value',
+                  '$currency${aov.toStringAsFixed(2)}', AppColors.indigoColor,
+                  Icons.payments_outlined),
+              const Divider(height: 22),
+              _perfRow(
+                  'Pending orders',
+                  '${vendor.pendingOrders}',
+                  vendor.pendingOrders > 0
+                      ? AppColors.coralColor
+                      : const Color(0xFF10B981),
+                  Icons.pending_outlined),
+              const Divider(height: 22),
+              _perfRow('Total withdrawn',
+                  '$currency${withdrawn.toStringAsFixed(2)}', AppColors.inkSoftColor,
+                  Icons.account_balance_wallet_outlined),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _perfRow(String label, String value, Color accent, IconData icon) {
+    return Row(
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: accent.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: accent, size: 18),
+        ),
+        const SizedBox(width: 12),
+        Text(label,
+            style:
+                const TextStyle(color: AppColors.inkSoftColor, fontSize: 13)),
+        const Spacer(),
+        Text(value,
+            style: TextStyle(
+                color: AppColors.inkColor,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'Fraunces')),
+      ],
+    );
+  }
+
   Widget _buildAnnouncements(VendorProvider vendor) {
     final items = vendor.announcements;
     if (items.isEmpty) return const SizedBox.shrink();
@@ -583,7 +922,8 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                  color: AppColors.inkSoftColor, fontSize: 11)),
+                                  color: AppColors.inkSoftColor,
+                                  fontSize: 11)),
                         ],
                       ],
                     ),
