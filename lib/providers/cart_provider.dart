@@ -123,9 +123,13 @@ class CartProvider with ChangeNotifier {
 
   // ── Mutations (all sync to both local + server) ──
 
-  Future<void> addToCart(Product product, {String? variationId}) async {
-    final existingIndex = _cartItems.indexWhere(
-      (item) => item.product.id == product.id && item.variationId == variationId);
+  Future<void> addToCart(Product product,
+      {String? variationId,
+      SubscriptionInterval? subscriptionInterval}) async {
+    final existingIndex = _cartItems.indexWhere((item) =>
+        item.product.id == product.id &&
+        item.variationId == variationId &&
+        item.subscriptionInterval == subscriptionInterval);
     if (existingIndex >= 0) {
       _cartItems[existingIndex].quantity++;
     } else {
@@ -133,12 +137,14 @@ class CartProvider with ChangeNotifier {
         cartItemId: DateTime.now().millisecondsSinceEpoch.toString(),
         product: product,
         variationId: variationId,
+        subscriptionInterval: subscriptionInterval,
       );
       _cartItems.add(cartItem);
     }
     notifyListeners();
     await _saveLocalCart();
-    _syncToServer(product.id, variationId != null ? int.tryParse(variationId) : null);
+    _syncToServer(product.id,
+        variationId != null ? int.tryParse(variationId) : null);
   }
 
   Future<void> removeFromCart(String cartItemId) async {
@@ -238,12 +244,7 @@ class CartProvider with ChangeNotifier {
   }
 
   Future<void> _saveLocalCart() async {
-    final cartJson = _cartItems.map((item) => {
-      'cartItemId': item.cartItemId,
-      'product': item.product.toJson(),
-      'quantity': item.quantity,
-      'variationId': item.variationId,
-    }).toList();
+    final cartJson = _cartItems.map((item) => item.toJson()).toList();
     await hiveService.saveCart(cartJson);
   }
 

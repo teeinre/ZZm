@@ -41,15 +41,24 @@ class ProductsProvider with ChangeNotifier {
   String? get selectedCategory => _selectedCategory;
   bool get initialized => _initialized;
 
-  /// Filters out products from excluded vendor stores.
+  /// Filters out products from excluded vendor stores (by name OR by ID).
   List<Product> _filterExcluded(List<Product> list) {
-    if (ApiConstants.excludedVendorNames.isEmpty) return list;
     return list.where((p) {
-      final vendorName = p.vendorName?.toLowerCase() ?? '';
-      return !ApiConstants.excludedVendorNames.any(
-        (excluded) => vendorName.contains(excluded.toLowerCase()),
-      );
+      if (ApiConstants.isVendorExcluded(
+          id: p.vendorId, name: p.vendorName)) {
+        return false;
+      }
+      return true;
     }).toList();
+  }
+
+  /// Returns only products whose vendor matches the given [vendorId].
+  /// Used on the vendor profile screen — also runs the exclusion filter
+  /// so blocked vendor products never leak through even if ID matches.
+  List<Product> productsByVendor(int vendorId) {
+    return _filterExcluded(_products)
+        .where((p) => p.vendorId == vendorId)
+        .toList();
   }
 
   Future<void> loadCategories({bool force = false}) async {

@@ -54,19 +54,32 @@ class _AllLivestreamsScreenState extends State<AllLivestreamsScreen> {
   }
 
   void _openStreamViewer(int index) {
-    final active = _streams.where((s) {
-      final rawStatus = s['status'];
-      final status = rawStatus?.toString().toLowerCase() ?? '';
-      return status == 'live' || status.isEmpty;
-    }).toList();
-    final idx = active.indexWhere((s) => s['id'] == _streams[index]['id']);
-    if (idx >= 0) {
-      Navigator.push(context, MaterialPageRoute(
-        builder: (_) => LivestreamViewerScreen(
-          streams: active.cast<Map<String, dynamic>>(),
-          initialIndex: idx,
-        ),
-      ));
+    try {
+      final active = _streams.where((s) {
+        final rawStatus = s['status'];
+        final status = rawStatus?.toString().toLowerCase() ?? '';
+        return status == 'live' || status.isEmpty;
+      }).toList();
+      final idx = active.indexWhere((s) => s['id'] == _streams[index]['id']);
+      if (idx >= 0) {
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => LivestreamViewerScreen(
+            streams: active.cast<Map<String, dynamic>>(),
+            initialIndex: idx,
+          ),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open stream: ${e.toString()}'),
+            backgroundColor: AppColors.coralColor,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 
@@ -280,6 +293,7 @@ class _AllLivestreamsScreenState extends State<AllLivestreamsScreen> {
 
     return GestureDetector(
       onTap: () => _openStreamViewer(index),
+      onLongPress: () => _loadAllStreams(),
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.whiteColor,

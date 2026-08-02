@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
+import '../constants/api_constants.dart';
 import '../services/api_service.dart';
 import '../services/storage_service.dart';
 import '../models/product.dart';
 import '../widgets/product_tile.dart';
+import '../providers/products_provider.dart';
+import 'product_detail_screen.dart';
 
 class VendorProfileScreen extends StatefulWidget {
   final int vendorId;
@@ -48,6 +52,18 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
+    // ── Guard: block access to excluded vendor profiles (e.g. vendor 126) ──
+    if (ApiConstants.isVendorExcluded(
+        id: widget.vendorId, name: widget.vendorName)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _isLoadingVendor = false;
+          _vendorError = 'This store is no longer available.';
+        });
+      });
+      return;
+    }
     _loadFollowState();
     _loadVendorData();
   }
@@ -100,13 +116,15 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   Future<void> _loadProducts() async {
     setState(() => _isLoadingProducts = true);
     try {
-      // Use Dokan REST API store products endpoint (proper vendor scoping)
-      List<Product> products = await _apiService.getDokanStoreProducts(
+      List<Product> products;
+
+      // ── Step 1: vendor-scoped Dokan endpoint (preferred) ──
+      products = await _apiService.getDokanStoreProducts(
         widget.vendorId,
         perPage: 50,
       );
 
-      // Fallback to author-based WC API
+      // ── Step 2: author-based WC API fallback ──
       if (products.isEmpty) {
         final uid = _vendorUserId ?? widget.vendorId;
         if (uid != null && uid > 0) {
@@ -118,7 +136,7 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
         }
       }
 
-      // Ultimate fallback: vendor-api.php
+      // ── Step 3: vendor-api.php fallback ──
       if (products.isEmpty) {
         final raw = await _apiService.getVendorApiProducts(perPage: 50);
         products = raw.where((p) => p['id'] != null).map<Product>((p) => Product(
@@ -137,6 +155,31 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
           categories: const [],
         )).toList();
       }
+
+      // ── Strict product scoping ──
+      // Only keep products that actually belong to this vendor.
+      // Prevents cross-leaked products from endpoint failures or caches.
+      products = products.where((p) {
+        // 1) If vendor ID is present on product — must match
+        if (p.vendorId != null && p.vendorId > 0) {
+          return p.vendorId == widget.vendorId;
+        }
+        // 2) Else match by vendor name (fallback)
+        if (p.vendorName != null &&
+            p.vendorName!.isNotEmpty &&
+            _storeName != 'Vendor Store') {
+          return p.vendorName!.toLowerCase() == _storeName.toLowerCase() ||
+              p.vendorName!.toLowerCase().contains(
+                  _storeName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), ''));
+        }
+        // 3) No vendor metadata at all — keep only if we have strong
+        //    endpoint guarantees (Dokan store-scoped endpoint already applied above)
+        return true;
+      }).toList();
+
+      // Also ensure any excluded vendor's products never leak
+      products = products.where((p) => !ApiConstants.isVendorExcluded(
+          id: p.vendorId, name: p.vendorName)).toList();
 
       if (!mounted) return;
       setState(() {

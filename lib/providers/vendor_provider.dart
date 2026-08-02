@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../services/api_service.dart';
+import '../constants/api_constants.dart';
 
 class VendorProvider with ChangeNotifier {
   final ApiService _api;
@@ -73,6 +74,16 @@ class VendorProvider with ChangeNotifier {
   List<Map<String, dynamic>> get announcements => _announcements;
   bool get isLoadingAnnouncements => _isLoadingAnnouncements;
 
+  List<Map<String, dynamic>> _vendors = [];
+
+  List<Map<String, dynamic>> get filteredVendors {
+    return _vendors.where((v) {
+      final id = v['id'] is int ? v['id'] as int : int.tryParse(v['id']?.toString() ?? '');
+      final name = v['store_name']?.toString() ?? v['name']?.toString() ?? '';
+      return !ApiConstants.isVendorExcluded(id: id, name: name);
+    }).toList().cast<Map<String, dynamic>>();
+  }
+
   // Error tracking
   String? _dashboardError;
   String? get dashboardError => _dashboardError;
@@ -145,6 +156,64 @@ class VendorProvider with ChangeNotifier {
     }
     // Fall back to loaded vendor products list
     return _vendorProducts.length;
+  }
+
+  /// ── Inventory levels (computed from loaded vendor products) ──
+  int get inStockProducts {
+    int count = 0;
+    for (final p in _vendorProducts) {
+      final s = p['stock_status']?.toString();
+      if (s == 'instock' || s == null) count++;
+    }
+    return count;
+  }
+
+  int get outOfStockProducts => totalProducts - inStockProducts;
+
+  int get lowStockProducts {
+    int count = 0;
+    for (final p in _vendorProducts) {
+      final q = int.tryParse(p['stock_quantity']?.toString() ?? '');
+      if (q != null && q > 0 && q <= 5) count++;
+    }
+    return count;
+  }
+
+  /// ── Engagement / customer statistics ──
+  int get reviewCount {
+    // Try dashboard stats first, else fallback to reviews list
+    final r = _dashboardStats['reviews'] ?? _dashboardStats['total_reviews'];
+    if (r is int) return r;
+    if (r is String) return int.tryParse(r) ?? _reviews.length;
+    return _reviews.length;
+  }
+
+  double get averageRating {
+    final v = _storeInfo?['rating'] ?? _dashboardStats['average_rating'];
+    if (v is num) return v.toDouble();
+    return double.tryParse(v?.toString() ?? '') ?? 0.0;
+  }
+
+  /// ── Performance report helpers ──
+  double get completedOrderRate {
+    if (totalOrders <= 0) return 0.0;
+    return completedOrders / totalOrders;
+  }
+
+  double get averageOrderValue {
+    if (totalOrders <= 0) return 0.0;
+    return totalSales / totalOrders;
+  }
+
+  /// ── Withdrawal summary ──
+  double get withdrawnTotal {
+    double sum = 0.0;
+    for (final w in _withdrawals) {
+      final amount = double.tryParse(
+          (w['amount'] ?? w['amount_display'] ?? '0').toString());
+      if (amount != null) sum += amount;
+    }
+    return sum;
   }
 
   double get currentBalance {
