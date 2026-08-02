@@ -23,3 +23,6 @@
 # ── Kotlin coroutines ──
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+
+# -- Google Play Core (deferred components � not used, suppress R8 warnings) --
+-dontwarn com.google.android.play.core.**
