@@ -22,6 +22,14 @@ class Product extends Equatable {
   final String? icon;
   final String? color;
 
+  // WooCommerce Subscriptions plugin fields
+  final bool isSubscription;
+  final String? subscriptionPeriod; // day, week, month, year
+  final int? subscriptionPeriodInterval;
+  final String? subscriptionSignUpFee;
+  final int? subscriptionTrialLength;
+  final String? subscriptionTrialPeriod;
+
   const Product({
     required this.id,
     required this.name,
@@ -43,9 +51,43 @@ class Product extends Equatable {
     required this.ratingCount,
     this.icon,
     this.color,
+    this.isSubscription = false,
+    this.subscriptionPeriod,
+    this.subscriptionPeriodInterval,
+    this.subscriptionSignUpFee,
+    this.subscriptionTrialLength,
+    this.subscriptionTrialPeriod,
   });
 
   bool get isVariable => type == 'variable';
+  bool get isSubscriptionProduct =>
+      isSubscription || type == 'subscription' || type == 'variable-subscription';
+
+  String? get billingIntervalLabel {
+    final p = subscriptionPeriod;
+    final i = subscriptionPeriodInterval ?? 1;
+    if (p == null) return null;
+    final intervals = {
+      'day': i == 1 ? 'Day' : '$i Days',
+      'week': i == 1 ? 'Week' : '$i Weeks',
+      'month': i == 1 ? 'Month' : '$i Months',
+      'year': i == 1 ? 'Year' : '$i Years',
+    };
+    return intervals[p];
+  }
+
+  String? get trialLabel {
+    final length = subscriptionTrialLength;
+    final period = subscriptionTrialPeriod;
+    if (length == null || length <= 0 || period == null) return null;
+    final intervals = {
+      'day': length == 1 ? 'day free trial' : '$length-day free trial',
+      'week': length == 1 ? 'week free trial' : '$length-week free trial',
+      'month': length == 1 ? 'month free trial' : '$length-month free trial',
+      'year': length == 1 ? 'year free trial' : '$length-year free trial',
+    };
+    return intervals[period];
+  }
 
   factory Product.fromJson(Map<String, dynamic> json) {
     List<String> images = [];
@@ -82,17 +124,53 @@ class Product extends Equatable {
       vendorId = store['id'] is int ? store['id'] as int : int.tryParse(store['id']?.toString() ?? '');
     }
 
+    final typeStr = json['type']?.toString();
+    final bool isSub = (typeStr == 'subscription' ||
+        typeStr == 'variable-subscription' ||
+        (json['meta_data'] as List<dynamic>?)?.any((m) {
+              final mm = m is Map ? Map<String, dynamic>.from(m) : null;
+              if (mm == null) return false;
+              final k = mm['key']?.toString() ?? '';
+              return k.startsWith('_subscription') ||
+                  k.contains('subscription_period');
+            }) ==
+            true);
+
+    // Subscription fields
+    final mList = json['meta_data'] as List<dynamic>?;
+    final meta = <String, dynamic>{};
+    if (mList != null) {
+      for (final m in mList) {
+        final mm = m is Map ? Map<String, dynamic>.from(m) : null;
+        if (mm != null && mm['key'] != null) {
+          meta[mm['key'].toString()] = mm['value'];
+        }
+      }
+    }
+    final period =
+        (meta['_subscription_period'] ?? json['subscription_period']).toString();
+    final intervalRaw =
+        meta['_subscription_period_interval'] ?? json['subscription_period_interval'];
+    final trialRaw =
+        meta['_subscription_trial_length'] ?? json['subscription_trial_length'];
+    final signUpFee = (meta['_subscription_sign_up_fee'] ?? json['subscription_sign_up_fee'])
+        ?.toString();
+    final trialPeriod =
+        (meta['_subscription_trial_period'] ?? json['subscription_trial_period'])
+            .toString();
+
     return Product(
       id: json['id'] as int,
       name: json['name']?.toString() ?? '',
-      type: json['type']?.toString(),
+      type: typeStr,
       shortDescription: json['short_description']?.toString(),
       sku: json['sku']?.toString(),
       price: json['price']?.toString() ?? '0',
       regularPrice: json['regular_price']?.toString(),
       salePrice: json['sale_price']?.toString(),
       onSale: json['on_sale'] as bool? ?? false,
-      inStock: json['stock_status']?.toString() == 'instock' || (json['in_stock'] as bool? ?? true),
+      inStock: json['stock_status']?.toString() == 'instock' ||
+          (json['in_stock'] as bool? ?? true),
       stockQuantity: json['stock_quantity'] as int? ?? 0,
       images: images,
       categories: categories,
@@ -100,6 +178,15 @@ class Product extends Equatable {
       vendorId: vendorId,
       rating: rating,
       ratingCount: ratingCount,
+      isSubscription: isSub,
+      subscriptionPeriod: period.isNotEmpty ? period : null,
+      subscriptionPeriodInterval: intervalRaw is int
+          ? intervalRaw
+          : int.tryParse(intervalRaw?.toString() ?? ''),
+      subscriptionSignUpFee: signUpFee?.isNotEmpty == true ? signUpFee : null,
+      subscriptionTrialLength:
+          trialRaw is int ? trialRaw : int.tryParse(trialRaw?.toString() ?? ''),
+      subscriptionTrialPeriod: trialPeriod.isNotEmpty ? trialPeriod : null,
     );
   }
 
@@ -122,6 +209,12 @@ class Product extends Equatable {
       'vendor_id': vendorId,
       'rating': rating,
       'rating_count': ratingCount,
+      'is_subscription': isSubscription,
+      'subscription_period': subscriptionPeriod,
+      'subscription_period_interval': subscriptionPeriodInterval,
+      'subscription_sign_up_fee': subscriptionSignUpFee,
+      'subscription_trial_length': subscriptionTrialLength,
+      'subscription_trial_period': subscriptionTrialPeriod,
     };
   }
 
@@ -145,6 +238,12 @@ class Product extends Equatable {
     int? ratingCount,
     String? icon,
     String? color,
+    bool? isSubscription,
+    String? subscriptionPeriod,
+    int? subscriptionPeriodInterval,
+    String? subscriptionSignUpFee,
+    int? subscriptionTrialLength,
+    String? subscriptionTrialPeriod,
   }) {
     return Product(
       id: id ?? this.id,
@@ -166,6 +265,12 @@ class Product extends Equatable {
       ratingCount: ratingCount ?? this.ratingCount,
       icon: icon ?? this.icon,
       color: color ?? this.color,
+      isSubscription: isSubscription ?? this.isSubscription,
+      subscriptionPeriod: subscriptionPeriod ?? this.subscriptionPeriod,
+      subscriptionPeriodInterval: subscriptionPeriodInterval ?? this.subscriptionPeriodInterval,
+      subscriptionSignUpFee: subscriptionSignUpFee ?? this.subscriptionSignUpFee,
+      subscriptionTrialLength: subscriptionTrialLength ?? this.subscriptionTrialLength,
+      subscriptionTrialPeriod: subscriptionTrialPeriod ?? this.subscriptionTrialPeriod,
     );
   }
 
@@ -188,6 +293,12 @@ class Product extends Equatable {
         vendorId,
         rating,
         ratingCount,
+        isSubscription,
+        subscriptionPeriod,
+        subscriptionPeriodInterval,
+        subscriptionSignUpFee,
+        subscriptionTrialLength,
+        subscriptionTrialPeriod,
       ];
 }
 

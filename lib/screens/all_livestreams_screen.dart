@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import '../constants/app_colors.dart';
+import '../constants/api_constants.dart';
 import '../models/product.dart';
 import '../providers/cart_provider.dart';
 import '../services/api_service.dart';
@@ -54,23 +55,46 @@ class _AllLivestreamsScreenState extends State<AllLivestreamsScreen> {
   }
 
   void _openStreamViewer(int index) {
-    final active = _streams.where((s) {
-      final rawStatus = s['status'];
-      final status = rawStatus?.toString().toLowerCase() ?? '';
-      return status == 'live' || status.isEmpty;
-    }).toList();
-    final idx = active.indexWhere((s) => s['id'] == _streams[index]['id']);
-    if (idx >= 0) {
-      Navigator.push(context, MaterialPageRoute(
-        builder: (_) => LivestreamViewerScreen(
-          streams: active.cast<Map<String, dynamic>>(),
-          initialIndex: idx,
-        ),
-      ));
+    try {
+      final active = _streams.where((s) {
+        final rawStatus = s['status'];
+        final status = rawStatus?.toString().toLowerCase() ?? '';
+        return status == 'live' || status.isEmpty;
+      }).toList();
+      final idx = active.indexWhere((s) => s['id'] == _streams[index]['id']);
+      if (idx >= 0) {
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => LivestreamViewerScreen(
+            streams: active.cast<Map<String, dynamic>>(),
+            initialIndex: idx,
+          ),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open stream: ${e.toString()}'),
+            backgroundColor: AppColors.coralColor,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 
   void _addStreamProductToCart(Map<String, dynamic> stream) {
+    final vendorName = stream['vendor_name']?.toString() ?? stream['store_name']?.toString() ?? '';
+    if (ApiConstants.isVendorExcluded(name: vendorName)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This product is not available.')),
+        );
+      }
+      return;
+    }
+
     final productName = stream['product_name']?.toString();
     final productPrice = stream['product_price']?.toString() ?? '0';
     final productIdRaw = stream['product_id'];
@@ -280,6 +304,7 @@ class _AllLivestreamsScreenState extends State<AllLivestreamsScreen> {
 
     return GestureDetector(
       onTap: () => _openStreamViewer(index),
+      onLongPress: () => _loadAllStreams(),
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.whiteColor,

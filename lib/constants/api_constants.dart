@@ -66,11 +66,30 @@ class ApiConstants {
   // App Bridge (mu-plugin: zzmore-app-checkout.php)
   static const String appV1Base = '$baseUrl/app/v1';
 
-  // ── Product Exclusion ──
+  // ── Product / Vendor Exclusion ──
   /// Vendor store names/slugs whose products should be hidden from customer-facing views.
   static const List<String> excludedVendorNames = [
     'zzmore-wholesale',
   ];
+
+  /// Vendor IDs whose content (profile + products) should be completely hidden
+  /// from the app. Prefer ID-based filtering for deterministic behaviour.
+  static const List<int> excludedVendorIds = [
+    126,
+  ];
+
+  /// Returns `true` if a vendor with the given [id] or [name] is in the
+  /// exclusion lists and should be suppressed from all customer-facing UI.
+  static bool isVendorExcluded({int? id, String? name}) {
+    if (id != null && excludedVendorIds.contains(id)) return true;
+    if (name != null && name.isNotEmpty) {
+      final lower = name.toLowerCase();
+      if (excludedVendorNames.any((e) => lower.contains(e.toLowerCase()))) {
+        return true;
+      }
+    }
+    return false;
+  }
   static const String appPrepareCheckoutEndpoint = '$appV1Base/prepare-checkout';
   static const String appEnterCheckoutEndpoint = '$appV1Base/enter-checkout';
   static const String appOrderEndpoint = '$appV1Base/order'; // append /{id}?key=xxx
