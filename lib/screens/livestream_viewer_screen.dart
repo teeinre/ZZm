@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../constants/app_colors.dart';
+import '../constants/api_constants.dart';
 import '../models/product.dart';
 import '../providers/cart_provider.dart';
 
@@ -35,15 +37,30 @@ class _LivestreamViewerScreenState extends State<LivestreamViewerScreen> {
   final Map<int, bool> _pageErrored = {};
   final Map<int, String> _pageStreamType = {}; // tracks 'youtube', 'twitch', etc per page
 
+  bool _isStreamLoading = true;
+  bool _hasStreamError = false;
+  int _viewerCount = 0;
+  Timer? _heartbeatTimer;
+
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex.clamp(0, widget.streams.length - 1);
     _pageController = PageController(initialPage: _currentIndex);
+
+    // Simulate viewer heartbeat every 30 seconds
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) {
+        setState(() {
+          _viewerCount += 1;
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
+    _heartbeatTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -78,16 +95,24 @@ class _LivestreamViewerScreenState extends State<LivestreamViewerScreen> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) {
-            if (mounted) setState(() => _pageLoaded[index] = false);
+            if (mounted) setState(() {
+              _pageLoaded[index] = false;
+              _isStreamLoading = true;
+            });
           },
           onPageFinished: (_) {
-            if (mounted) setState(() => _pageLoaded[index] = true);
+            if (mounted) setState(() {
+              _pageLoaded[index] = true;
+              _isStreamLoading = false;
+            });
           },
           onWebResourceError: (error) {
             if (mounted) {
               setState(() {
                 _pageErrored[index] = true;
                 _pageLoaded[index] = true;
+                _isStreamLoading = false;
+                _hasStreamError = true;
               });
             }
           },
@@ -597,6 +622,16 @@ class _LivestreamViewerScreenState extends State<LivestreamViewerScreen> {
 
   /// Add the featured product from a livestream stream to the cart.
   void _addStreamProductToCart(Map<String, dynamic> stream) {
+    final vendorName = stream['vendor_name']?.toString() ?? stream['store_name']?.toString() ?? '';
+    if (ApiConstants.isVendorExcluded(name: vendorName)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This product is not available.')),
+        );
+      }
+      return;
+    }
+
     final productName = stream['product_name']?.toString();
     final productPrice = stream['product_price']?.toString() ?? '0';
     final productIdRaw = stream['product_id'];

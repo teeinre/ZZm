@@ -1,8 +1,12 @@
 import 'package:flutter/foundation.dart';
 import '../services/api_service.dart';
+import '../constants/api_constants.dart';
+import '../cache/hive_service.dart';
 
 class VendorProvider with ChangeNotifier {
   final ApiService _api;
+  final HiveService? _hive;
+  bool _dashboardLoaded = false;
   
   /// Public accessor for the shared (JWT-authenticated) ApiService.
   ApiService get apiService => _api;
@@ -12,7 +16,9 @@ class VendorProvider with ChangeNotifier {
   /// product filtering via the reliable post_author parameter.
   int? _wpUserId;
 
-  VendorProvider({ApiService? apiService}) : _api = apiService ?? ApiService();
+  VendorProvider({ApiService? apiService, HiveService? hiveService})
+      : _api = apiService ?? ApiService(),
+        _hive = hiveService;
 
   // Store info
   Map<String, dynamic>? _storeInfo;
@@ -72,6 +78,16 @@ class VendorProvider with ChangeNotifier {
   bool get isLoadingReviews => _isLoadingReviews;
   List<Map<String, dynamic>> get announcements => _announcements;
   bool get isLoadingAnnouncements => _isLoadingAnnouncements;
+
+  List<Map<String, dynamic>> _vendors = [];
+
+  List<Map<String, dynamic>> get filteredVendors {
+    return _vendors.where((v) {
+      final id = v['id'] is int ? v['id'] as int : int.tryParse(v['id']?.toString() ?? '');
+      final name = v['store_name']?.toString() ?? v['name']?.toString() ?? '';
+      return !ApiConstants.isVendorExcluded(id: id, name: name);
+    }).toList().cast<Map<String, dynamic>>();
+  }
 
   // Error tracking
   String? _dashboardError;
@@ -147,6 +163,64 @@ class VendorProvider with ChangeNotifier {
     return _vendorProducts.length;
   }
 
+  /// ── Inventory levels (computed from loaded vendor products) ──
+  int get inStockProducts {
+    int count = 0;
+    for (final p in _vendorProducts) {
+      final s = p['stock_status']?.toString();
+      if (s == 'instock' || s == null) count++;
+    }
+    return count;
+  }
+
+  int get outOfStockProducts => totalProducts - inStockProducts;
+
+  int get lowStockProducts {
+    int count = 0;
+    for (final p in _vendorProducts) {
+      final q = int.tryParse(p['stock_quantity']?.toString() ?? '');
+      if (q != null && q > 0 && q <= 5) count++;
+    }
+    return count;
+  }
+
+  /// ── Engagement / customer statistics ──
+  int get reviewCount {
+    // Try dashboard stats first, else fallback to reviews list
+    final r = _dashboardStats['reviews'] ?? _dashboardStats['total_reviews'];
+    if (r is int) return r;
+    if (r is String) return int.tryParse(r) ?? _reviews.length;
+    return _reviews.length;
+  }
+
+  double get averageRating {
+    final v = _storeInfo?['rating'] ?? _dashboardStats['average_rating'];
+    if (v is num) return v.toDouble();
+    return double.tryParse(v?.toString() ?? '') ?? 0.0;
+  }
+
+  /// ── Performance report helpers ──
+  double get completedOrderRate {
+    if (totalOrders <= 0) return 0.0;
+    return completedOrders / totalOrders;
+  }
+
+  double get averageOrderValue {
+    if (totalOrders <= 0) return 0.0;
+    return totalSales / totalOrders;
+  }
+
+  /// ── Withdrawal summary ──
+  double get withdrawnTotal {
+    double sum = 0.0;
+    for (final w in _withdrawals) {
+      final amount = double.tryParse(
+          (w['amount'] ?? w['amount_display'] ?? '0').toString());
+      if (amount != null) sum += amount;
+    }
+    return sum;
+  }
+
   double get currentBalance {
     final b = _balance['current_balance']?.toString() ?? '0';
     return double.tryParse(b) ?? 0;
@@ -186,6 +260,7 @@ class VendorProvider with ChangeNotifier {
     }
     _isLoadingStore = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   // ─── Dashboard ───
@@ -194,7 +269,7 @@ class VendorProvider with ChangeNotifier {
     _isLoadingStats = true;
     notifyListeners();
     try {
-      _dashboardStats = await _api.getVendorReports();
+      _dashboardStats = await _api.getVendorReports(vendorId: _vendorId ?? vendorUserId);
     } catch (_) {
       _dashboardStats = {};
     }
@@ -257,13 +332,18 @@ class VendorProvider with ChangeNotifier {
 
   Future<void> loadDashboard() async {
     await Future.wait([loadDashboardStats(), loadBalance(), loadAnnouncements()]);
+    _persistDashboard();
   }
 
   // ─── Orders ───
 
   Future<void> loadOrders({String? status}) async {
-    _isLoadingOrders = true;
-    notifyListeners();
+    // Only show loading spinner if we have no cached data — avoids
+    // masking cache-restored orders while the background refresh runs.
+    if (_orders.isEmpty) {
+      _isLoadingOrders = true;
+      notifyListeners();
+    }
     try {
       _orders = await _api.getVendorOrders(
         status: status,
@@ -281,6 +361,7 @@ class VendorProvider with ChangeNotifier {
 
     _isLoadingOrders = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   Future<bool> updateOrderStatus(int orderId, String status) async {
@@ -306,8 +387,11 @@ class VendorProvider with ChangeNotifier {
       notifyListeners();
       return;
     }
-    _isLoadingProducts = true;
-    notifyListeners();
+    // Only show loading spinner if we have no cached data.
+    if (_vendorProducts.isEmpty) {
+      _isLoadingProducts = true;
+      notifyListeners();
+    }
     try {
       final products = await _api.getVendorProducts(effectiveId,
         perPage: 100,
@@ -350,6 +434,7 @@ class VendorProvider with ChangeNotifier {
     }
     _isLoadingProducts = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   Future<bool> deleteVendorProduct(int id) async {
@@ -369,8 +454,22 @@ class VendorProvider with ChangeNotifier {
     try {
       _withdrawals = await _api.getVendorWithdrawals();
     } catch (_) {}
+    // Fallback via vendor-api.php balance (returns withdrawals array)
+    if (_withdrawals.isEmpty) {
+      try {
+        final apiBalance = await _api.getVendorApiBalance();
+        if (apiBalance != null && apiBalance.containsKey('withdrawals')) {
+          final wList = apiBalance['withdrawals'];
+          if (wList is List && wList.isNotEmpty) {
+            _withdrawals = wList.map((w) => Map<String, dynamic>.from(w)).toList();
+            debugPrint('[VendorProvider] Loaded withdrawals from vendor-api.php bypass (${_withdrawals.length}).');
+          }
+        }
+      } catch (_) {}
+    }
     _isLoadingWithdrawals = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   Future<bool> requestWithdrawal(double amount, String method) async {
@@ -390,8 +489,16 @@ class VendorProvider with ChangeNotifier {
     try {
       _coupons = await _api.getVendorCoupons();
     } catch (_) {}
+    // Fallback to vendor-api.php
+    if (_coupons.isEmpty) {
+      try {
+        _coupons = await _api.getVendorApiCoupons();
+        debugPrint('[VendorProvider] Loaded coupons from vendor-api.php bypass (${_coupons.length}).');
+      } catch (_) {}
+    }
     _isLoadingCoupons = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   Future<bool> deleteCouponById(int id) async {
@@ -409,13 +516,14 @@ class VendorProvider with ChangeNotifier {
     _isLoadingReviews = true;
     notifyListeners();
     try {
-      _reviews = await _api.getVendorReviews();
-      debugPrint('[VendorProvider] Loaded ${_reviews.length} reviews');
+      _reviews = await _api.getVendorReviews(vendorUserId: vendorUserId);
+      debugPrint('[VendorProvider] Loaded ${_reviews.length} reviews (vendor-scoped)');
     } catch (e) {
       debugPrint('[VendorProvider] loadReviews error: $e');
     }
     _isLoadingReviews = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   // ─── Announcements ───
@@ -428,6 +536,7 @@ class VendorProvider with ChangeNotifier {
     } catch (_) {}
     _isLoadingAnnouncements = false;
     notifyListeners();
+    _persistDashboard();
   }
 
   /// Clear all vendor data (for logout / session isolation).
@@ -436,12 +545,88 @@ class VendorProvider with ChangeNotifier {
     _vendorId = null;
     _dashboardStats = {};
     _balance = {};
-    _orders = [];
-    _vendorProducts = [];
-    _withdrawals = [];
-    _coupons = [];
-    _reviews = [];
-    _announcements = [];
+    _orders.clear();
+    _vendorProducts.clear();
+    _withdrawals.clear();
+    _coupons.clear();
+    _reviews.clear();
+    _announcements.clear();
+    _dashboardLoaded = false;
     notifyListeners();
+  }
+
+  // ── Hive Persistence ──────────────────────────────────────────────────────
+
+  /// Serialise all dashboard data into a single map for caching.
+  Map<String, dynamic> _serializeDashboard() {
+    return {
+      'store_info': _storeInfo,
+      'vendor_id': _vendorId,
+      'dashboard_stats': _dashboardStats,
+      'balance': _balance,
+      'orders': _orders,
+      'vendor_products': _vendorProducts,
+      'withdrawals': _withdrawals,
+      'coupons': _coupons,
+      'reviews': _reviews,
+      'announcements': _announcements,
+      'saved_at': DateTime.now().toIso8601String(),
+    };
+  }
+
+  /// Persist current dashboard state to Hive.
+  Future<void> _persistDashboard() async {
+    if (_hive == null || _vendorId == null) return;
+    await _hive!.saveVendorDashboard(_vendorId!, _serializeDashboard());
+  }
+
+  /// Restore dashboard state from Hive (cache-first, no network).
+  /// If [vendorId] is provided it overrides the instance `_vendorId`,
+  /// allowing cache restore before the first `loadStoreInfo` call.
+  /// Returns `true` if cached data was available and restored.
+  bool restoreFromCache({int? vendorId}) {
+    final vid = vendorId ?? _vendorId;
+    if (_hive == null || vid == null) return false;
+    // Keep the resolved ID so subsequent network writes go to the same key.
+    if (_vendorId == null) _vendorId = vid;
+    final cached = _hive!.getCachedVendorDashboard(vid);
+    if (cached == null) return false;
+
+    _storeInfo = cached['store_info'] is Map
+        ? Map<String, dynamic>.from(cached['store_info'])
+        : null;
+    _dashboardStats = cached['dashboard_stats'] is Map
+        ? Map<String, dynamic>.from(cached['dashboard_stats'])
+        : {};
+    _balance = cached['balance'] is Map
+        ? Map<String, dynamic>.from(cached['balance'])
+        : {};
+    _orders = (cached['orders'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _vendorProducts = (cached['vendor_products'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _withdrawals = (cached['withdrawals'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _coupons = (cached['coupons'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _reviews = (cached['reviews'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _announcements = (cached['announcements'] as List<dynamic>?)
+            ?.map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
+    _dashboardLoaded = true;
+    notifyListeners();
+    return true;
   }
 }
