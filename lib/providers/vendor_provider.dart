@@ -338,8 +338,12 @@ class VendorProvider with ChangeNotifier {
   // ─── Orders ───
 
   Future<void> loadOrders({String? status}) async {
-    _isLoadingOrders = true;
-    notifyListeners();
+    // Only show loading spinner if we have no cached data — avoids
+    // masking cache-restored orders while the background refresh runs.
+    if (_orders.isEmpty) {
+      _isLoadingOrders = true;
+      notifyListeners();
+    }
     try {
       _orders = await _api.getVendorOrders(
         status: status,
@@ -383,8 +387,11 @@ class VendorProvider with ChangeNotifier {
       notifyListeners();
       return;
     }
-    _isLoadingProducts = true;
-    notifyListeners();
+    // Only show loading spinner if we have no cached data.
+    if (_vendorProducts.isEmpty) {
+      _isLoadingProducts = true;
+      notifyListeners();
+    }
     try {
       final products = await _api.getVendorProducts(effectiveId,
         perPage: 100,
@@ -554,10 +561,15 @@ class VendorProvider with ChangeNotifier {
   }
 
   /// Restore dashboard state from Hive (cache-first, no network).
+  /// If [vendorId] is provided it overrides the instance `_vendorId`,
+  /// allowing cache restore before the first `loadStoreInfo` call.
   /// Returns `true` if cached data was available and restored.
-  bool restoreFromCache() {
-    if (_hive == null || _vendorId == null) return false;
-    final cached = _hive!.getCachedVendorDashboard(_vendorId!);
+  bool restoreFromCache({int? vendorId}) {
+    final vid = vendorId ?? _vendorId;
+    if (_hive == null || vid == null) return false;
+    // Keep the resolved ID so subsequent network writes go to the same key.
+    if (_vendorId == null) _vendorId = vid;
+    final cached = _hive!.getCachedVendorDashboard(vid);
     if (cached == null) return false;
 
     _storeInfo = cached['store_info'] is Map
