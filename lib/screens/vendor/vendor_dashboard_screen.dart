@@ -64,8 +64,13 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       }
 
       if (resolvedStoreId != null && resolvedStoreId > 0) {
+        // 1) Restore cached dashboard instantly — no network, no spinner
+        final hadCached = vendor.restoreFromCache(vendorId: resolvedStoreId);
+        if (hadCached) {
+          debugPrint('Vendor dashboard restored from Hive cache for vendor $resolvedStoreId');
+        }
+        // 2) Then load fresh store info (network — updates cached data in background)
         await vendor.loadStoreInfo(resolvedStoreId);
-        vendor.restoreFromCache();
       }
     }
 
