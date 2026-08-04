@@ -39,14 +39,27 @@ class ApiService {
       headers['Authorization'] = _getBasicAuthHeader();
     } else if (requireAuth && _authToken != null) {
       headers['Authorization'] = 'Bearer $_authToken';
+      // Also send via X-JWT-Token as LiteSpeed-proof alternative header
+      headers['X-JWT-Token'] = _authToken!;
     }
     return headers;
   }
 
+  /// Append the JWT token as a ?token= query parameter to [url] if we have one.
+  /// This is the LiteSpeed bypass — LiteSpeed strips the Authorization header
+  /// but leaves query strings intact.  The mu-plugin reads from $_GET['token']
+  /// as a fallback so dokan_get_current_user_id() resolves correctly.
+  String _appendTokenParam(String url) {
+    if (_authToken == null) return url;
+    final separator = url.contains('?') ? '&' : '?';
+    return '$url${separator}token=${Uri.encodeComponent(_authToken!)}';
+  }
+
   Future<http.Response> _get(String url, {bool useWcAuth = true, bool requireAuth = false}) async {
     try {
+      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
       final response = await client.get(
-        Uri.parse(url),
+        Uri.parse(effectiveUrl),
         headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
       );
       return _handleResponse(response);
@@ -57,8 +70,9 @@ class ApiService {
 
   Future<http.Response> _post(String url, Map<String, dynamic> data, {bool useWcAuth = false, bool requireAuth = false}) async {
     try {
+      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
       final response = await client.post(
-        Uri.parse(url),
+        Uri.parse(effectiveUrl),
         headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
         body: jsonEncode(data),
       );
@@ -75,8 +89,9 @@ class ApiService {
 
   Future<http.Response> _put(String url, Map<String, dynamic> data, {bool useWcAuth = false, bool requireAuth = false}) async {
     try {
+      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
       final response = await client.put(
-        Uri.parse(url),
+        Uri.parse(effectiveUrl),
         headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
         body: jsonEncode(data),
       );
@@ -88,8 +103,9 @@ class ApiService {
 
   Future<http.Response> _delete(String url, {bool useWcAuth = false, bool requireAuth = false}) async {
     try {
+      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
       final response = await client.delete(
-        Uri.parse(url),
+        Uri.parse(effectiveUrl),
         headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
       );
       return _handleResponse(response);
