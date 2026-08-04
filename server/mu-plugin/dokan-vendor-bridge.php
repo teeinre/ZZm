@@ -23,38 +23,65 @@ add_filter( 'determine_current_user', function ( $user_id ) {
         return $user_id;
     }
 
-    // Try JWT token from Authorization header
+    $jwt_token = '';
+
+    // 1. Try Authorization header first
     $auth_header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
     if ( empty( $auth_header ) && function_exists( 'getallheaders' ) ) {
         $headers = getallheaders();
         $auth_header = $headers['Authorization'] ?? $headers['authorization'] ?? '';
     }
-
     if ( $auth_header && preg_match( '/^Bearer\s+(.+)$/i', $auth_header, $matches ) ) {
         $jwt_token = $matches[1];
+    }
 
-        // Try the JWT Auth plugin's validation function
-        if ( function_exists( 'jwt_auth_get_user_from_token' ) ) {
-            try {
-                $user = jwt_auth_get_user_from_token( $jwt_token );
-                if ( $user && ! is_wp_error( $user ) && isset( $user->ID ) ) {
-                    wp_set_current_user( $user->ID );
-                    return $user->ID;
-                }
-            } catch ( \Exception $e ) {}
+    // 2. Fallback: ?token= query parameter (LiteSpeed strips Authorization header)
+    if ( empty( $jwt_token ) && ! empty( $_GET['token'] ) ) {
+        $jwt_token = $_GET['token'];
+    }
+
+    // 3. Fallback: X-JWT-Token custom header (alternative to Authorization)
+    if ( empty( $jwt_token ) ) {
+        $custom_header = $_SERVER['HTTP_X_JWT_TOKEN'] ?? '';
+        if ( ! empty( $custom_header ) ) {
+            $jwt_token = $custom_header;
+        } elseif ( function_exists( 'getallheaders' ) ) {
+            $headers = getallheaders();
+            $jwt_token = $headers['X-JWT-Token'] ?? $headers['x-jwt-token'] ?? '';
         }
+    }
 
-        // Fallback: manual JWT decode (if JWT_AUTH_SECRET_KEY is defined)
-        if ( defined( 'JWT_AUTH_SECRET_KEY' ) && class_exists( 'JWT' ) ) {
-            try {
+    if ( empty( $jwt_token ) ) {
+        return $user_id;
+    }
+
+    // Try the JWT Auth plugin's validation function
+    if ( function_exists( 'jwt_auth_get_user_from_token' ) ) {
+        try {
+            $user = jwt_auth_get_user_from_token( $jwt_token );
+            if ( $user && ! is_wp_error( $user ) && isset( $user->ID ) ) {
+                wp_set_current_user( $user->ID );
+                return $user->ID;
+            }
+        } catch ( \Exception $e ) {}
+    }
+
+    // Fallback: manual JWT decode (if JWT_AUTH_SECRET_KEY is defined)
+    if ( defined( 'JWT_AUTH_SECRET_KEY' ) ) {
+        try {
+            // Check multiple JWT class locations
+            $decoded = null;
+            if ( class_exists( '\Firebase\JWT\JWT' ) ) {
+                $decoded = \Firebase\JWT\JWT::decode( $jwt_token, JWT_AUTH_SECRET_KEY, [ 'HS256' ] );
+            } elseif ( class_exists( 'JWT' ) ) {
                 $decoded = \JWT::decode( $jwt_token, JWT_AUTH_SECRET_KEY, [ 'HS256' ] );
-                if ( isset( $decoded->data->user->id ) ) {
-                    $user_id = (int) $decoded->data->user->id;
-                    wp_set_current_user( $user_id );
-                    return $user_id;
-                }
-            } catch ( \Exception $e ) {}
-        }
+            }
+            if ( $decoded && isset( $decoded->data->user->id ) ) {
+                $user_id = (int) $decoded->data->user->id;
+                wp_set_current_user( $user_id );
+                return $user_id;
+            }
+        } catch ( \Exception $e ) {}
     }
 
     return $user_id;
