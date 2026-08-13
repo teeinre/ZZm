@@ -186,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             // _buildLocationPicker(), // Location picker commented out for now
             const SizedBox(height: 8),
             Text(
-              auth.isAuthenticated ? 'Welcome back, $displayName' : 'Welcome to ZZmore Stores',
+              auth.isAuthenticated ? 'Welcome back, $displayName' : 'Welcome to ZZmore.store',
               style: const TextStyle(
                 color: AppColors.inkColor,
                 fontSize: 20,
@@ -1525,7 +1525,7 @@ Widget _buildGoLiveCTA() {
     // Always include some fresh dynamic content
     if (notifs.isEmpty) {
       notifs.addAll([
-        {'message': 'Welcome to ZZmore Store!', 'time': 'Just now', 'isUnread': true},
+        {'message': 'Welcome to ZZmore.store!', 'time': 'Just now', 'isUnread': true},
       ]);
     }
 
