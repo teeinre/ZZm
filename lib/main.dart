@@ -95,7 +95,7 @@ class ZZmoreStoreApp extends StatelessWidget {
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, child) {
           return MaterialApp(
-            title: 'ZZmore Store',
+            title: 'ZZmore.store',
             debugShowCheckedModeBanner: false,
             themeMode: themeProvider.themeMode,
             theme: ThemeData(

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>ZZmore Store</string>
+	<string>ZZmore.store</string>
 	<key>NSCameraUsageDescription</key>
 	<string>This app needs camera access to upload product photos.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
