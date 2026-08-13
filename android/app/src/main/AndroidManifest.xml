@@ -20,7 +20,7 @@
         android:maxSdkVersion="32"/>
 
     <application
-        android:label="ZZmore Store"
+        android:label="ZZmore.store"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
