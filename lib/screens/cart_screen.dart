@@ -20,7 +20,7 @@ class _CartScreenState extends State<CartScreen> {
   final TextEditingController _discountController = TextEditingController();
   double _discount = 0.0;
   bool _discountApplied = false;
-  final Map<int, List<Map<String, dynamic>>> _vendorShippingMethods = {};
+  final Map<int, double?> _productShippingFees = {};
   bool _isLoadingShipping = false;
 
   @override
@@ -33,17 +33,15 @@ class _CartScreenState extends State<CartScreen> {
     setState(() => _isLoadingShipping = true);
     final api = ApiService();
     final cart = context.read<CartProvider>();
-    final Set<int> vendorIds = {};
     for (final item in cart.cartItems) {
-      if (item.product.vendorId != null) {
-        vendorIds.add(item.product.vendorId!);
-      }
-    }
-    for (final vid in vendorIds) {
+      if (item.product.vendorId == null) continue;
       try {
-        final methods = await api.getVendorShippingMethods(vid);
+        final fee = await api.getProductShippingFee(
+          item.product.id,
+          quantity: item.quantity,
+        );
         if (mounted) {
-          _vendorShippingMethods[vid] = methods;
+          _productShippingFees[item.product.id] = fee;
         }
       } catch (_) {}
     }
@@ -273,55 +271,43 @@ class _CartScreenState extends State<CartScreen> {
               padding: const EdgeInsets.only(top: 6),
               child: Text('Variation #${item.variationId}', style: TextStyle(fontSize: 10, color: AppColors.goldColor)),
             ),
-          // Vendor shipping methods
+          // Vendor shipping fee
           if (item.product.vendorId != null) ...[
             const SizedBox(height: 8),
             const Divider(height: 1),
             const SizedBox(height: 6),
-            _buildPerProductShipping(item.product.vendorId!),
+            _buildPerProductShipping(item),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildPerProductShipping(int vendorId) {
-    final methods = _vendorShippingMethods[vendorId];
+  Widget _buildPerProductShipping(CartItem item) {
     if (_isLoadingShipping) {
       return const SizedBox(
         height: 20,
         child: Center(child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.indigoLightColor))),
       );
     }
-    if (methods == null || methods.isEmpty) {
+    final fee = _productShippingFees[item.product.id];
+    if (fee == null) {
       return Text('No shipping options available', style: TextStyle(fontSize: 11, color: AppColors.inkSoftColor));
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: methods.map((m) {
-        final title = m['title']?.toString() ?? '';
-        final cost = m['cost']?.toString();
-        final costText = cost != null && double.tryParse(cost) != null
-            ? '£${double.parse(cost).toStringAsFixed(2)}'
-            : '';
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 3),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.local_shipping_outlined, size: 13, color: AppColors.indigoColor),
-                  const SizedBox(width: 6),
-                  Text(title, style: TextStyle(fontSize: 11, color: AppColors.indigoColor)),
-                ],
-              ),
-              if (costText.isNotEmpty)
-                Text(costText, style: TextStyle(fontSize: 11, color: AppColors.indigoColor, fontWeight: FontWeight.w500)),
-            ],
-          ),
-        );
-      }).toList(),
+    final label = fee == 0
+        ? 'Free shipping'
+        : 'Shipping: £${fee.toStringAsFixed(2)}';
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.local_shipping_outlined, size: 13, color: AppColors.indigoColor),
+            const SizedBox(width: 6),
+            Text(label, style: TextStyle(fontSize: 11, color: AppColors.indigoColor)),
+          ],
+        ),
+      ],
     );
   }
 

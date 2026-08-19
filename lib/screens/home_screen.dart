@@ -998,9 +998,9 @@ Widget _buildGoLiveCTA() {
                   provider.setCategory(category.id.toString());
                 },
                 child: Container(
-                  width: 72,
-                  margin: const EdgeInsets.only(right: 8),
+                  margin: const EdgeInsets.only(right: 12),
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
                         width: 56,
@@ -1020,14 +1020,12 @@ Widget _buildGoLiveCTA() {
                       const SizedBox(height: 6),
                       Text(
                         category.name ?? '',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           color: isActive ? AppColors.inkColor : AppColors.inkSoftColor,
                           fontSize: 10,
                           fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
                         ),
-                        maxLines: 2,
-                        textAlign: TextAlign.center,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
