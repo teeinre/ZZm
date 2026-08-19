@@ -26,7 +26,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     super.dispose();
   }
 
-  Future<void> _sendResetLink() async {
+  Future<void> _sendOtp() async {
     final email = _emailCtrl.text.trim();
     if (email.isEmpty || !email.contains('@')) {
       setState(() {
@@ -41,21 +41,22 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       _message = null;
     });
 
-    final error = await _api.requestPasswordReset(email);
+    final error = await _api.requestOtp(email);
 
     if (!mounted) return;
-    setState(() {
-      _isLoading = false;
-      if (error == null) {
-        _isSuccess = true;
-        _message =
-            'If an account exists for this email, a password reset link has been sent. '
-            'Please check your inbox (and spam folder).';
-      } else {
+    setState(() => _isLoading = false);
+
+    if (error == null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => OtpVerificationScreen(email: email)),
+      );
+    } else {
+      setState(() {
         _isSuccess = false;
         _message = error;
-      }
-    });
+      });
+    }
   }
 
   @override
@@ -101,7 +102,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Enter your registered email and we will send you a secure link to reset your password.',
+                'Enter your registered email and we will send you a one-time verification code to reset your password.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppColors.inkSoftColor, fontSize: 14),
               ),
@@ -110,7 +111,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 controller: _emailCtrl,
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _sendResetLink(),
+                onSubmitted: (_) => _sendOtp(),
                 decoration: InputDecoration(
                   labelText: 'Email address',
                   prefixIcon: const Icon(Icons.email_outlined,
@@ -163,7 +164,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               ],
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: _isLoading ? null : _sendResetLink,
+                onPressed: _isLoading ? null : _sendOtp,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.goldColor,
                   foregroundColor: AppColors.whiteColor,
@@ -178,26 +179,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                         width: 20,
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white))
-                    : const Text('Send Reset Link',
+                    : const Text('Send Verification Code',
                         style: TextStyle(
                             fontSize: 16, fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: _isLoading
-                    ? null
-                    : () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const ResetPasswordScreen()),
-                        );
-                      },
-                child: const Text('I already have a reset key',
-                    style: TextStyle(
-                        color: AppColors.goldColor,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13)),
               ),
               const SizedBox(height: 16),
               Row(
@@ -224,7 +208,284 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 }
 
-/// Step 2: set a new password using the reset key delivered by email.
+/// Step 2 (OTP): verify the emailed code and set a new password.
+class OtpVerificationScreen extends StatefulWidget {
+  final String email;
+
+  const OtpVerificationScreen({super.key, required this.email});
+
+  @override
+  State<OtpVerificationScreen> createState() => _OtpVerificationScreenState();
+}
+
+class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
+  final _otpCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
+  final _api = ApiService();
+  bool _isLoading = false;
+  bool _obscure = true;
+  bool _isDone = false;
+  String? _message;
+  bool _isSuccess = false;
+
+  @override
+  void dispose() {
+    _otpCtrl.dispose();
+    _passCtrl.dispose();
+    _confirmCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _verify() async {
+    final otp = _otpCtrl.text.trim();
+    final password = _passCtrl.text;
+    final confirm = _confirmCtrl.text;
+
+    if (otp.isEmpty || otp.length != 6) {
+      setState(() {
+        _isSuccess = false;
+        _message = 'Please enter the 6-digit verification code.';
+      });
+      return;
+    }
+    if (password.length < 8) {
+      setState(() {
+        _isSuccess = false;
+        _message = 'New password must be at least 8 characters.';
+      });
+      return;
+    }
+    if (password != confirm) {
+      setState(() {
+        _isSuccess = false;
+        _message = 'Passwords do not match.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _message = null;
+    });
+
+    final error = await _api.verifyOtp(widget.email, otp, password);
+
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      if (error == null) {
+        _isDone = true;
+        _isSuccess = true;
+        _message =
+            'Your password has been changed successfully. Click Login below to sign in.';
+      } else {
+        _isSuccess = false;
+        _message = error;
+      }
+    });
+  }
+
+  void _goToLogin() {
+    final nav = Navigator.of(context);
+    nav.pop(); // OtpVerificationScreen -> ForgotPasswordScreen
+    nav.pop(); // ForgotPasswordScreen -> LoginPage
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.creamColor,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: AppColors.inkColor),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 20),
+              Center(
+                child: Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    color: AppColors.indigoColor.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.verified_user_outlined,
+                      color: AppColors.indigoColor, size: 36),
+                ),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Verify Code',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.inkColor,
+                    fontFamily: 'Fraunces'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Enter the 6-digit code sent to ${widget.email} and choose a new password.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: AppColors.inkSoftColor, fontSize: 14),
+              ),
+              const SizedBox(height: 32),
+              if (_isDone) ...[
+                _buildMessage(),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: _goToLogin,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.goldColor,
+                    foregroundColor: AppColors.whiteColor,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                  ),
+                  child: const Text('Login',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ] else ...[
+                TextField(
+                  controller: _otpCtrl,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  textInputAction: TextInputAction.next,
+                  autofillHints: const [AutofillHints.oneTimeCode],
+                  decoration: InputDecoration(
+                    labelText: 'Verification code',
+                    counterText: '',
+                    prefixIcon: const Icon(Icons.pin_outlined,
+                        color: AppColors.inkSoftColor),
+                    filled: true,
+                    fillColor: AppColors.whiteColor,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _passCtrl,
+                  obscureText: _obscure,
+                  textInputAction: TextInputAction.next,
+                  autofillHints: const [AutofillHints.newPassword],
+                  decoration: InputDecoration(
+                    labelText: 'New password',
+                    prefixIcon: const Icon(Icons.lock_outlined,
+                        color: AppColors.inkSoftColor),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                          _obscure ? Icons.visibility_off : Icons.visibility,
+                          color: AppColors.inkSoftColor),
+                      onPressed: () => setState(() => _obscure = !_obscure),
+                    ),
+                    filled: true,
+                    fillColor: AppColors.whiteColor,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _confirmCtrl,
+                  obscureText: _obscure,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _verify(),
+                  autofillHints: const [AutofillHints.newPassword],
+                  decoration: InputDecoration(
+                    labelText: 'Confirm new password',
+                    prefixIcon: const Icon(Icons.lock_outlined,
+                        color: AppColors.inkSoftColor),
+                    filled: true,
+                    fillColor: AppColors.whiteColor,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none),
+                  ),
+                ),
+                if (_message != null) ...[
+                  const SizedBox(height: 16),
+                  _buildMessage(),
+                ],
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: _isLoading ? null : _verify,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.goldColor,
+                    foregroundColor: AppColors.whiteColor,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Text('Reset Password',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessage() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _isSuccess
+            ? AppColors.goldColor.withOpacity(0.1)
+            : AppColors.coralColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            _isSuccess ? Icons.check_circle_outline : Icons.error_outline,
+            color: _isSuccess ? AppColors.goldColor : AppColors.coralColor,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _message!,
+              style: TextStyle(
+                color: _isSuccess ? AppColors.inkColor : AppColors.coralColor,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Step 3 (legacy deep-link flow): set a new password using a reset key.
 class ResetPasswordScreen extends StatefulWidget {
   final String? initialKey;
   final String? initialLogin;

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
 import '../providers/auth_provider.dart';
@@ -708,30 +709,51 @@ class _LoginPageState extends State<LoginPage> {
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.inkSoftColor, fontSize: 14)),
               const SizedBox(height: 32),
-              TextField(
-                controller: _emailCtrl,
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.next,
-                decoration: InputDecoration(
-                  labelText: 'Username or Email',
-                  prefixIcon: const Icon(Icons.email_outlined, color: AppColors.inkSoftColor),
-                  filled: true,
-                  fillColor: AppColors.whiteColor,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passCtrl,
-                obscureText: true,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _handleLogin(),
-                decoration: InputDecoration(
-                  labelText: 'Password',
-                  prefixIcon: const Icon(Icons.lock_outlined, color: AppColors.inkSoftColor),
-                  filled: true,
-                  fillColor: AppColors.whiteColor,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+              AutofillGroup(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: _emailCtrl,
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
+                      autofillHints: const [
+                        AutofillHints.username,
+                        AutofillHints.email,
+                      ],
+                      decoration: InputDecoration(
+                        labelText: 'Username or Email',
+                        prefixIcon: const Icon(Icons.email_outlined,
+                            color: AppColors.inkSoftColor),
+                        filled: true,
+                        fillColor: AppColors.whiteColor,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _passCtrl,
+                      obscureText: true,
+                      textInputAction: TextInputAction.done,
+                      autofillHints: const [AutofillHints.password],
+                      onSubmitted: (_) {
+                        TextInput.finishAutofillContext();
+                        _handleLogin();
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        prefixIcon: const Icon(Icons.lock_outlined,
+                            color: AppColors.inkSoftColor),
+                        filled: true,
+                        fillColor: AppColors.whiteColor,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               Align(
