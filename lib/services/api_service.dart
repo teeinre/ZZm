@@ -508,6 +508,30 @@ class ApiService {
     }
   }
 
+  /// Resolves the vendor shipping fee for a single product using the
+  /// server-side checkout logic (zzmore-shipping-fee.php). Returns the
+  /// per-item cost, or null when the server could not resolve a fee.
+  Future<double?> getProductShippingFee(int productId, {int quantity = 1}) async {
+    final url = Uri.parse(ApiConstants.productShippingFeeEndpoint).replace(
+      queryParameters: {
+        'product_id': '$productId',
+        'quantity': '$quantity',
+      },
+    );
+    try {
+      final response = await _get(url.toString(), useWcAuth: false);
+      final data = jsonDecode(response.body);
+      if (data is Map && data['available'] == true) {
+        final cost = data['cost'];
+        if (cost != null) {
+          final parsed = double.tryParse(cost.toString());
+          if (parsed != null) return parsed;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   double _extractShippingCost(Map<String, dynamic> method) {
     final settings = method['settings'];
     if (settings is Map) {

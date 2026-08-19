@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:app_links/app_links.dart';
 import 'constants/app_colors.dart';
 import 'services/api_service.dart';
 import 'cache/hive_service.dart';
@@ -16,6 +19,28 @@ import 'providers/vendor_provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/currency_provider.dart';
 import 'screens/main_screen.dart';
+import 'screens/auth/forgot_password_screen.dart';
+
+final GlobalKey<NavigatorState> _appNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Routes a `zzmore://reset-password?key=...&login=...` deep link to the
+/// in-app "set new password" screen.
+void _handleResetUri(Uri uri) {
+  if (uri.scheme.toLowerCase() != 'zzmore') return;
+  if (uri.host.toLowerCase() != 'reset-password') return;
+  final key = uri.queryParameters['key'] ?? '';
+  final login = uri.queryParameters['login'] ?? '';
+  if (key.isEmpty || login.isEmpty) return;
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    _appNavigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) =>
+            ResetPasswordScreen(initialKey: key, initialLogin: login),
+      ),
+    );
+  });
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -96,6 +121,7 @@ class ZZmoreStoreApp extends StatelessWidget {
         builder: (context, themeProvider, child) {
           return MaterialApp(
             title: 'ZZmore.store',
+            navigatorKey: _appNavigatorKey,
             debugShowCheckedModeBanner: false,
             themeMode: themeProvider.themeMode,
             theme: ThemeData(
@@ -130,10 +156,54 @@ class ZZmoreStoreApp extends StatelessWidget {
                 elevation: 0,
               ),
             ),
-            home: const MainScreen(),
+            home: const _AppRoot(),
           );
         },
       ),
     );
   }
+}
+
+/// Wraps [MainScreen] and wires up incoming deep links (e.g. the password
+/// reset link) so they route to the correct in-app screen.
+class _AppRoot extends StatefulWidget {
+  const _AppRoot();
+
+  @override
+  State<_AppRoot> createState() => _AppRootState();
+}
+
+class _AppRootState extends State<_AppRoot> {
+  AppLinks? _appLinks;
+  StreamSubscription<Uri>? _subscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _initDeepLinks();
+  }
+
+  Future<void> _initDeepLinks() async {
+    _appLinks = AppLinks();
+
+    // Link that launched the app (cold start).
+    try {
+      final initialLink = await _appLinks!.getInitialLink();
+      if (initialLink != null) _handleResetUri(initialLink);
+    } catch (_) {
+      // Ignore — deep linking is optional.
+    }
+
+    // Links that arrive while the app is running.
+    _subscription = _appLinks!.uriLinkStream.listen(_handleResetUri);
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const MainScreen();
 }

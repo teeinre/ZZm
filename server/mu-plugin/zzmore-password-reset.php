@@ -16,6 +16,11 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 add_action( 'rest_api_init', 'zzmore_register_password_reset_routes' );
 
+// Inject the in-app deep link into the reset email so tapping the link opens
+// the ZZmore app (instead of the web reset form). Priority 99 runs after other
+// plugins so the app link is always present.
+add_filter( 'retrieve_password_notification_email', 'zzmore_app_reset_email', 99, 4 );
+
 function zzmore_register_password_reset_routes(): void {
     register_rest_route( 'app/v1', '/forgot-password', [
         'methods'             => 'POST',
@@ -128,4 +133,42 @@ function zzmore_reset_password( WP_REST_Request $request ) {
         'success' => true,
         'message' => __( 'Your password has been updated. You can now sign in.', 'zzmore' ),
     ];
+}
+
+/**
+ * Rebuild the WordPress reset email as HTML so it contains a tappable deep
+ * link (zzmore://reset-password?key=...&login=...) that opens the app, with the
+ * standard web reset form kept as a fallback.
+ */
+function zzmore_app_reset_email( $retrieve_email, $key, $user_login, $user_data ) {
+    $app_link = 'zzmore://reset-password?key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user_login );
+    $web_link = network_site_url(
+        "wp-login.php?action=rp&key=$key&login=" . rawurlencode( $user_login ),
+        'login'
+    );
+
+    $site_name = wp_specialchars_decode( get_option( 'blogname' ), ENT_QUOTES );
+
+    $message  = '<p>' . sprintf(
+        __( 'Someone requested a password reset for your account on %s.', 'zzmore' ),
+        esc_html( $site_name )
+    ) . '</p>';
+    $message .= '<p>' . sprintf(
+        __( 'Username: %s', 'zzmore' ),
+        esc_html( $user_login )
+    ) . '</p>';
+    $message .= '<p style="margin:24px 0">'
+        . '<a href="' . esc_url( $app_link, array( 'zzmore' ) ) . '" '
+        . 'style="background:#E67E14;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block">'
+        . esc_html__( 'Reset your password', 'zzmore' )
+        . '</a></p>';
+    $message .= '<p>' . esc_html__( "If the button does not open the app, tap or copy this link:", 'zzmore' ) . '<br>'
+        . esc_html( $app_link ) . '</p>';
+    $message .= '<p>' . esc_html__( 'Or reset via the website:', 'zzmore' ) . '<br>'
+        . '<a href="' . esc_url( $web_link ) . '">' . esc_html( $web_link ) . '</a></p>';
+
+    $retrieve_email['message'] = $message;
+    $retrieve_email['headers'] = 'Content-Type: text/html; charset=UTF-8';
+
+    return $retrieve_email;
 }
