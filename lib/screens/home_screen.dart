@@ -1048,6 +1048,8 @@ Widget _buildGoLiveCTA() {
 
         final seenVendors = <int>{};
         final spotlightProducts = products.where((p) {
+          final vendorName = (p.vendorName ?? '').trim().toLowerCase();
+          if (vendorName == 'zzmore open market') return false;
           if (p.vendorId != null && !seenVendors.contains(p.vendorId)) {
             seenVendors.add(p.vendorId!);
             return true;

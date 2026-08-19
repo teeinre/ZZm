@@ -23,42 +23,335 @@ add_filter( 'determine_current_user', function ( $user_id ) {
         return $user_id;
     }
 
-    // Try JWT token from Authorization header
+    $jwt_token = '';
+
+    // 1. Try Authorization header first
     $auth_header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
     if ( empty( $auth_header ) && function_exists( 'getallheaders' ) ) {
         $headers = getallheaders();
         $auth_header = $headers['Authorization'] ?? $headers['authorization'] ?? '';
     }
-
     if ( $auth_header && preg_match( '/^Bearer\s+(.+)$/i', $auth_header, $matches ) ) {
         $jwt_token = $matches[1];
+    }
 
-        // Try the JWT Auth plugin's validation function
-        if ( function_exists( 'jwt_auth_get_user_from_token' ) ) {
-            try {
-                $user = jwt_auth_get_user_from_token( $jwt_token );
-                if ( $user && ! is_wp_error( $user ) && isset( $user->ID ) ) {
-                    wp_set_current_user( $user->ID );
-                    return $user->ID;
-                }
-            } catch ( \Exception $e ) {}
+    // 2. Fallback: ?token= query parameter (LiteSpeed strips Authorization header)
+    if ( empty( $jwt_token ) && ! empty( $_GET['token'] ) ) {
+        $jwt_token = $_GET['token'];
+    }
+
+    // 3. Fallback: X-JWT-Token custom header (alternative to Authorization)
+    if ( empty( $jwt_token ) ) {
+        $custom_header = $_SERVER['HTTP_X_JWT_TOKEN'] ?? '';
+        if ( ! empty( $custom_header ) ) {
+            $jwt_token = $custom_header;
+        } elseif ( function_exists( 'getallheaders' ) ) {
+            $headers = getallheaders();
+            $jwt_token = $headers['X-JWT-Token'] ?? $headers['x-jwt-token'] ?? '';
         }
+    }
 
-        // Fallback: manual JWT decode (if JWT_AUTH_SECRET_KEY is defined)
-        if ( defined( 'JWT_AUTH_SECRET_KEY' ) && class_exists( 'JWT' ) ) {
-            try {
+    if ( empty( $jwt_token ) ) {
+        return $user_id;
+    }
+
+    // Try the JWT Auth plugin's validation function
+    if ( function_exists( 'jwt_auth_get_user_from_token' ) ) {
+        try {
+            $user = jwt_auth_get_user_from_token( $jwt_token );
+            if ( $user && ! is_wp_error( $user ) && isset( $user->ID ) ) {
+                wp_set_current_user( $user->ID );
+                return $user->ID;
+            }
+        } catch ( \Exception $e ) {}
+    }
+
+    // Fallback: manual JWT decode (if JWT_AUTH_SECRET_KEY is defined)
+    if ( defined( 'JWT_AUTH_SECRET_KEY' ) ) {
+        try {
+            // Check multiple JWT class locations
+            $decoded = null;
+            if ( class_exists( '\Firebase\JWT\JWT' ) ) {
+                $decoded = \Firebase\JWT\JWT::decode( $jwt_token, JWT_AUTH_SECRET_KEY, [ 'HS256' ] );
+            } elseif ( class_exists( 'JWT' ) ) {
                 $decoded = \JWT::decode( $jwt_token, JWT_AUTH_SECRET_KEY, [ 'HS256' ] );
-                if ( isset( $decoded->data->user->id ) ) {
-                    $user_id = (int) $decoded->data->user->id;
-                    wp_set_current_user( $user_id );
-                    return $user_id;
-                }
-            } catch ( \Exception $e ) {}
-        }
+            }
+            if ( $decoded && isset( $decoded->data->user->id ) ) {
+                $user_id = (int) $decoded->data->user->id;
+                wp_set_current_user( $user_id );
+                return $user_id;
+            }
+        } catch ( \Exception $e ) {}
     }
 
     return $user_id;
 }, 20 );
+
+// =========================================================================
+// WooCommerce Subscriptions — expose meta on /wc/v3/products REST response
+// WooCommerce Subscriptions does NOT include subscription meta fields in
+// the standard product REST response, so the Flutter app sees isSubscription
+// as false for every product.  This filter injects all required fields at
+// both the top level and into the meta_data list so either extraction path
+// in Product.fromJson() succeeds.
+// =========================================================================
+add_filter( 'woocommerce_rest_prepare_product_object', function ( WP_REST_Response $response, $product, $request ) {
+    $data = $response->get_data();
+
+    $is_subscription = false;
+    if ( class_exists( 'WC_Subscriptions_Product' ) ) {
+        try {
+            $price      = (string) WC_Subscriptions_Product::get_price( $product );
+            $period     = (string) WC_Subscriptions_Product::get_period( $product );
+            $interval   = (string) WC_Subscriptions_Product::get_interval( $product );
+            $length     = (string) WC_Subscriptions_Product::get_length( $product );
+            $trial_len  = (string) WC_Subscriptions_Product::get_trial_length( $product );
+            $trial_per  = (string) WC_Subscriptions_Product::get_trial_period( $product );
+            $signup_fee = (string) WC_Subscriptions_Product::get_sign_up_fee( $product );
+
+            $is_subscription = ! empty( $period );
+
+            $data['is_subscription']              = $is_subscription;
+            $data['subscription_price']           = $price;
+            $data['subscription_period']          = $period;
+            $data['subscription_period_interval'] = $interval;
+            $data['subscription_length']          = $length;
+            $data['subscription_trial_length']    = $trial_len;
+            $data['subscription_trial_period']    = $trial_per;
+            $data['subscription_sign_up_fee']     = $signup_fee;
+
+            // Also inject into the meta_data list so the Flutter loop finds them
+            $subscription_meta = [
+                '_subscription_price'           => $price,
+                '_subscription_period'          => $period,
+                '_subscription_period_interval' => $interval,
+                '_subscription_length'          => $length,
+                '_subscription_trial_length'    => $trial_len,
+                '_subscription_trial_period'    => $trial_per,
+                '_subscription_sign_up_fee'     => $signup_fee,
+            ];
+            if ( empty( $data['meta_data'] ) ) {
+                $data['meta_data'] = [];
+            }
+            foreach ( $subscription_meta as $key => $value ) {
+                $found = false;
+                foreach ( $data['meta_data'] as &$md ) {
+                    if ( is_object( $md ) ) {
+                        if ( $md->key === $key ) { $md->value = $value; $found = true; break; }
+                    } elseif ( is_array( $md ) ) {
+                        if ( ( $md['key'] ?? '' ) === $key ) { $md['value'] = $value; $found = true; break; }
+                    }
+                }
+                unset( $md );
+                if ( ! $found ) {
+                    $data['meta_data'][] = (object) [ 'id' => 0, 'key' => $key, 'value' => $value ];
+                }
+            }
+        } catch ( \Exception $e ) {
+            $data['is_subscription'] = false;
+        }
+    } else {
+        // Fallback: read directly from post meta if the helper class isn't loaded
+        $period = get_post_meta( $product->get_id(), '_subscription_period', true );
+        if ( ! empty( $period ) ) {
+            $is_subscription = true;
+            $data['is_subscription']              = true;
+            $data['subscription_price']           = get_post_meta( $product->get_id(), '_subscription_price', true );
+            $data['subscription_period']          = $period;
+            $data['subscription_period_interval'] = get_post_meta( $product->get_id(), '_subscription_period_interval', true );
+            $data['subscription_length']          = get_post_meta( $product->get_id(), '_subscription_length', true );
+            $data['subscription_trial_length']    = get_post_meta( $product->get_id(), '_subscription_trial_length', true );
+            $data['subscription_trial_period']    = get_post_meta( $product->get_id(), '_subscription_trial_period', true );
+            $data['subscription_sign_up_fee']     = get_post_meta( $product->get_id(), '_subscription_sign_up_fee', true );
+        }
+    }
+
+    // The Flutter model checks both (1) explicit flag AND (2) product type slug
+    // so make sure subscription type survives (Woo may strip custom types).
+    if ( $is_subscription && ! in_array( $data['type'], [ 'subscription', 'variable-subscription' ], true ) ) {
+        // Don't override existing type; only mark via the is_subscription flag
+        // which takes precedence in the Dart getter isSubscriptionProduct.
+    }
+
+    $response->set_data( $data );
+    return $response;
+}, 20, 3 );
+
+// Same treatment for product variations (variable-subscription children)
+add_filter( 'woocommerce_rest_prepare_product_variation_object', function ( WP_REST_Response $response, $variation, $request ) {
+    $data = $response->get_data();
+    if ( class_exists( 'WC_Subscriptions_Product' ) ) {
+        try {
+            $period = WC_Subscriptions_Product::get_period( $variation );
+            if ( ! empty( $period ) ) {
+                $data['is_subscription']              = true;
+                $data['subscription_price']           = (string) WC_Subscriptions_Product::get_price( $variation );
+                $data['subscription_period']          = $period;
+                $data['subscription_period_interval'] = (string) WC_Subscriptions_Product::get_interval( $variation );
+                $data['subscription_length']          = (string) WC_Subscriptions_Product::get_length( $variation );
+                $data['subscription_trial_length']    = (string) WC_Subscriptions_Product::get_trial_length( $variation );
+                $data['subscription_trial_period']    = (string) WC_Subscriptions_Product::get_trial_period( $variation );
+                $data['subscription_sign_up_fee']     = (string) WC_Subscriptions_Product::get_sign_up_fee( $variation );
+            }
+        } catch ( \Exception $e ) {}
+    }
+    $response->set_data( $data );
+    return $response;
+}, 20, 3 );
+
+// =========================================================================
+// Dokan REST — enforce strict vendor-isolation on every dokan/v1/* endpoint
+// Dokan's MenuManager only hides menu items in the dashboard UI.  If a REST
+// call arrives with elevated credentials (e.g. WC Basic Auth consumer key)
+// Dokan's native REST may accept ?vendor_id= or ?author= query parameters
+// that leak cross-vendor data.  These hooks clamp every sensitive endpoint
+// to the authenticated user's own store — BEFORE the endpoint runs.
+// =========================================================================
+add_action( 'rest_api_init', function () {
+    if ( ! function_exists( 'dokan_is_user_seller' ) ) return;
+
+    // Helper: resolve the caller's own store/user IDs
+    $resolve_identity = function () {
+        $user_id   = get_current_user_id();
+        $store_id  = 0;
+        if ( $user_id > 0 && dokan_is_user_seller( $user_id ) ) {
+            $vendor   = dokan()->vendor->get( $user_id );
+            $store_id = $vendor ? (int) $vendor->get_id() : 0;
+        }
+        return [ $user_id, $store_id ];
+    };
+
+    // Hook 1 — Dokan orders list: override any user-supplied vendor_id filter
+    add_filter( 'dokan_rest_orders_query_args', function ( $args ) use ( $resolve_identity ) {
+        list( $user_id, $store_id ) = $resolve_identity();
+        if ( $user_id <= 0 ) return $args;
+
+        // Clamp seller_id — Dokan Lite v5 uses seller_id / vendor_id keys
+        $force_keys = [ 'seller_id', 'vendor_id', 'dokan_vendor_id' ];
+        foreach ( $force_keys as $k ) {
+            if ( $store_id > 0 ) $args[ $k ] = $store_id;
+        }
+        // If the query uses meta_query instead, inject/override our meta clause
+        if ( $store_id > 0 ) {
+            $args['meta_query'] = $args['meta_query'] ?? [];
+            $args['meta_query'][] = [
+                'key'     => '_dokan_vendor_id',
+                'value'   => $store_id,
+                'compare' => '=',
+            ];
+        }
+        return $args;
+    }, 999 );
+
+    // Hook 2 — Dokan products query: force author to current user
+    add_filter( 'dokan_rest_products_query', function ( $args ) use ( $resolve_identity ) {
+        list( $user_id, $store_id ) = $resolve_identity();
+        if ( $user_id > 0 ) {
+            $args['author'] = $user_id;
+        }
+        return $args;
+    }, 999 );
+
+    // Hook 3 — Dokan reports/summary: override any supplied seller parameter
+    add_filter( 'dokan_rest_reports_get_orders_query_args', function ( $args ) use ( $resolve_identity ) {
+        list( $user_id, $store_id ) = $resolve_identity();
+        if ( $store_id > 0 ) {
+            $args['seller_id']  = $store_id;
+            $args['meta_query'] = $args['meta_query'] ?? [];
+            $args['meta_query'][] = [
+                'key'     => '_dokan_vendor_id',
+                'value'   => $store_id,
+                'compare' => '=',
+            ];
+        }
+        return $args;
+    }, 999 );
+
+    // Hook 4 — Dokan product creation: force post_author to the caller
+    add_action( 'dokan_rest_insert_product_object', function ( $product, $request, $creating ) use ( $resolve_identity ) {
+        list( $user_id, $store_id ) = $resolve_identity();
+        if ( $creating && $user_id > 0 ) {
+            wp_update_post( [ 'ID' => $product->get_id(), 'post_author' => $user_id ] );
+            update_post_meta( $product->get_id(), '_dokan_vendor_id', $store_id );
+        }
+    }, 999, 3 );
+
+    // Hook 5 — Dokan order item retrieval: strip cross-vendor line items before response
+    add_filter( 'dokan_rest_prepare_order_object', function ( $response, $order, $request ) use ( $resolve_identity ) {
+        list( $user_id, $store_id ) = $resolve_identity();
+        if ( $store_id <= 0 || ! is_a( $response, 'WP_REST_Response' ) ) return $response;
+
+        $data = $response->get_data();
+        // Only keep line_items whose products belong to this store
+        if ( isset( $data['line_items'] ) && is_array( $data['line_items'] ) ) {
+            $filtered = [];
+            foreach ( $data['line_items'] as $item ) {
+                $pid = $item['product_id'] ?? 0;
+                if ( ! $pid ) continue;
+                $author_id = (int) get_post_field( 'post_author', $pid );
+                $vendor_id = (int) get_post_meta( $pid, '_dokan_vendor_id', true );
+                if ( $author_id === $user_id || $vendor_id === $store_id ) {
+                    $filtered[] = $item;
+                }
+            }
+            $data['line_items'] = $filtered;
+            $response->set_data( $data );
+        }
+        return $response;
+    }, 999, 3 );
+
+    // Hook 6 — Reviews: clamp comments query to vendor's own products.
+    // Dokan Pro ReviewsController calls comment_query($store_id, ...) but if
+    // JWT auth fails silently the store_id may be wrong.  This comments_clauses
+    // filter joins on the posts table and restricts to the vendor's author ID.
+    add_filter( 'comments_clauses', function ( $clauses ) use ( $resolve_identity ) {
+        // Only intervene on Dokan REST review requests
+        $uri = $_SERVER['REQUEST_URI'] ?? '';
+        if ( strpos( $uri, '/dokan/v1/reviews' ) === false ) return $clauses;
+
+        list( $user_id, $store_id ) = $resolve_identity();
+        if ( $user_id <= 0 ) return $clauses;
+
+        global $wpdb;
+        $clauses['join']   = ( $clauses['join'] ?? '' ) . " INNER JOIN {$wpdb->posts} ON {$wpdb->posts}.ID = {$wpdb->comments}.comment_post_ID";
+        $clauses['where']  = ( $clauses['where'] ?? '' ) . $wpdb->prepare( " AND {$wpdb->posts}.post_author = %d", $user_id );
+        return $clauses;
+    }, 999 );
+
+    // Hook 7 — Coupons: force post_author on shop_coupon queries during
+    // Dokan REST requests so vendors only see their own coupons.
+    add_action( 'pre_get_posts', function ( $query ) use ( $resolve_identity ) {
+        $uri = $_SERVER['REQUEST_URI'] ?? '';
+        if ( strpos( $uri, '/dokan/v1/coupons' ) === false ) return;
+        if ( ! $query->is_main_query() ) return;
+        if ( $query->get( 'post_type' ) !== 'shop_coupon' ) return;
+
+        list( $user_id, $store_id ) = $resolve_identity();
+        if ( $user_id > 0 ) {
+            $query->set( 'author', $user_id );
+        }
+    }, 999 );
+
+    // Hook 8 — Withdrawals: Dokan's WithdrawController uses get_current_user_id()
+    // but add a prepare-response filter that strips withdrawal records not owned
+    // by the authenticated user (defence in depth).
+    add_filter( 'dokan_rest_prepare_withdraw_object', function ( $response, $withdraw, $request ) use ( $resolve_identity ) {
+        list( $user_id, $store_id ) = $resolve_identity();
+        if ( $user_id <= 0 ) return $response;
+
+        // The withdraw object's user_id must match the authenticated user
+        $withdraw_user_id = isset( $withdraw->user_id ) ? (int) $withdraw->user_id : 0;
+        if ( $withdraw_user_id > 0 && $withdraw_user_id !== $user_id ) {
+            return new WP_Error(
+                'dokan_rest_cannot_view_other_vendor_withdraw',
+                __( 'You cannot view other vendors\' withdrawal records.', 'dokan-lite' ),
+                [ 'status' => 403 ]
+            );
+        }
+        return $response;
+    }, 999, 3 );
+
+}, 100 );
 
 // =========================================================================
 // Register REST endpoints

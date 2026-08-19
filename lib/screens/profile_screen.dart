@@ -8,6 +8,7 @@ import '../services/storage_service.dart';
 import 'main_screen.dart';
 import 'vendor/vendor_dashboard_screen.dart';
 import 'auth/vendor_register_screen.dart';
+import 'auth/forgot_password_screen.dart';
 import 'my_account_screen.dart';
 import 'order_detail_screen.dart';
 
@@ -731,6 +732,22 @@ class _LoginPageState extends State<LoginPage> {
                   filled: true,
                   fillColor: AppColors.whiteColor,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()),
+                    );
+                  },
+                  child: const Text('Forgot Password?',
+                      style: TextStyle(
+                          color: AppColors.goldColor,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13)),
                 ),
               ),
               if (auth.errorMessage != null) ...[

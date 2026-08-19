@@ -269,7 +269,7 @@ class VendorProvider with ChangeNotifier {
     _isLoadingStats = true;
     notifyListeners();
     try {
-      _dashboardStats = await _api.getVendorReports();
+      _dashboardStats = await _api.getVendorReports(vendorId: _vendorId ?? vendorUserId);
     } catch (_) {
       _dashboardStats = {};
     }
@@ -454,6 +454,19 @@ class VendorProvider with ChangeNotifier {
     try {
       _withdrawals = await _api.getVendorWithdrawals();
     } catch (_) {}
+    // Fallback via vendor-api.php balance (returns withdrawals array)
+    if (_withdrawals.isEmpty) {
+      try {
+        final apiBalance = await _api.getVendorApiBalance();
+        if (apiBalance != null && apiBalance.containsKey('withdrawals')) {
+          final wList = apiBalance['withdrawals'];
+          if (wList is List && wList.isNotEmpty) {
+            _withdrawals = wList.map((w) => Map<String, dynamic>.from(w)).toList();
+            debugPrint('[VendorProvider] Loaded withdrawals from vendor-api.php bypass (${_withdrawals.length}).');
+          }
+        }
+      } catch (_) {}
+    }
     _isLoadingWithdrawals = false;
     notifyListeners();
     _persistDashboard();
@@ -476,6 +489,13 @@ class VendorProvider with ChangeNotifier {
     try {
       _coupons = await _api.getVendorCoupons();
     } catch (_) {}
+    // Fallback to vendor-api.php
+    if (_coupons.isEmpty) {
+      try {
+        _coupons = await _api.getVendorApiCoupons();
+        debugPrint('[VendorProvider] Loaded coupons from vendor-api.php bypass (${_coupons.length}).');
+      } catch (_) {}
+    }
     _isLoadingCoupons = false;
     notifyListeners();
     _persistDashboard();
@@ -496,8 +516,8 @@ class VendorProvider with ChangeNotifier {
     _isLoadingReviews = true;
     notifyListeners();
     try {
-      _reviews = await _api.getVendorReviews();
-      debugPrint('[VendorProvider] Loaded ${_reviews.length} reviews');
+      _reviews = await _api.getVendorReviews(vendorUserId: vendorUserId);
+      debugPrint('[VendorProvider] Loaded ${_reviews.length} reviews (vendor-scoped)');
     } catch (e) {
       debugPrint('[VendorProvider] loadReviews error: $e');
     }

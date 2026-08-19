@@ -39,14 +39,27 @@ class ApiService {
       headers['Authorization'] = _getBasicAuthHeader();
     } else if (requireAuth && _authToken != null) {
       headers['Authorization'] = 'Bearer $_authToken';
+      // Also send via X-JWT-Token as LiteSpeed-proof alternative header
+      headers['X-JWT-Token'] = _authToken!;
     }
     return headers;
   }
 
+  /// Append the JWT token as a ?token= query parameter to [url] if we have one.
+  /// This is the LiteSpeed bypass — LiteSpeed strips the Authorization header
+  /// but leaves query strings intact.  The mu-plugin reads from $_GET['token']
+  /// as a fallback so dokan_get_current_user_id() resolves correctly.
+  String _appendTokenParam(String url) {
+    if (_authToken == null) return url;
+    final separator = url.contains('?') ? '&' : '?';
+    return '$url${separator}token=${Uri.encodeComponent(_authToken!)}';
+  }
+
   Future<http.Response> _get(String url, {bool useWcAuth = true, bool requireAuth = false}) async {
     try {
+      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
       final response = await client.get(
-        Uri.parse(url),
+        Uri.parse(effectiveUrl),
         headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
       );
       return _handleResponse(response);
@@ -57,8 +70,9 @@ class ApiService {
 
   Future<http.Response> _post(String url, Map<String, dynamic> data, {bool useWcAuth = false, bool requireAuth = false}) async {
     try {
+      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
       final response = await client.post(
-        Uri.parse(url),
+        Uri.parse(effectiveUrl),
         headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
         body: jsonEncode(data),
       );
@@ -75,8 +89,9 @@ class ApiService {
 
   Future<http.Response> _put(String url, Map<String, dynamic> data, {bool useWcAuth = false, bool requireAuth = false}) async {
     try {
+      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
       final response = await client.put(
-        Uri.parse(url),
+        Uri.parse(effectiveUrl),
         headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
         body: jsonEncode(data),
       );
@@ -88,8 +103,9 @@ class ApiService {
 
   Future<http.Response> _delete(String url, {bool useWcAuth = false, bool requireAuth = false}) async {
     try {
+      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
       final response = await client.delete(
-        Uri.parse(url),
+        Uri.parse(effectiveUrl),
         headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
       );
       return _handleResponse(response);
@@ -252,6 +268,60 @@ class ApiService {
     } catch (e) {
       return false;
     }
+  }
+
+  /// Requests a password-reset link for [email].
+  /// Returns `null` on success, otherwise an error message to display.
+  Future<String?> requestPasswordReset(String email) async {
+    try {
+      final response = await client.post(
+        Uri.parse(ApiConstants.forgotPasswordEndpoint),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: jsonEncode({'email': email}),
+      );
+      final data = _decodeBody(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _extractErrorMessage(data) ?? 'Unable to send the reset link.';
+    } catch (_) {
+      return 'Something went wrong. Please check your connection and try again.';
+    }
+  }
+
+  /// Resets a password using a reset key received via email.
+  /// Returns `null` on success, otherwise an error message to display.
+  Future<String?> resetPassword(String key, String login, String newPassword) async {
+    try {
+      final response = await client.post(
+        Uri.parse(ApiConstants.resetPasswordEndpoint),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: jsonEncode({'key': key, 'login': login, 'password': newPassword}),
+      );
+      final data = _decodeBody(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _extractErrorMessage(data) ?? 'Unable to reset the password.';
+    } catch (_) {
+      return 'Something went wrong. Please check your connection and try again.';
+    }
+  }
+
+  dynamic _decodeBody(String body) {
+    try {
+      return jsonDecode(body);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _extractErrorMessage(dynamic data) {
+    if (data is Map) {
+      final msg = data['message'];
+      if (msg != null && msg.toString().isNotEmpty) return msg.toString();
+    }
+    return null;
   }
 
   Future<List<Product>> getProducts({
@@ -807,7 +877,10 @@ class ApiService {
   /// 1. WC Analytics API (`wc-analytics`) — auto-scoped to authenticated vendor
   /// 2. Dokan reports endpoint (`dokan/v1/reports`) — Dokan's own REST API
   /// 3. Aggregated from individual Dokan endpoints as final fallback
-  Future<Map<String, dynamic>> getVendorReports() async {
+  /// [vendorId] is forwarded to the aggregator so client-side order filtering
+  /// runs when the aggregated fallback path is used (Dokan REST may leak cross-
+  /// vendor orders without the vendorId parameter).
+  Future<Map<String, dynamic>> getVendorReports({int? vendorId}) async {
     // ── 1. Try WC Analytics (what the website actually uses) ──
     final analyticsData = await _fetchWcAnalytics();
     if (analyticsData != null) return analyticsData;
@@ -818,24 +891,24 @@ class ApiService {
 
     // ── 3. Aggregate from individual endpoints ──
     debugPrint('[VendorReports] All primary sources failed — aggregating from Dokan endpoints.');
-    return await _aggregateVendorStats();
+    return await _aggregateVendorStats(vendorId: vendorId);
   }
 
-  /// Fetch vendor stats from WC Analytics API (same data source as the website).
-  /// Tries JWT Bearer auth first (vendor-scoped), falls back to Basic Auth.
+  /// Fetch vendor stats from WC Analytics API.
+  /// ── CRITICAL SECURITY NOTE ──
+  /// WC Analytics + WC Basic Auth = ADMIN-LEVEL CREDENTIALS that return
+  /// marketplace-wide aggregates (cross-vendor data leak).  So we ONLY try
+  /// JWT Bearer auth (vendor-scoped) here.  If the JWT analytics call fails
+  /// we fall through to the Dokan REST reports or vendor-api.php bypass
+  /// which are both already hard-scoped to the authenticated user's own
+  /// vendor identity.  Never use useWcAuth for analytics.
   Future<Map<String, dynamic>?> _fetchWcAnalytics() async {
     try {
       final results = <String, dynamic>{};
-
-      // Try JWT Bearer auth (vendor-scoped) first
-      bool success = await _tryAnalyticsEndpoint(results, requireAuth: true);
-      // Fall back to Basic Auth (admin-scoped, but provides data)
-      if (!success) {
-        success = await _tryAnalyticsEndpoint(results, useWcAuth: true);
-      }
-
+      // JWT Bearer auth ONLY — vendor-scoped by the server
+      final success = await _tryAnalyticsEndpoint(results, requireAuth: true);
       if (success) {
-        debugPrint('[VendorReports] Successfully fetched from WC Analytics API.');
+        debugPrint('[VendorReports] Successfully fetched from WC Analytics API (JWT-scoped).');
         return results;
       }
     } catch (_) {}
@@ -926,7 +999,9 @@ class ApiService {
   /// Aggregate vendor stats from individual Dokan endpoints when the main
   /// reports endpoint is unavailable (common on older Dokan versions or
   /// when the seller role lacks manage_woocommerce capability).
-  Future<Map<String, dynamic>> _aggregateVendorStats() async {
+  /// [vendorId] is required for client-side order filtering — without it,
+  /// Dokan REST may return cross-vendor orders for the marketplace.
+  Future<Map<String, dynamic>> _aggregateVendorStats({int? vendorId}) async {
     final stats = <String, dynamic>{
       'sales': '0', 'orders': 0, 'earnings': '0',
       'pageviews': 0, 'products': 0, 'pending': 0,
@@ -934,8 +1009,8 @@ class ApiService {
     };
 
     try {
-      // ── 1. Vendor orders (count + status breakdown) ──
-      final orders = await getVendorOrders(perPage: 100);
+      // ── 1. Vendor orders (count + status breakdown) — vendorId required ──
+      final orders = await getVendorOrders(perPage: 100, vendorId: vendorId);
       stats['orders'] = orders.length;
       stats['pending'] = orders.where((o) => o['status'] == 'pending').length;
       stats['processing'] = orders.where((o) => o['status'] == 'processing').length;
@@ -1253,6 +1328,7 @@ class ApiService {
   }
 
   /// Fetch vendor-scoped coupons via Dokan API.
+  /// Falls back to vendor-api.php bypass if the REST endpoint is blocked or returns empty.
   Future<List<Map<String, dynamic>>> getVendorCoupons({int page = 1, int perPage = 20}) async {
     try {
       final url = '${ApiConstants.dokanCouponsEndpoint}?page=$page&per_page=$perPage';
@@ -1260,6 +1336,14 @@ class ApiService {
       final List<dynamic> data = jsonDecode(response.body);
       return data.map((c) => Map<String, dynamic>.from(c)).toList();
     } catch (e) {
+      // Fallback to vendor-api.php bypass
+      try {
+        final apiCoupons = await getVendorApiCoupons(page: page, perPage: perPage);
+        if (apiCoupons.isNotEmpty) {
+          debugPrint('[Coupons] Loaded from vendor-api.php bypass (${apiCoupons.length}).');
+          return apiCoupons;
+        }
+      } catch (_) {}
       return [];
     }
   }
@@ -1298,15 +1382,87 @@ class ApiService {
   }
 
   /// Fetch product reviews for vendor.
-  Future<List<Map<String, dynamic>>> getVendorReviews({int page = 1, int perPage = 20}) async {
+  /// [vendorUserId] is the WordPress user ID of the vendor (post_author of products).
+  /// When provided, we post-filter the Dokan REST result to keep only reviews
+  /// for products whose post_author matches — closing the gap when Dokan's REST
+  /// returns marketplace-wide reviews.
+  Future<List<Map<String, dynamic>>> getVendorReviews({
+    int page = 1,
+    int perPage = 20,
+    int? vendorUserId,
+  }) async {
     try {
       final url = '${ApiConstants.dokanReviewsEndpoint}?page=$page&per_page=$perPage';
       final response = await _get(url, useWcAuth: false, requireAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
-      return data.map((r) => Map<String, dynamic>.from(r)).toList();
+      final reviews = data.map((r) => Map<String, dynamic>.from(r)).toList();
+
+      // ── Vendor‑scope defensive filter ──────────────────────────────
+      if (vendorUserId != null && vendorUserId > 0) {
+        return _filterReviewsForVendor(reviews, vendorUserId);
+      }
+      return reviews;
     } catch (e) {
+      // Fallback to vendor-api.php bypass (already vendor-scoped server-side)
+      try {
+        final apiReviews = await getVendorApiReviews(page: page, perPage: perPage);
+        if (apiReviews.isNotEmpty) {
+          debugPrint('[Reviews] Loaded from vendor-api.php bypass (${apiReviews.length}).');
+          return apiReviews;
+        }
+      } catch (_) {}
       return [];
     }
+  }
+
+  /// Keep only reviews whose product belongs to [vendorUserId].
+  Future<List<Map<String, dynamic>>> _filterReviewsForVendor(
+      List<Map<String, dynamic>> reviews, int vendorUserId) async {
+    if (reviews.isEmpty) return reviews;
+
+    // Collect unique product IDs from the reviews
+    final productIds = <int>{};
+    for (final r in reviews) {
+      final pid = r['product_id'] is int
+          ? r['product_id'] as int
+          : int.tryParse(r['product_id']?.toString() ?? '');
+      if (pid != null) productIds.add(pid);
+    }
+    if (productIds.isEmpty) return reviews;
+
+    // Batch-resolve ownership: one WC API call fetching all vendor products
+    final ownedProductIds = <int>{};
+    try {
+      final vendorProducts = await getVendorProducts(0, perPage: 100, authorUserId: vendorUserId);
+      for (final p in vendorProducts) {
+        ownedProductIds.add(p.id);
+      }
+    } catch (_) {
+      // If the batch call fails, fall back to per-product check
+      for (final pid in productIds) {
+        try {
+          final checkUrl = '${ApiConstants.productsEndpoint}/$pid';
+          final checkResponse = await client.get(
+            Uri.parse(checkUrl),
+            headers: _getHeaders(useWcAuth: true),
+          );
+          if (checkResponse.statusCode == 200) {
+            final p = jsonDecode(checkResponse.body);
+            if ((p['author_id'] ?? p['author']) == vendorUserId) {
+              ownedProductIds.add(pid);
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    final owned = ownedProductIds; // capture for closure
+    return reviews.where((r) {
+      final pid = r['product_id'] is int
+          ? r['product_id'] as int
+          : int.tryParse(r['product_id']?.toString() ?? '');
+      return pid != null && owned.contains(pid);
+    }).toList();
   }
 
   /// Reply to a review (via WC API - product review).
@@ -1378,6 +1534,7 @@ class ApiService {
   }
 
   /// Fetch vendor announcements/notices.
+  /// Falls back to vendor-api.php bypass if the REST endpoint is blocked or returns empty.
   Future<List<Map<String, dynamic>>> getVendorAnnouncements({int page = 1, int perPage = 20}) async {
     try {
       final url = '${ApiConstants.dokanAnnouncementsEndpoint}?page=$page&per_page=$perPage';
@@ -1385,6 +1542,14 @@ class ApiService {
       final List<dynamic> data = jsonDecode(response.body);
       return data.map((a) => Map<String, dynamic>.from(a)).toList();
     } catch (e) {
+      // Fallback to vendor-api.php bypass
+      try {
+        final apiAnnouncements = await getVendorApiAnnouncements(page: page, perPage: perPage);
+        if (apiAnnouncements.isNotEmpty) {
+          debugPrint('[Announcements] Loaded from vendor-api.php bypass (${apiAnnouncements.length}).');
+          return apiAnnouncements;
+        }
+      } catch (_) {}
       return [];
     }
   }
@@ -1599,6 +1764,56 @@ class ApiService {
   }
 
   // ─── Customer / User API Bypass (vendor-api.php) ───
+
+  /// Fetch vendor reviews via vendor-api.php (already vendor-scoped server-side).
+  Future<List<Map<String, dynamic>>> getVendorApiReviews({int page = 1, int perPage = 20}) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_reviews&page=$page&per_page=$perPage';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final reviews = data['reviews'] as List<dynamic>? ?? [];
+        return reviews.map((r) => Map<String, dynamic>.from(r)).toList();
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Reviews fetch failed: $e');
+    }
+    return [];
+  }
+
+  /// Fetch vendor coupons via vendor-api.php.
+  Future<List<Map<String, dynamic>>> getVendorApiCoupons({int page = 1, int perPage = 20}) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_coupons&page=$page&per_page=$perPage';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final coupons = data['coupons'] as List<dynamic>? ?? [];
+        return coupons.map((c) => Map<String, dynamic>.from(c)).toList();
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Coupons fetch failed: $e');
+    }
+    return [];
+  }
+
+  /// Fetch vendor announcements via vendor-api.php.
+  Future<List<Map<String, dynamic>>> getVendorApiAnnouncements({int page = 1, int perPage = 20}) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_announcements&page=$page&per_page=$perPage';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final announcements = data['announcements'] as List<dynamic>? ?? [];
+        return announcements.map((a) => Map<String, dynamic>.from(a)).toList();
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Announcements fetch failed: $e');
+    }
+    return [];
+  }
+
+  // ─── Customer / User API Bypass (vendor-api.php) (continued) ───
 
   /// Fetch WordPress user profile data via vendor-api.php.
   /// Returns display_name, username, email, first_name, last_name, is_vendor.
