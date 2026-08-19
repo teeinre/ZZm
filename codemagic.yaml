@@ -6,6 +6,8 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+      groups:
+        - app_store_credentials
       vars:
         BUNDLE_ID: store.zzmore.app
     scripts:

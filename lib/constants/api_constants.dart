@@ -94,6 +94,10 @@ class ApiConstants {
   static const String appEnterCheckoutEndpoint = '$appV1Base/enter-checkout';
   static const String appOrderEndpoint = '$appV1Base/order'; // append /{id}?key=xxx
 
+  // Password reset (mu-plugin: zzmore-password-reset.php)
+  static const String forgotPasswordEndpoint = '$appV1Base/forgot-password';
+  static const String resetPasswordEndpoint = '$appV1Base/reset-password';
+
   // WooCommerce API credentials
   static const String consumerKey = 'REDACTED_WC_KEY';
   static const String consumerSecret = 'REDACTED_WC_SECRET';
