@@ -465,7 +465,7 @@ if ( $action === 'get_products' ) {
         $product = wc_get_product( $post );
         if ( ! $product ) continue;
 
-        $products[] = [
+        $p = [
             'id'             => $product->get_id(),
             'name'           => $product->get_name(),
             'slug'           => $product->get_slug(),
@@ -488,6 +488,43 @@ if ( $action === 'get_products' ) {
                 return [ 'id' => $term->term_id, 'name' => $term->name, 'slug' => $term->slug ];
             }, get_the_terms( $post->ID, 'product_cat' ) ?: [] ),
         ];
+
+        // WooCommerce Subscriptions — append fields when available
+        $sub_period = '';
+        if ( class_exists( 'WC_Subscriptions_Product' ) ) {
+            try {
+                $sub_period = (string) WC_Subscriptions_Product::get_period( $product );
+                if ( ! empty( $sub_period ) ) {
+                    $p['is_subscription']              = true;
+                    $p['subscription_price']           = (string) WC_Subscriptions_Product::get_price( $product );
+                    $p['subscription_period']          = $sub_period;
+                    $p['subscription_period_interval'] = (string) WC_Subscriptions_Product::get_interval( $product );
+                    $p['subscription_length']          = (string) WC_Subscriptions_Product::get_length( $product );
+                    $p['subscription_trial_length']    = (string) WC_Subscriptions_Product::get_trial_length( $product );
+                    $p['subscription_trial_period']    = (string) WC_Subscriptions_Product::get_trial_period( $product );
+                    $p['subscription_sign_up_fee']     = (string) WC_Subscriptions_Product::get_sign_up_fee( $product );
+                    $p['type']                         = $product->get_type();
+                }
+            } catch ( \Exception $e ) {
+                $sub_period = '';
+            }
+        }
+        if ( empty( $sub_period ) ) {
+            $sub_period = get_post_meta( $product->get_id(), '_subscription_period', true );
+            if ( ! empty( $sub_period ) ) {
+                $p['is_subscription']              = true;
+                $p['subscription_price']           = get_post_meta( $product->get_id(), '_subscription_price', true );
+                $p['subscription_period']          = $sub_period;
+                $p['subscription_period_interval'] = get_post_meta( $product->get_id(), '_subscription_period_interval', true );
+                $p['subscription_length']          = get_post_meta( $product->get_id(), '_subscription_length', true );
+                $p['subscription_trial_length']    = get_post_meta( $product->get_id(), '_subscription_trial_length', true );
+                $p['subscription_trial_period']    = get_post_meta( $product->get_id(), '_subscription_trial_period', true );
+                $p['subscription_sign_up_fee']     = get_post_meta( $product->get_id(), '_subscription_sign_up_fee', true );
+                $p['type']                         = $product->get_type();
+            }
+        }
+
+        $products[] = $p;
     }
 
     vendor_api_respond( [
@@ -922,6 +959,44 @@ if ( 'get_store_products' === $action ) {
                 $pdata['categories'] = array_map( function ( $t ) {
                     return [ 'id' => $t->term_id, 'name' => $t->name, 'slug' => $t->slug ];
                 }, $terms );
+            }
+
+            // WooCommerce Subscriptions — append fields when available
+            $sub_period = '';
+            if ( $wc_product && class_exists( 'WC_Subscriptions_Product' ) ) {
+                $wc_prod = wc_get_product( $pid );
+                if ( $wc_prod ) {
+                    try {
+                        $sub_period = (string) WC_Subscriptions_Product::get_period( $wc_prod );
+                        if ( ! empty( $sub_period ) ) {
+                            $pdata['is_subscription']              = true;
+                            $pdata['subscription_price']           = (string) WC_Subscriptions_Product::get_price( $wc_prod );
+                            $pdata['subscription_period']          = $sub_period;
+                            $pdata['subscription_period_interval'] = (string) WC_Subscriptions_Product::get_interval( $wc_prod );
+                            $pdata['subscription_length']          = (string) WC_Subscriptions_Product::get_length( $wc_prod );
+                            $pdata['subscription_trial_length']    = (string) WC_Subscriptions_Product::get_trial_length( $wc_prod );
+                            $pdata['subscription_trial_period']    = (string) WC_Subscriptions_Product::get_trial_period( $wc_prod );
+                            $pdata['subscription_sign_up_fee']     = (string) WC_Subscriptions_Product::get_sign_up_fee( $wc_prod );
+                            $pdata['type']                         = $wc_prod->get_type();
+                        }
+                    } catch ( \Exception $e ) {
+                        $sub_period = '';
+                    }
+                }
+            }
+            if ( empty( $sub_period ) ) {
+                $sub_period = get_post_meta( $pid, '_subscription_period', true );
+                if ( ! empty( $sub_period ) ) {
+                    $pdata['is_subscription']              = true;
+                    $pdata['subscription_price']           = get_post_meta( $pid, '_subscription_price', true );
+                    $pdata['subscription_period']          = $sub_period;
+                    $pdata['subscription_period_interval'] = get_post_meta( $pid, '_subscription_period_interval', true );
+                    $pdata['subscription_length']          = get_post_meta( $pid, '_subscription_length', true );
+                    $pdata['subscription_trial_length']    = get_post_meta( $pid, '_subscription_trial_length', true );
+                    $pdata['subscription_trial_period']    = get_post_meta( $pid, '_subscription_trial_period', true );
+                    $pdata['subscription_sign_up_fee']     = get_post_meta( $pid, '_subscription_sign_up_fee', true );
+                    $pdata['type']                         = get_post_meta( $pid, '_product_type', true ) ?: 'subscription';
+                }
             }
 
             $products[] = $pdata;

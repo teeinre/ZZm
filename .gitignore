@@ -43,10 +43,16 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Dokan plugin reference directories (not part of the Flutter build)
+# Plugin & vendor/plugin reference directories (reference copies only — server deployment happens via WordPress, not from this repo
 /dokan-lite.5.0.9/
 /dokan-pro/
 /dokan vendor streamin/
+/woocommerce-subscriptions/
+
+# Miscellaneous project-local reference/generated folders
+/AppIcons/
+/bridegn/
+/playstore_screenshots/
 
 # iOS CocoaPods & Xcode user data
 **/ios/Pods/
@@ -119,8 +125,5 @@ $RECYCLE.BIN/
 /data-deletion.html
 /playstore_screenshots.html
 
-# App store screenshots (not needed in source)
-/playstore_screenshots/
-
-# Codemagic CI — keep the config, ignore artifacts
+# Codemagic CI — keep the config (codemagic.yaml), ignore timestamped/backup variants
 codemagic_*.yaml
