@@ -324,6 +324,44 @@ class ApiService {
     return null;
   }
 
+  /// Requests a time-limited OTP to be emailed for [email].
+  /// Returns `null` on success, otherwise an error message to display.
+  Future<String?> requestOtp(String email) async {
+    try {
+      final response = await client.post(
+        Uri.parse(ApiConstants.requestOtpEndpoint),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: jsonEncode({'email': email}),
+      );
+      final data = _decodeBody(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _extractErrorMessage(data) ?? 'Unable to send the verification code.';
+    } catch (_) {
+      return 'Something went wrong. Please check your connection and try again.';
+    }
+  }
+
+  /// Verifies an OTP and sets a new password.
+  /// Returns `null` on success, otherwise an error message to display.
+  Future<String?> verifyOtp(String email, String otp, String newPassword) async {
+    try {
+      final response = await client.post(
+        Uri.parse(ApiConstants.verifyOtpEndpoint),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: jsonEncode({'email': email, 'otp': otp, 'password': newPassword}),
+      );
+      final data = _decodeBody(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _extractErrorMessage(data) ?? 'Unable to reset the password.';
+    } catch (_) {
+      return 'Something went wrong. Please check your connection and try again.';
+    }
+  }
+
   Future<List<Product>> getProducts({
     int page = 1,
     int perPage = ApiConstants.defaultPerPage,
