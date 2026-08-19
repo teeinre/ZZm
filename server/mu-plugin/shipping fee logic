@@ -1,0 +1,476 @@
+<?php
+/**
+ * =========================================================================
+ * VENDOR SHIPPING — CHECKOUT-ONLY TAKEOVER (for the Code Snippets plugin)
+ * -------------------------------------------------------------------------
+ * This snippet does NOT touch, redeclare, or reference the existing
+ * tee_get_advanced_dokan_shipping_html() function that already renders the
+ * shop-page "Shipping: $X" badge. That function stays exactly as it is on
+ * your site today — nothing here can change how the shop page looks.
+ *
+ * It hooks woocommerce_package_rates and woocommerce_cart_shipping_packages,
+ * both of which WooCommerce only calls during cart/checkout shipping
+ * calculation — never on product listing, single-product, or any other
+ * shop-facing page. So this cannot leak into the shop page.
+ *
+ * PASTE INTO CODE SNIPPETS / WPCODE:
+ *   - Do NOT include the "<?php" line at the top — the plugin adds it.
+ *   - Set the snippet to "Run snippet everywhere" (not "frontend only"),
+ *     since WooCommerce's cart AJAX updates route through admin-ajax.php,
+ *     which some plugins treat as an "admin" request.
+ * =========================================================================
+ */
+
+if ( ! function_exists( 'tee_evaluate_shipping_formula' ) ) {
+    function tee_evaluate_shipping_formula( $equation, $qty = 1, $cost = 0 ) {
+        if ( ! is_string( $equation ) ) {
+            return (float) $equation;
+        }
+        $equation = str_replace(
+            array( '[qty]', '[cost]', '[fee percent="', "[fee percent='", '"]', "']" ),
+            array( $qty, $cost, '($cost * ', '($cost * ', '/100)', '/100)' ),
+            $equation
+        );
+        $equation = preg_replace( '/[^0-9\.\+\-\*\/\(\)\s]/', '', $equation );
+        if ( empty( $equation ) ) {
+            return 0.0;
+        }
+        try {
+            return (float) eval( 'return ' . $equation . ';' );
+        } catch ( \Throwable $e ) {
+            return 0.0;
+        }
+    }
+}
+
+if ( ! function_exists( 'tee_extract_shipping_rate_rows' ) ) {
+    function tee_extract_shipping_rate_rows( $data ) {
+        $rows  = array();
+        $stack = array( $data );
+        while ( ! empty( $stack ) ) {
+            $current = array_pop( $stack );
+            if ( is_string( $current ) ) {
+                $decoded = maybe_unserialize( $current );
+                if ( is_string( $decoded ) ) {
+                    $json = json_decode( $decoded, true );
+                    if ( is_array( $json ) ) {
+                        $decoded = $json;
+                    }
+                }
+                $current = $decoded;
+            }
+            if ( ! is_array( $current ) ) {
+                continue;
+            }
+
+            $has_cost = false;
+            foreach ( array( 'cost', 'rate', 'price', 'shipping_cost' ) as $k ) {
+                if ( isset( $current[ $k ] ) ) { $has_cost = true; break; }
+            }
+            $has_class = false;
+            foreach ( array( 'shipping_class', 'class', 'shipping_class_id', 'class_id' ) as $k ) {
+                if ( isset( $current[ $k ] ) ) { $has_class = true; break; }
+            }
+
+            if ( $has_cost && $has_class ) {
+                $rows[] = $current;
+            }
+            foreach ( $current as $v ) {
+                if ( is_array( $v ) ) {
+                    $stack[] = $v;
+                }
+            }
+        }
+        return $rows;
+    }
+}
+
+if ( ! function_exists( 'tee_shipping_row_matches_conditions' ) ) {
+    function tee_shipping_row_matches_conditions( $row, $shipping_class_id, $product_weight, $product_price ) {
+        $class_val = null;
+        $keys = array( 'rate_class', 'shipping_class', 'class', 'shipping_class_id', 'class_id', 'term_id', 'product_class' );
+        foreach ( $keys as $k ) {
+            if ( isset( $row[ $k ] ) ) { $class_val = $row[ $k ]; break; }
+        }
+
+        $class_match = false;
+        if ( $class_val !== null ) {
+            if ( is_array( $class_val ) ) {
+                foreach ( $class_val as $cv ) {
+                    if ( (int) $cv === $shipping_class_id ) { $class_match = true; break; }
+                }
+            } else {
+                $s = trim( strtolower( (string) $class_val ) );
+                if ( in_array( $s, array( '0', '', 'any', 'all', '*' ), true ) ) {
+                    $class_match = true;
+                } elseif ( (int) $s === $shipping_class_id ) {
+                    $class_match = true;
+                }
+            }
+        } else {
+            $class_match = true;
+        }
+
+        if ( ! $class_match ) {
+            return false;
+        }
+
+        $condition_type = '';
+        if ( isset( $row['condition'] ) ) {
+            $condition_type = $row['condition'];
+        } elseif ( isset( $row['rate_condition'] ) ) {
+            $condition_type = $row['rate_condition'];
+        }
+
+        $min = null;
+        $max = null;
+        if ( isset( $row['min'] ) ) { $min = (float) $row['min']; }
+        elseif ( isset( $row['rate_min'] ) ) { $min = (float) $row['rate_min']; }
+        elseif ( isset( $row['min_weight'] ) ) { $min = (float) $row['min_weight']; }
+        elseif ( isset( $row['min_price'] ) ) { $min = (float) $row['min_price']; }
+
+        if ( isset( $row['max'] ) ) { $max = (float) $row['max']; }
+        elseif ( isset( $row['rate_max'] ) ) { $max = (float) $row['rate_max']; }
+        elseif ( isset( $row['max_weight'] ) ) { $max = (float) $row['max_weight']; }
+        elseif ( isset( $row['max_price'] ) ) { $max = (float) $row['max_price']; }
+
+        $condition_type = strtolower( trim( $condition_type ) );
+
+        if ( $condition_type === 'weight' || ( empty( $condition_type ) && isset( $row['min_weight'] ) ) ) {
+            if ( $min !== null && $product_weight < $min ) { return false; }
+            if ( $max !== null && $max > 0 && $product_weight > $max ) { return false; }
+        } elseif ( $condition_type === 'price' || $condition_type === 'total' || ( empty( $condition_type ) && isset( $row['min_price'] ) ) ) {
+            if ( $min !== null && $product_price < $min ) { return false; }
+            if ( $max !== null && $max > 0 && $product_price > $max ) { return false; }
+        } elseif ( $condition_type === 'item_count' || $condition_type === 'item' ) {
+            if ( $min !== null && 1 < $min ) { return false; }
+            if ( $max !== null && $max > 0 && 1 > $max ) { return false; }
+        }
+
+        return true;
+    }
+}
+
+if ( ! function_exists( 'tee_get_shipping_row_cost' ) ) {
+    function tee_get_shipping_row_cost( $row, $product_price, $product_weight ) {
+        $total = 0.0;
+        $found = false;
+
+        if ( isset( $row['cost'] ) ) {
+            $val = tee_evaluate_shipping_formula( $row['cost'], 1, $product_price );
+            if ( $val >= 0 ) { $total += $val; $found = true; }
+        } elseif ( isset( $row['rate_cost'] ) ) {
+            $val = tee_evaluate_shipping_formula( $row['rate_cost'], 1, $product_price );
+            if ( $val >= 0 ) { $total += $val; $found = true; }
+        } elseif ( isset( $row['row_cost'] ) ) {
+            $val = tee_evaluate_shipping_formula( $row['row_cost'], 1, $product_price );
+            if ( $val >= 0 ) { $total += $val; $found = true; }
+        }
+
+        if ( isset( $row['item_cost'] ) ) {
+            $val = tee_evaluate_shipping_formula( $row['item_cost'], 1, $product_price );
+            if ( $val >= 0 ) { $total += $val; $found = true; }
+        } elseif ( isset( $row['rate_cost_per_item'] ) ) {
+            $val = tee_evaluate_shipping_formula( $row['rate_cost_per_item'], 1, $product_price );
+            if ( $val >= 0 ) { $total += $val; $found = true; }
+        } elseif ( isset( $row['cost_per_item'] ) ) {
+            $val = tee_evaluate_shipping_formula( $row['cost_per_item'], 1, $product_price );
+            if ( $val >= 0 ) { $total += $val; $found = true; }
+        }
+
+        if ( isset( $row['kg_cost'] ) ) {
+            $val = tee_evaluate_shipping_formula( $row['kg_cost'], 1, $product_price );
+            if ( $val >= 0 ) { $total += ( $val * $product_weight ); $found = true; }
+        } elseif ( isset( $row['weight_cost'] ) ) {
+            $val = tee_evaluate_shipping_formula( $row['weight_cost'], 1, $product_price );
+            if ( $val >= 0 ) { $total += ( $val * $product_weight ); $found = true; }
+        } elseif ( isset( $row['cost_per_weight'] ) ) {
+            $val = tee_evaluate_shipping_formula( $row['cost_per_weight'], 1, $product_price );
+            if ( $val >= 0 ) { $total += ( $val * $product_weight ); $found = true; }
+        }
+
+        if ( isset( $row['percent_cost'] ) ) {
+            $val = (float) $row['percent_cost'];
+            if ( $val > 0 ) { $total += ( $product_price * $val / 100 ); $found = true; }
+        } elseif ( isset( $row['cost_percent'] ) ) {
+            $val = (float) $row['cost_percent'];
+            if ( $val > 0 ) { $total += ( $product_price * $val / 100 ); $found = true; }
+        }
+
+        if ( $found ) {
+            return $total;
+        }
+
+        $keys = array( 'rate', 'price', 'shipping_cost' );
+        foreach ( $keys as $k ) {
+            if ( isset( $row[ $k ] ) ) {
+                $val = tee_evaluate_shipping_formula( $row[ $k ], 1, $product_price );
+                if ( $val >= 0 ) {
+                    return $val;
+                }
+            }
+        }
+        return null;
+    }
+}
+
+if ( ! function_exists( 'tee_resolve_vendor_shipping_cost' ) ) {
+    /**
+     * Same cascade as your shop-page badge (Dokan table rate -> vendor WC
+     * shipping zones -> vendor user meta), kept as an independent function
+     * name so it can never collide with anything already on the site.
+     */
+    function tee_resolve_vendor_shipping_cost( $product, $destination = array() ) {
+        static $cache = array();
+
+        if ( ! $product instanceof WC_Product ) {
+            return null;
+        }
+        if ( in_array( $product->get_type(), array( 'grouped', 'external' ), true ) ) {
+            return null;
+        }
+
+        $product_id        = $product->get_id();
+        $shipping_class_id = (int) $product->get_shipping_class_id();
+        $c_country  = isset( $destination['country'] ) ? $destination['country'] : '';
+        $c_state    = isset( $destination['state'] ) ? $destination['state'] : '';
+        $c_postcode = isset( $destination['postcode'] ) ? $destination['postcode'] : '';
+
+        $cache_key = $product_id . ':' . $shipping_class_id . ':' . $c_country . ':' . $c_state . ':' . $c_postcode;
+        if ( array_key_exists( $cache_key, $cache ) ) {
+            return $cache[ $cache_key ];
+        }
+
+        $vendor_id = (int) get_post_field( 'post_author', $product_id );
+        if ( ! $vendor_id ) {
+            $cache[ $cache_key ] = null;
+            return null;
+        }
+
+        $lowest_price   = null;
+        $product_weight = (float) $product->get_weight();
+        $product_price  = (float) $product->get_price();
+
+        global $wpdb;
+
+        // 1. Official Dokan Table Rate
+        $table_candidates = array( $wpdb->prefix . 'dokan_table_rate_shipping', $wpdb->prefix . 'dokan_table_rates' );
+        foreach ( $table_candidates as $table ) {
+            if ( $wpdb->get_var( "SHOW TABLES LIKE '$table'" ) === $table ) {
+                $rates = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE vendor_id = %d", $vendor_id ), ARRAY_A );
+                if ( ! empty( $rates ) ) {
+                    foreach ( $rates as $rate ) {
+                        if ( tee_shipping_row_matches_conditions( $rate, $shipping_class_id, $product_weight, $product_price ) ) {
+                            $cost_val = tee_get_shipping_row_cost( $rate, $product_price, $product_weight );
+                            if ( $cost_val !== null && ( $lowest_price === null || $cost_val < $lowest_price ) ) {
+                                $lowest_price = $cost_val;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Vendor Shipping Zones
+        if ( $lowest_price === null ) {
+            $zones_table     = $wpdb->prefix . 'woocommerce_shipping_zones';
+            $methods_table   = $wpdb->prefix . 'woocommerce_shipping_zone_methods';
+            $locations_table = $wpdb->prefix . 'woocommerce_shipping_zone_locations';
+
+            $has_vendor_col = $wpdb->get_results( "SHOW COLUMNS FROM {$zones_table} LIKE 'vendor_id'" );
+            if ( ! empty( $has_vendor_col ) ) {
+                $vendor_zones   = $wpdb->get_results( $wpdb->prepare( "SELECT zone_id FROM {$zones_table} WHERE vendor_id = %d", $vendor_id ), ARRAY_A );
+                $valid_zone_ids = array();
+
+                if ( ! empty( $c_country ) && ! empty( $vendor_zones ) ) {
+                    foreach ( $vendor_zones as $vz ) {
+                        $zid = (int) $vz['zone_id'];
+                        $location_matches = $wpdb->get_var( $wpdb->prepare(
+                            "SELECT COUNT(*) FROM {$locations_table} WHERE zone_id = %d AND location_type IN ('country', 'state', 'postcode') AND location_code IN (%s, %s, %s)",
+                            $zid, $c_country, $c_country . ':' . $c_state, $c_postcode
+                        ) );
+                        if ( $location_matches > 0 ) { $valid_zone_ids[] = $zid; }
+                    }
+                }
+
+                if ( empty( $valid_zone_ids ) && ! empty( $vendor_zones ) ) {
+                    $valid_zone_ids = wp_list_pluck( $vendor_zones, 'zone_id' );
+                }
+
+                if ( ! empty( $valid_zone_ids ) ) {
+                    $zone_list = implode( ',', array_map( 'intval', $valid_zone_ids ) );
+                    $methods   = $wpdb->get_results( "SELECT method_id, instance_settings FROM {$methods_table} WHERE zone_id IN ({$zone_list})", ARRAY_A );
+                    if ( ! empty( $methods ) ) {
+                        foreach ( $methods as $method ) {
+                            $method_id = $method['method_id'];
+                            $settings  = maybe_unserialize( $method['instance_settings'] );
+                            if ( ! is_array( $settings ) ) { continue; }
+
+                            if ( 'flat_rate' === $method_id ) {
+                                $cost = 0;
+                                if ( isset( $settings['cost'] ) ) { $cost += tee_evaluate_shipping_formula( $settings['cost'], 1, $product_price ); }
+                                $class_cost_key = 'class_cost_' . $shipping_class_id;
+                                if ( isset( $settings[ $class_cost_key ] ) ) {
+                                    $cost += tee_evaluate_shipping_formula( $settings[ $class_cost_key ], 1, $product_price );
+                                } elseif ( isset( $settings['no_class_cost'] ) && empty( $shipping_class_id ) ) {
+                                    $cost += tee_evaluate_shipping_formula( $settings['no_class_cost'], 1, $product_price );
+                                }
+                                if ( $lowest_price === null || $cost < $lowest_price ) { $lowest_price = $cost; }
+                            } elseif ( 'free_shipping' === $method_id ) {
+                                $min_amount = isset( $settings['min_amount'] ) ? (float) $settings['min_amount'] : 0;
+                                if ( $product_price >= $min_amount ) { $lowest_price = 0; }
+                            } elseif ( 'local_pickup' === $method_id ) {
+                                $cost = isset( $settings['cost'] ) ? tee_evaluate_shipping_formula( $settings['cost'], 1, $product_price ) : 0;
+                                if ( $lowest_price === null || $cost < $lowest_price ) { $lowest_price = $cost; }
+                            } else {
+                                $extracted = tee_extract_shipping_rate_rows( $settings );
+                                foreach ( $extracted as $row ) {
+                                    if ( tee_shipping_row_matches_conditions( $row, $shipping_class_id, $product_weight, $product_price ) ) {
+                                        $c = tee_get_shipping_row_cost( $row, $product_price, $product_weight );
+                                        if ( $c !== null && ( $lowest_price === null || $c < $lowest_price ) ) {
+                                            $lowest_price = $c;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. User Meta
+        if ( $lowest_price === null ) {
+            $meta_keys = array( '_dokan_shipping_settings', 'dokan_shipping', 'dokan_seller_shipping_settings' );
+            foreach ( $meta_keys as $key ) {
+                $data = get_user_meta( $vendor_id, $key, true );
+                if ( ! empty( $data ) ) {
+                    $extracted = tee_extract_shipping_rate_rows( $data );
+                    foreach ( $extracted as $row ) {
+                        if ( tee_shipping_row_matches_conditions( $row, $shipping_class_id, $product_weight, $product_price ) ) {
+                            $c = tee_get_shipping_row_cost( $row, $product_price, $product_weight );
+                            if ( $c !== null && ( $lowest_price === null || $c < $lowest_price ) ) {
+                                $lowest_price = $c;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        $cache[ $cache_key ] = $lowest_price;
+        return $lowest_price;
+    }
+}
+
+/**
+ * =========================================================================
+ * CHECKOUT TAKEOVER — the only part of this snippet that WooCommerce
+ * actually calls during checkout. Never fires on the shop page.
+ * =========================================================================
+ */
+if ( ! function_exists( 'tee_take_over_checkout_shipping_rates' ) ) {
+    add_filter( 'woocommerce_package_rates', 'tee_take_over_checkout_shipping_rates', 100, 2 );
+
+    function tee_take_over_checkout_shipping_rates( $rates, $package ) {
+        if ( empty( $package['contents'] ) ) {
+            return $rates;
+        }
+
+        $destination = array(
+            'country'  => isset( $package['destination']['country'] ) ? $package['destination']['country'] : '',
+            'state'    => isset( $package['destination']['state'] ) ? $package['destination']['state'] : '',
+            'postcode' => isset( $package['destination']['postcode'] ) ? $package['destination']['postcode'] : '',
+        );
+
+        // If WooCommerce doesn't have enough destination info yet, bail and
+        // let WooCommerce's own "enter your address" flow behave normally
+        // instead of forcing a $0 rate onto an unresolved address.
+        if ( empty( $destination['country'] ) ) {
+            return $rates;
+        }
+
+        $fallback_cost = apply_filters( 'tee_vendor_shipping_fallback_cost', 0 );
+
+        $total         = 0.0;
+        $any_shippable = false;
+        $vendor_id     = null;
+
+        foreach ( $package['contents'] as $item ) {
+            if ( empty( $item['data'] ) || ! $item['data'] instanceof WC_Product ) {
+                continue;
+            }
+            $product = $item['data'];
+            if ( in_array( $product->get_type(), array( 'grouped', 'external' ), true ) ) {
+                continue;
+            }
+            if ( ! $product->needs_shipping() ) {
+                continue;
+            }
+
+            $qty  = isset( $item['quantity'] ) ? (int) $item['quantity'] : 1;
+            $cost = tee_resolve_vendor_shipping_cost( $product, $destination );
+
+            if ( $cost === null ) {
+                $cost = (float) $fallback_cost;
+            }
+
+            $total         += $cost * $qty;
+            $any_shippable = true;
+
+            if ( $vendor_id === null ) {
+                $vendor_id = (int) get_post_field( 'post_author', $product->get_id() );
+            }
+        }
+
+        if ( ! $any_shippable ) {
+            return $rates;
+        }
+
+        $rate_id_suffix = $vendor_id ? $vendor_id : md5( wp_json_encode( $destination ) );
+        $rate_id        = 'vendor_custom_shipping_' . $rate_id_suffix;
+
+        $new_rate = new WC_Shipping_Rate(
+            $rate_id,
+            __( 'Shipping', 'dokan' ),
+            $total,
+            array(),
+            'vendor_custom_shipping',
+            'vendor_custom_shipping:' . $rate_id_suffix
+        );
+
+        return array( $rate_id => $new_rate );
+    }
+}
+
+/**
+ * Optional: split cart into one package per vendor. SKIP this whole block
+ * (delete it from the snippet) if Dokan Pro's own shipping module already
+ * splits packages by vendor — check Dokan > Settings > Shipping first.
+ */
+if ( ! function_exists( 'tee_split_cart_packages_by_vendor' ) ) {
+    add_filter( 'woocommerce_cart_shipping_packages', 'tee_split_cart_packages_by_vendor', 10, 1 );
+
+    function tee_split_cart_packages_by_vendor( $packages ) {
+        if ( count( $packages ) !== 1 || empty( $packages[0]['contents'] ) ) {
+            return $packages;
+        }
+
+        $by_vendor = array();
+        foreach ( $packages[0]['contents'] as $key => $item ) {
+            if ( empty( $item['data'] ) || ! $item['data'] instanceof WC_Product ) {
+                continue;
+            }
+            $vendor_id = (int) get_post_field( 'post_author', $item['data']->get_id() );
+            if ( ! isset( $by_vendor[ $vendor_id ] ) ) {
+                $by_vendor[ $vendor_id ] = $packages[0];
+                $by_vendor[ $vendor_id ]['contents']      = array();
+                $by_vendor[ $vendor_id ]['contents_cost'] = 0;
+            }
+            $by_vendor[ $vendor_id ]['contents'][ $key ] = $item;
+            $by_vendor[ $vendor_id ]['contents_cost']   += $item['line_total'];
+        }
+
+        return ! empty( $by_vendor ) ? array_values( $by_vendor ) : $packages;
+    }
+}

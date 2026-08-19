@@ -98,6 +98,9 @@ class ApiConstants {
   static const String forgotPasswordEndpoint = '$appV1Base/forgot-password';
   static const String resetPasswordEndpoint = '$appV1Base/reset-password';
 
+  // Shipping fee (mu-plugin: zzmore-shipping-fee.php)
+  static const String productShippingFeeEndpoint = '$appV1Base/product-shipping-fee';
+
   // WooCommerce API credentials
   static const String consumerKey = 'REDACTED_WC_KEY';
   static const String consumerSecret = 'REDACTED_WC_SECRET';
