@@ -41,6 +41,27 @@ function zzmore_register_password_reset_routes(): void {
             'password' => [ 'required' => true, 'type' => 'string' ],
         ],
     ] );
+
+    // OTP-based in-app reset flow.
+    register_rest_route( 'app/v1', '/request-otp', [
+        'methods'             => 'POST',
+        'permission_callback' => '__return_true',
+        'callback'            => 'zzmore_request_otp',
+        'args'                => [
+            'email' => [ 'required' => true, 'type' => 'string' ],
+        ],
+    ] );
+
+    register_rest_route( 'app/v1', '/verify-otp', [
+        'methods'             => 'POST',
+        'permission_callback' => '__return_true',
+        'callback'            => 'zzmore_verify_otp',
+        'args'                => [
+            'email'    => [ 'required' => true, 'type' => 'string' ],
+            'otp'      => [ 'required' => true, 'type' => 'string' ],
+            'password' => [ 'required' => true, 'type' => 'string' ],
+        ],
+    ] );
 }
 
 /**
@@ -133,6 +154,144 @@ function zzmore_reset_password( WP_REST_Request $request ) {
         'success' => true,
         'message' => __( 'Your password has been updated. You can now sign in.', 'zzmore' ),
     ];
+}
+
+/**
+ * POST /app/v1/request-otp
+ *
+ * Body: { "email": "user@example.com" }
+ *
+ * Generates a 6-digit one-time password, stores it server-side for 10 minutes,
+ * and emails it to the user. Returns a generic success message regardless of
+ * whether the account exists, to avoid user enumeration.
+ */
+function zzmore_request_otp( WP_REST_Request $request ) {
+    $email = sanitize_email( (string) $request->get_param( 'email' ) );
+
+    if ( ! is_email( $email ) ) {
+        return new WP_Error(
+            'invalid_email',
+            __( 'Please enter a valid email address.', 'zzmore' ),
+            [ 'status' => 400 ]
+        );
+    }
+
+    // Rate-limit per email (60s) to reduce abuse.
+    $limit_key = 'zzmore_otp_rl_' . md5( strtolower( $email ) );
+    if ( get_transient( $limit_key ) ) {
+        return new WP_Error(
+            'too_many_requests',
+            __( 'Please wait a moment before requesting another code.', 'zzmore' ),
+            [ 'status' => 429 ]
+        );
+    }
+    set_transient( $limit_key, 1, 60 );
+
+    $user = get_user_by( 'email', $email );
+    if ( ! $user ) {
+        // Generic response to prevent enumeration.
+        return [
+            'success' => true,
+            'message' => __( 'If an account exists for this email, a verification code has been sent.', 'zzmore' ),
+        ];
+    }
+
+    $otp = zzmore_generate_otp();
+    // Store a salted hash of the code so the plain value never persists.
+    set_transient( 'zzmore_otp_' . md5( strtolower( $email ) ), wp_hash( $otp ), 10 * MINUTE_IN_SECONDS );
+
+    zzmore_send_otp_email( $email, $user, $otp );
+
+    return [
+        'success' => true,
+        'message' => __( 'If an account exists for this email, a verification code has been sent.', 'zzmore' ),
+    ];
+}
+
+/**
+ * POST /app/v1/verify-otp
+ *
+ * Body: { "email": "...", "otp": "123456", "password": "newPass123" }
+ *
+ * Validates the OTP (value, expiration, and match to the email), enforces the
+ * new-password strength requirements, then updates the user's password.
+ */
+function zzmore_verify_otp( WP_REST_Request $request ) {
+    $email    = sanitize_email( (string) $request->get_param( 'email' ) );
+    $otp      = sanitize_text_field( (string) $request->get_param( 'otp' ) );
+    $password = (string) $request->get_param( 'password' );
+
+    if ( ! is_email( $email ) ) {
+        return new WP_Error( 'invalid_email', __( 'Please enter a valid email address.', 'zzmore' ), [ 'status' => 400 ] );
+    }
+
+    if ( '' === $otp ) {
+        return new WP_Error( 'missing_otp', __( 'Please enter the verification code.', 'zzmore' ), [ 'status' => 400 ] );
+    }
+
+    // Password strength: minimum 8 chars containing at least a letter and a number.
+    if ( strlen( $password ) < 8 ) {
+        return new WP_Error( 'weak_password', __( 'Password must be at least 8 characters.', 'zzmore' ), [ 'status' => 400 ] );
+    }
+    if ( ! preg_match( '/[A-Za-z]/', $password ) || ! preg_match( '/[0-9]/', $password ) ) {
+        return new WP_Error(
+            'weak_password',
+            __( 'Password must contain at least one letter and one number.', 'zzmore' ),
+            [ 'status' => 400 ]
+        );
+    }
+
+    $user = get_user_by( 'email', $email );
+    if ( ! $user ) {
+        // Generic failure to avoid enumeration.
+        return new WP_Error( 'invalid_otp', __( 'This code is invalid or has expired. Please request a new one.', 'zzmore' ), [ 'status' => 400 ] );
+    }
+
+    $stored = get_transient( 'zzmore_otp_' . md5( strtolower( $email ) ) );
+    if ( ! $stored || ! hash_equals( (string) $stored, wp_hash( $otp ) ) ) {
+        return new WP_Error( 'invalid_otp', __( 'This code is invalid or has expired. Please request a new one.', 'zzmore' ), [ 'status' => 400 ] );
+    }
+
+    // Code is valid and consumed — remove it before changing the password.
+    delete_transient( 'zzmore_otp_' . md5( strtolower( $email ) ) );
+
+    wp_set_password( $password, $user->ID );
+
+    return [
+        'success' => true,
+        'message' => __( 'Your password has been changed successfully. You can now sign in.', 'zzmore' ),
+    ];
+}
+
+/**
+ * Generates a cryptographically random 6-digit numeric OTP.
+ */
+function zzmore_generate_otp(): string {
+    try {
+        return (string) random_int( 100000, 999999 ); // Always a 6-digit code.
+    } catch ( \Throwable $e ) {
+        return (string) wp_rand( 100000, 999999 );
+    }
+}
+
+/**
+ * Emails the verification code to the user as a simple HTML message.
+ */
+function zzmore_send_otp_email( string $email, WP_User $user, string $otp ): void {
+    $site_name = wp_specialchars_decode( get_option( 'blogname' ), ENT_QUOTES );
+    $code      = str_pad( $otp, 6, '0', STR_PAD_LEFT );
+
+    $subject = sprintf( __( 'Your %s verification code', 'zzmore' ), $site_name );
+
+    $message  = '<p>' . sprintf( __( 'Hello %s,', 'zzmore' ), esc_html( $user->display_name ) ) . '</p>';
+    $message .= '<p>' . sprintf(
+        __( 'Use the verification code below to reset your %s password:', 'zzmore' ),
+        esc_html( $site_name )
+    ) . '</p>';
+    $message .= '<p style="margin:24px 0;font-size:32px;font-weight:bold;letter-spacing:6px;color:#E67E14">' . esc_html( $code ) . '</p>';
+    $message .= '<p>' . __( 'This code expires in 10 minutes. If you did not request it, you can safely ignore this email.', 'zzmore' ) . '</p>';
+
+    wp_mail( $email, $subject, $message, [ 'Content-Type: text/html; charset=UTF-8' ] );
 }
 
 /**
