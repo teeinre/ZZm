@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -61,16 +62,18 @@ void main() async {
   final hiveService = HiveService();
   await hiveService.init();
 
-  // Initialize Firebase (required for push notifications)
+  // Initialize Firebase (required for push notifications on Android only).
   // Requires google-services.json from Firebase Console placed at:
   //   android/app/google-services.json
-  try {
-    await Firebase.initializeApp();
-    // Initialize push notifications (non-blocking)
-    NotificationService().initialize();
-  } catch (e) {
-    // Firebase not configured — push notifications disabled
-    debugPrint('Firebase not configured. Push notifications disabled.');
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    try {
+      await Firebase.initializeApp();
+      // Initialize push notifications (non-blocking)
+      NotificationService().initialize();
+    } catch (e) {
+      // Firebase not configured — push notifications disabled
+      debugPrint('Firebase not configured. Push notifications disabled.');
+    }
   }
 
   runApp(ZZmoreStoreApp(hiveService: hiveService));
