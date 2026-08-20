@@ -20,36 +20,6 @@ class _CartScreenState extends State<CartScreen> {
   final TextEditingController _discountController = TextEditingController();
   double _discount = 0.0;
   bool _discountApplied = false;
-  final Map<int, double?> _productShippingFees = {};
-  bool _isLoadingShipping = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadVendorShipping();
-  }
-
-  Future<void> _loadVendorShipping() async {
-    setState(() => _isLoadingShipping = true);
-    final api = ApiService();
-    final cart = context.read<CartProvider>();
-    for (final item in cart.cartItems) {
-      if (item.product.vendorId == null) continue;
-      try {
-        final fee = await api.getProductShippingFee(
-          item.product.id,
-          quantity: item.quantity,
-        );
-        if (mounted) {
-          _productShippingFees[item.product.id] = fee;
-        }
-      } catch (_) {}
-    }
-    if (mounted) {
-      setState(() => _isLoadingShipping = false);
-    }
-  }
-
   @override
   void dispose() {
     _discountController.dispose();
@@ -271,43 +241,8 @@ class _CartScreenState extends State<CartScreen> {
               padding: const EdgeInsets.only(top: 6),
               child: Text('Variation #${item.variationId}', style: TextStyle(fontSize: 10, color: AppColors.goldColor)),
             ),
-          // Vendor shipping fee
-          if (item.product.vendorId != null) ...[
-            const SizedBox(height: 8),
-            const Divider(height: 1),
-            const SizedBox(height: 6),
-            _buildPerProductShipping(item),
-          ],
         ],
       ),
-    );
-  }
-
-  Widget _buildPerProductShipping(CartItem item) {
-    if (_isLoadingShipping) {
-      return const SizedBox(
-        height: 20,
-        child: Center(child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.indigoLightColor))),
-      );
-    }
-    final fee = _productShippingFees[item.product.id];
-    if (fee == null) {
-      return Text('No shipping options available', style: TextStyle(fontSize: 11, color: AppColors.inkSoftColor));
-    }
-    final label = fee == 0
-        ? 'Free shipping'
-        : 'Shipping: £${fee.toStringAsFixed(2)}';
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.local_shipping_outlined, size: 13, color: AppColors.indigoColor),
-            const SizedBox(width: 6),
-            Text(label, style: TextStyle(fontSize: 11, color: AppColors.indigoColor)),
-          ],
-        ),
-      ],
     );
   }
 
