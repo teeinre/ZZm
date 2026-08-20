@@ -94,6 +94,15 @@ class ApiConstants {
   static const String appEnterCheckoutEndpoint = '$appV1Base/enter-checkout';
   static const String appOrderEndpoint = '$appV1Base/order'; // append /{id}?key=xxx
 
+  // Password reset (mu-plugin: zzmore-password-reset.php)
+  static const String forgotPasswordEndpoint = '$appV1Base/forgot-password';
+  static const String resetPasswordEndpoint = '$appV1Base/reset-password';
+  static const String requestOtpEndpoint = '$appV1Base/request-otp';
+  static const String verifyOtpEndpoint = '$appV1Base/verify-otp';
+
+  // Shipping fee (mu-plugin: zzmore-shipping-fee.php)
+  static const String productShippingFeeEndpoint = '$appV1Base/product-shipping-fee';
+
   // WooCommerce API credentials
   static const String consumerKey = 'ck_537f3489368abb26297c733faf5dafb8b659a411';
   static const String consumerSecret = 'cs_e8b0de9db4df97bf5797e13aa8c4dd80a45d96d5';

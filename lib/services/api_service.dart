@@ -270,6 +270,98 @@ class ApiService {
     }
   }
 
+  /// Requests a password-reset link for [email].
+  /// Returns `null` on success, otherwise an error message to display.
+  Future<String?> requestPasswordReset(String email) async {
+    try {
+      final response = await client.post(
+        Uri.parse(ApiConstants.forgotPasswordEndpoint),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: jsonEncode({'email': email}),
+      );
+      final data = _decodeBody(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _extractErrorMessage(data) ?? 'Unable to send the reset link.';
+    } catch (_) {
+      return 'Something went wrong. Please check your connection and try again.';
+    }
+  }
+
+  /// Resets a password using a reset key received via email.
+  /// Returns `null` on success, otherwise an error message to display.
+  Future<String?> resetPassword(String key, String login, String newPassword) async {
+    try {
+      final response = await client.post(
+        Uri.parse(ApiConstants.resetPasswordEndpoint),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: jsonEncode({'key': key, 'login': login, 'password': newPassword}),
+      );
+      final data = _decodeBody(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _extractErrorMessage(data) ?? 'Unable to reset the password.';
+    } catch (_) {
+      return 'Something went wrong. Please check your connection and try again.';
+    }
+  }
+
+  dynamic _decodeBody(String body) {
+    try {
+      return jsonDecode(body);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _extractErrorMessage(dynamic data) {
+    if (data is Map) {
+      final msg = data['message'];
+      if (msg != null && msg.toString().isNotEmpty) return msg.toString();
+    }
+    return null;
+  }
+
+  /// Requests a time-limited OTP to be emailed for [email].
+  /// Returns `null` on success, otherwise an error message to display.
+  Future<String?> requestOtp(String email) async {
+    try {
+      final response = await client.post(
+        Uri.parse(ApiConstants.requestOtpEndpoint),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: jsonEncode({'email': email}),
+      );
+      final data = _decodeBody(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _extractErrorMessage(data) ?? 'Unable to send the verification code.';
+    } catch (_) {
+      return 'Something went wrong. Please check your connection and try again.';
+    }
+  }
+
+  /// Verifies an OTP and sets a new password.
+  /// Returns `null` on success, otherwise an error message to display.
+  Future<String?> verifyOtp(String email, String otp, String newPassword) async {
+    try {
+      final response = await client.post(
+        Uri.parse(ApiConstants.verifyOtpEndpoint),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        body: jsonEncode({'email': email, 'otp': otp, 'password': newPassword}),
+      );
+      final data = _decodeBody(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _extractErrorMessage(data) ?? 'Unable to reset the password.';
+    } catch (_) {
+      return 'Something went wrong. Please check your connection and try again.';
+    }
+  }
+
   Future<List<Product>> getProducts({
     int page = 1,
     int perPage = ApiConstants.defaultPerPage,
@@ -452,6 +544,30 @@ class ApiService {
     } catch (e) {
       return [];
     }
+  }
+
+  /// Resolves the vendor shipping fee for a single product using the
+  /// server-side checkout logic (zzmore-shipping-fee.php). Returns the
+  /// per-item cost, or null when the server could not resolve a fee.
+  Future<double?> getProductShippingFee(int productId, {int quantity = 1}) async {
+    final url = Uri.parse(ApiConstants.productShippingFeeEndpoint).replace(
+      queryParameters: {
+        'product_id': '$productId',
+        'quantity': '$quantity',
+      },
+    );
+    try {
+      final response = await _get(url.toString(), useWcAuth: false);
+      final data = jsonDecode(response.body);
+      if (data is Map && data['available'] == true) {
+        final cost = data['cost'];
+        if (cost != null) {
+          final parsed = double.tryParse(cost.toString());
+          if (parsed != null) return parsed;
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   double _extractShippingCost(Map<String, dynamic> method) {

@@ -20,38 +20,6 @@ class _CartScreenState extends State<CartScreen> {
   final TextEditingController _discountController = TextEditingController();
   double _discount = 0.0;
   bool _discountApplied = false;
-  final Map<int, List<Map<String, dynamic>>> _vendorShippingMethods = {};
-  bool _isLoadingShipping = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadVendorShipping();
-  }
-
-  Future<void> _loadVendorShipping() async {
-    setState(() => _isLoadingShipping = true);
-    final api = ApiService();
-    final cart = context.read<CartProvider>();
-    final Set<int> vendorIds = {};
-    for (final item in cart.cartItems) {
-      if (item.product.vendorId != null) {
-        vendorIds.add(item.product.vendorId!);
-      }
-    }
-    for (final vid in vendorIds) {
-      try {
-        final methods = await api.getVendorShippingMethods(vid);
-        if (mounted) {
-          _vendorShippingMethods[vid] = methods;
-        }
-      } catch (_) {}
-    }
-    if (mounted) {
-      setState(() => _isLoadingShipping = false);
-    }
-  }
-
   @override
   void dispose() {
     _discountController.dispose();
@@ -273,55 +241,8 @@ class _CartScreenState extends State<CartScreen> {
               padding: const EdgeInsets.only(top: 6),
               child: Text('Variation #${item.variationId}', style: TextStyle(fontSize: 10, color: AppColors.goldColor)),
             ),
-          // Vendor shipping methods
-          if (item.product.vendorId != null) ...[
-            const SizedBox(height: 8),
-            const Divider(height: 1),
-            const SizedBox(height: 6),
-            _buildPerProductShipping(item.product.vendorId!),
-          ],
         ],
       ),
-    );
-  }
-
-  Widget _buildPerProductShipping(int vendorId) {
-    final methods = _vendorShippingMethods[vendorId];
-    if (_isLoadingShipping) {
-      return const SizedBox(
-        height: 20,
-        child: Center(child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.indigoLightColor))),
-      );
-    }
-    if (methods == null || methods.isEmpty) {
-      return Text('No shipping options available', style: TextStyle(fontSize: 11, color: AppColors.inkSoftColor));
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: methods.map((m) {
-        final title = m['title']?.toString() ?? '';
-        final cost = m['cost']?.toString();
-        final costText = cost != null && double.tryParse(cost) != null
-            ? '£${double.parse(cost).toStringAsFixed(2)}'
-            : '';
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 3),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.local_shipping_outlined, size: 13, color: AppColors.indigoColor),
-                  const SizedBox(width: 6),
-                  Text(title, style: TextStyle(fontSize: 11, color: AppColors.indigoColor)),
-                ],
-              ),
-              if (costText.isNotEmpty)
-                Text(costText, style: TextStyle(fontSize: 11, color: AppColors.indigoColor, fontWeight: FontWeight.w500)),
-            ],
-          ),
-        );
-      }).toList(),
     );
   }
 
