@@ -186,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             // _buildLocationPicker(), // Location picker commented out for now
             const SizedBox(height: 8),
             Text(
-              auth.isAuthenticated ? 'Welcome back, $displayName' : 'Welcome to ZZmore Stores',
+              auth.isAuthenticated ? 'Welcome back, $displayName' : 'Welcome to ZZmore.store',
               style: const TextStyle(
                 color: AppColors.inkColor,
                 fontSize: 20,
@@ -998,9 +998,9 @@ Widget _buildGoLiveCTA() {
                   provider.setCategory(category.id.toString());
                 },
                 child: Container(
-                  width: 72,
-                  margin: const EdgeInsets.only(right: 8),
+                  margin: const EdgeInsets.only(right: 12),
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
                         width: 56,
@@ -1020,14 +1020,12 @@ Widget _buildGoLiveCTA() {
                       const SizedBox(height: 6),
                       Text(
                         category.name ?? '',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           color: isActive ? AppColors.inkColor : AppColors.inkSoftColor,
                           fontSize: 10,
                           fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
                         ),
-                        maxLines: 2,
-                        textAlign: TextAlign.center,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
@@ -1048,6 +1046,8 @@ Widget _buildGoLiveCTA() {
 
         final seenVendors = <int>{};
         final spotlightProducts = products.where((p) {
+          final vendorName = (p.vendorName ?? '').trim().toLowerCase();
+          if (vendorName == 'zzmore open market') return false;
           if (p.vendorId != null && !seenVendors.contains(p.vendorId)) {
             seenVendors.add(p.vendorId!);
             return true;
@@ -1525,7 +1525,7 @@ Widget _buildGoLiveCTA() {
     // Always include some fresh dynamic content
     if (notifs.isEmpty) {
       notifs.addAll([
-        {'message': 'Welcome to ZZmore Store!', 'time': 'Just now', 'isUnread': true},
+        {'message': 'Welcome to ZZmore.store!', 'time': 'Just now', 'isUnread': true},
       ]);
     }
 

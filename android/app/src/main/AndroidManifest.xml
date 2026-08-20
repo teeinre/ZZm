@@ -20,7 +20,7 @@
         android:maxSdkVersion="32"/>
 
     <application
-        android:label="ZZmore Store"
+        android:label="ZZmore.store"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
@@ -45,6 +45,13 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- Deep link for password reset: zzmore://reset-password?key=...&login=... -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="zzmore"/>
             </intent-filter>
         </activity>
 

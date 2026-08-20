@@ -4,6 +4,27 @@ All notable changes to ZZmore Store mobile app.
 
 ---
 
+## [3.2.0] — 2026-08-19
+
+### Added
+- **In-app OTP password reset**: Replaced the email reset-link flow with a
+  time-limited (10-minute) one-time password sent to the user's registered
+  email, keeping the whole password change inside the app.
+- **OTP verification screen**: New in-app screen to enter the emailed code,
+  choose a new password, and confirm it, with client-side match validation.
+- **Server-side OTP validation**: REST endpoints (`request-otp`, `verify-otp`)
+  validate the code's value, expiration, and email match, and enforce password
+  strength (minimum 8 characters with a letter and a number).
+- **Post-reset success state**: Confirmation message with a "Login" button to
+  return to sign-in after a successful password change.
+- **Password autofill**: Login and reset forms now expose autofill hints so
+  saved credentials from Google Password Manager can fill and save passwords.
+
+### Changed
+- Bumped version to 3.2.0+5.
+
+---
+
 ## [1.0.2] — 2026-08-02
 
 ### Added
