@@ -65,10 +65,12 @@ app.*.map.json
 # Android local properties (contains SDK paths specific to each machine)
 /android/local.properties
 
-# Environment & secrets (uncomment if needed)
-# *.env
-# google-services.json
-# GoogleService-Info.plist
+# Environment & secrets (never commit real keys/secrets)
+.env
+.env.*
+!.env.template
+google-services.json
+GoogleService-Info.plist
 
 # Android signing keys (already in android/.gitignore, explicit here as backup)
 **/*.jks
