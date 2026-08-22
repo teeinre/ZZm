@@ -23,6 +23,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
   List<cat_model.Category> _categories = [];
   final Set<int> _selectedIds = {};
   List<Product> _products = [];
+  bool _servicesOnly = false;
 
   bool _loading = true;
   bool _loadingMore = false;
@@ -57,6 +58,9 @@ class _ExploreScreenState extends State<ExploreScreen> {
   String? get _categoryQuery =>
       _selectedIds.isEmpty ? null : _selectedIds.join(',');
 
+  /// Product type filter — `booking` when the Services chip is active.
+  String? get _typeQuery => _servicesOnly ? 'booking' : null;
+
   List<Product> _filterExcluded(List<Product> list) => list
       .where((p) => !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName))
       .toList();
@@ -80,7 +84,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
     _page = 1;
     _hasMore = true;
     try {
-      final products = await _api.getProducts(page: _page, category: _categoryQuery);
+      final products = await _api.getProducts(page: _page, category: _categoryQuery, type: _typeQuery);
       final filtered = _filterExcluded(products);
       if (mounted) {
         setState(() {
@@ -104,7 +108,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
     if (_loadingMore || _loading || !_hasMore) return;
     setState(() => _loadingMore = true);
     try {
-      final more = await _api.getProducts(page: _page, category: _categoryQuery);
+      final more = await _api.getProducts(page: _page, category: _categoryQuery, type: _typeQuery);
       final filtered = _filterExcluded(more);
       if (mounted) {
         setState(() {
@@ -121,6 +125,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
 
   void _toggleCategory(int id) {
     setState(() {
+      _servicesOnly = false;
       if (_selectedIds.contains(id)) {
         _selectedIds.remove(id);
       } else {
@@ -130,9 +135,20 @@ class _ExploreScreenState extends State<ExploreScreen> {
     _loadProducts();
   }
 
+  void _toggleServices() {
+    setState(() {
+      _servicesOnly = !_servicesOnly;
+      if (_servicesOnly) _selectedIds.clear();
+    });
+    _loadProducts();
+  }
+
   void _clearFilters() {
-    if (_selectedIds.isEmpty) return;
-    setState(() => _selectedIds.clear());
+    if (_selectedIds.isEmpty && !_servicesOnly) return;
+    setState(() {
+      _selectedIds.clear();
+      _servicesOnly = false;
+    });
     _loadProducts();
   }
 
@@ -235,8 +251,13 @@ class _ExploreScreenState extends State<ExploreScreen> {
                 children: [
                   _filterChip(
                     label: 'All',
-                    selected: _selectedIds.isEmpty,
+                    selected: _selectedIds.isEmpty && !_servicesOnly,
                     onTap: _clearFilters,
+                  ),
+                  _filterChip(
+                    label: 'Services',
+                    selected: _servicesOnly,
+                    onTap: _toggleServices,
                   ),
                   ..._categories.map(
                     (c) => _filterChip(
@@ -248,13 +269,13 @@ class _ExploreScreenState extends State<ExploreScreen> {
                 ],
               ),
             ),
-          if (_selectedIds.isNotEmpty) ...[
+          if (_selectedIds.isNotEmpty || _servicesOnly) ...[
             const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
                   child: Text(
-                    '${_selectedIds.length} ${_selectedIds.length == 1 ? 'filter' : 'filters'} active',
+                    '${_selectedIds.length + (_servicesOnly ? 1 : 0)} ${_selectedIds.length + (_servicesOnly ? 1 : 0) == 1 ? 'filter' : 'filters'} active',
                     style: const TextStyle(
                         color: AppColors.inkSoftColor, fontSize: 13),
                   ),

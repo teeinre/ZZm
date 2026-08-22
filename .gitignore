@@ -48,6 +48,7 @@ app.*.map.json
 /dokan-pro/
 /dokan vendor streamin/
 /woocommerce-subscriptions/
+/woocommerce-bookings/
 
 # Miscellaneous project-local reference/generated folders
 /AppIcons/

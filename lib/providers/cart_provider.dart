@@ -57,6 +57,12 @@ class CartProvider with ChangeNotifier {
                 ? item['quantity'] as int
                 : int.tryParse(item['quantity']?.toString() ?? '1') ?? 1,
             variationId: item['variationId']?.toString(),
+            bookingDate: item['bookingDate'] != null
+                ? DateTime.tryParse(item['bookingDate'].toString())
+                : null,
+            bookingResourceId: item['bookingResourceId'] is int
+                ? item['bookingResourceId'] as int
+                : int.tryParse(item['bookingResourceId']?.toString() ?? ''),
           );
         }).toList();
       }
@@ -125,11 +131,14 @@ class CartProvider with ChangeNotifier {
 
   Future<void> addToCart(Product product,
       {String? variationId,
-      SubscriptionInterval? subscriptionInterval}) async {
+      SubscriptionInterval? subscriptionInterval,
+      DateTime? bookingDate,
+      int? bookingResourceId}) async {
     final existingIndex = _cartItems.indexWhere((item) =>
         item.product.id == product.id &&
         item.variationId == variationId &&
-        item.subscriptionInterval == subscriptionInterval);
+        item.subscriptionInterval == subscriptionInterval &&
+        item.bookingDate == bookingDate);
     if (existingIndex >= 0) {
       _cartItems[existingIndex].quantity++;
     } else {
@@ -138,13 +147,32 @@ class CartProvider with ChangeNotifier {
         product: product,
         variationId: variationId,
         subscriptionInterval: subscriptionInterval,
+        bookingDate: bookingDate,
+        bookingResourceId: bookingResourceId,
       );
       _cartItems.add(cartItem);
     }
     notifyListeners();
     await _saveLocalCart();
-    _syncToServer(product.id,
-        variationId != null ? int.tryParse(variationId) : null);
+    _syncToServer(
+      product.id,
+      variationId != null ? int.tryParse(variationId) : null,
+      bookingConfiguration: _bookingConfiguration(bookingDate, bookingResourceId),
+    );
+  }
+
+  /// Builds the Store API `booking_configuration` map for a chosen slot.
+  Map<String, dynamic>? _bookingConfiguration(
+      DateTime? bookingDate, int? bookingResourceId) {
+    if (bookingDate == null) return null;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final dateStr = '${bookingDate.year}-${two(bookingDate.month)}-'
+        '${two(bookingDate.day)} ${two(bookingDate.hour)}:'
+        '${two(bookingDate.minute)}:${two(bookingDate.second)}';
+    return <String, dynamic>{
+      'date': dateStr,
+      if (bookingResourceId != null) 'resource_id': bookingResourceId,
+    };
   }
 
   Future<void> removeFromCart(String cartItemId) async {
@@ -182,14 +210,20 @@ class CartProvider with ChangeNotifier {
   // ── Server sync helpers ──
 
   /// Sync a single add-to-cart operation to the Store API.
-  void _syncToServer(int productId, int? variationId) {
+  void _syncToServer(int productId, int? variationId,
+      {Map<String, dynamic>? bookingConfiguration}) {
     if (_storeApi == null) return;
     _isSyncing = true;
     _syncError = null;
     notifyListeners();
 
     _storeApi!.fetchStoreNonce().then((_) {
-      return _storeApi!.addToStoreCart(productId, quantity: 1, variationId: variationId);
+      return _storeApi!.addToStoreCart(
+        productId,
+        quantity: 1,
+        variationId: variationId,
+        bookingConfiguration: bookingConfiguration,
+      );
     }).then((_) {
       _isSyncing = false;
       notifyListeners();
@@ -219,6 +253,8 @@ class CartProvider with ChangeNotifier {
           item.product.id,
           quantity: item.quantity,
           variationId: vid,
+          bookingConfiguration:
+              _bookingConfiguration(item.bookingDate, item.bookingResourceId),
         );
       }
       _isSyncing = false;

@@ -241,6 +241,22 @@ class _CartScreenState extends State<CartScreen> {
               padding: const EdgeInsets.only(top: 6),
               child: Text('Variation #${item.variationId}', style: TextStyle(fontSize: 10, color: AppColors.goldColor)),
             ),
+          // Booking slot badge
+          if (item.bookingLabel != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.event_available_outlined,
+                      size: 13, color: AppColors.goldColor),
+                  const SizedBox(width: 4),
+                  Text('Booked: ${item.bookingLabel}',
+                      style:
+                          const TextStyle(fontSize: 12, color: AppColors.goldColor)),
+                ],
+              ),
+            ),
         ],
       ),
     );
