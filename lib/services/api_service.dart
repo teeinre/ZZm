@@ -5,6 +5,7 @@ import '../constants/api_constants.dart';
 import '../models/product.dart';
 import '../models/category.dart';
 import '../models/user.dart';
+import '../models/booking_slot.dart';
 
 class ApiService {
   final http.Client client;
@@ -367,6 +368,7 @@ class ApiService {
     int perPage = ApiConstants.defaultPerPage,
     String? category,
     String? search,
+    String? type,
   }) async {
     var url = '${ApiConstants.productsEndpoint}?page=$page&per_page=$perPage';
     if (category != null) {
@@ -374,6 +376,9 @@ class ApiService {
     }
     if (search != null) {
       url += '&search=$search';
+    }
+    if (type != null) {
+      url += '&type=$type';
     }
     final response = await _get(url, useWcAuth: true);
     final List<dynamic> data = jsonDecode(response.body);
@@ -808,6 +813,27 @@ class ApiService {
       return prod['type']?.toString() == 'booking';
     } catch (_) {
       return false;
+    }
+  }
+
+  /// Fetch available booking slots for a bookable product from the
+  /// `wc-bookings/v1/products/slots` endpoint. The endpoint returns slots in
+  /// `{records: [...], count: N}`.
+  Future<List<BookingSlot>> getBookingSlots(int productId) async {
+    try {
+      final url =
+          '${ApiConstants.wcBookingsSlotsEndpoint}?product_ids=$productId';
+      final response = await _get(url, useWcAuth: false);
+      final body = jsonDecode(response.body);
+      final records = (body is Map && body['records'] is List)
+          ? body['records'] as List<dynamic>
+          : <dynamic>[];
+      return records
+          .map((r) => BookingSlot.fromJson(Map<String, dynamic>.from(r)))
+          .toList();
+    } catch (e) {
+      debugPrint('[Bookings] getBookingSlots failed: $e');
+      return <BookingSlot>[];
     }
   }
 
@@ -2149,6 +2175,7 @@ class ApiService {
     int productId, {
     int quantity = 1,
     int? variationId,
+    Map<String, dynamic>? bookingConfiguration,
   }) async {
     try {
       final effectiveId = (variationId != null && variationId > 0)
@@ -2164,7 +2191,11 @@ class ApiService {
         data['variation'] = <Map<String, String>>[];
       }
 
-      debugPrint('[StoreAPI] addToCart: product=$effectiveId qty=$quantity variationId=$variationId');
+      if (bookingConfiguration != null && bookingConfiguration.isNotEmpty) {
+        data['booking_configuration'] = bookingConfiguration;
+      }
+
+      debugPrint('[StoreAPI] addToCart: product=$effectiveId qty=$quantity variationId=$variationId booking=${bookingConfiguration != null}');
       final response = await _storePost(ApiConstants.storeCartAddItemEndpoint, data);
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final body = jsonDecode(response.body);

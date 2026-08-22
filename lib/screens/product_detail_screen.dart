@@ -10,6 +10,8 @@ import '../services/api_service.dart';
 import '../providers/currency_provider.dart';
 import '../providers/cart_provider.dart';
 import '../screens/vendor_profile_screen.dart';
+import '../screens/booking_slot_picker_screen.dart';
+import '../models/booking_slot.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final Product product;
@@ -237,6 +239,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     return _rawProduct?['type']?.toString() == 'variable';
   }
 
+  bool get _isBookable {
+    return _rawProduct?['type']?.toString() == 'booking' ||
+        widget.product.isBookable;
+  }
+
   List<Map<String, dynamic>> get _productAttributes {
     final attrs = _rawProduct?['attributes'] as List<dynamic>? ?? [];
     return attrs
@@ -323,8 +330,50 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
   }
 
-  // ─── Build ────────────────────────────────────────────────────────────────
+  /// Opens the booking slot picker and adds the chosen slot to the cart.
+  Future<void> _bookNow() async {
+    if (_isAddingToCart) return;
 
+    final BookingSlot? slot = await Navigator.of(context).push<BookingSlot>(
+      MaterialPageRoute(
+        builder: (_) => BookingSlotPickerScreen(product: widget.product),
+      ),
+    );
+    if (slot == null || !mounted) return;
+
+    setState(() => _isAddingToCart = true);
+    try {
+      final cartProvider = context.read<CartProvider>();
+      await cartProvider.addToCart(
+        widget.product,
+        bookingDate: slot.date,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Booking confirmed for ${slot.date.year}-'
+              '${slot.date.month.toString().padLeft(2, '0')}-'
+              '${slot.date.day.toString().padLeft(2, '0')} at '
+              '${slot.date.hour.toString().padLeft(2, '0')}:'
+              '${slot.date.minute.toString().padLeft(2, '0')}'),
+          backgroundColor: AppColors.goldColor,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to confirm booking: $e'),
+          backgroundColor: AppColors.coralColor,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isAddingToCart = false);
+    }
+  }
+
+  // ─── Build ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     // Guard: block products from excluded vendors (e.g. vendor 126)
@@ -1343,9 +1392,54 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ],
       ),
       child: SafeArea(
-        child: _isOutOfStock
-            ? _buildOutOfStockButton()
-            : _buildAddToCartButton(),
+        child: _isBookable
+            ? _buildBookNowButton()
+            : _isOutOfStock
+                ? _buildOutOfStockButton()
+                : _buildAddToCartButton(),
+      ),
+    );
+  }
+
+  Widget _buildBookNowButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: ElevatedButton(
+        onPressed: _isAddingToCart ? null : _bookNow,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.goldColor,
+          foregroundColor: AppColors.whiteColor,
+          disabledBackgroundColor: AppColors.goldColor.withOpacity(0.6),
+          disabledForegroundColor: AppColors.whiteColor.withOpacity(0.7),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          elevation: 0,
+        ),
+        child: _isAddingToCart
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.whiteColor),
+                ),
+              )
+            : const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.event_available_outlined, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    'Book Now',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }

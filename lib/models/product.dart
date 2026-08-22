@@ -30,6 +30,15 @@ class Product extends Equatable {
   final int? subscriptionTrialLength;
   final String? subscriptionTrialPeriod;
 
+  // WooCommerce Bookings plugin fields
+  final int? bookingDuration; // raw duration value (e.g. minutes)
+  final String? bookingDurationUnit; // minute, hour, day, month
+  final String? bookingCost;
+  final bool hasResources;
+  final String? resourcesAssignment; // customer, automatic
+  final String? bookingLocation;
+  final String? bookingLocationType;
+
   const Product({
     required this.id,
     required this.name,
@@ -57,9 +66,17 @@ class Product extends Equatable {
     this.subscriptionSignUpFee,
     this.subscriptionTrialLength,
     this.subscriptionTrialPeriod,
+    this.bookingDuration,
+    this.bookingDurationUnit,
+    this.bookingCost,
+    this.hasResources = false,
+    this.resourcesAssignment,
+    this.bookingLocation,
+    this.bookingLocationType,
   });
 
   bool get isVariable => type == 'variable';
+  bool get isBookable => type == 'booking';
   bool get isSubscriptionProduct =>
       isSubscription || type == 'subscription' || type == 'variable-subscription';
 
@@ -159,6 +176,34 @@ class Product extends Equatable {
         (meta['_subscription_trial_period'] ?? json['subscription_trial_period'])
             .toString();
 
+    // WooCommerce Bookings fields (exposed top-level by the plugin's REST API,
+    // with meta_data fallbacks for sites that only expose raw meta).
+    final bookingDurationRaw = json['booking_duration'] ??
+        meta['_wc_booking_duration'] ??
+        meta['_wc_booking_duration_type'];
+    final bookingDuration = bookingDurationRaw is int
+        ? bookingDurationRaw
+        : int.tryParse(bookingDurationRaw?.toString() ?? '');
+    final bookingDurationUnit = (json['booking_duration_unit'] ??
+            meta['_wc_booking_duration_unit'])
+        ?.toString();
+    final bookingCost =
+        (json['booking_cost'] ?? meta['_wc_booking_cost'])?.toString();
+    final bookingLocation =
+        (json['booking_location'] ?? meta['_wc_booking_location'])?.toString();
+    final bookingLocationType =
+        (json['booking_location_type'] ?? meta['_wc_booking_location_type'])
+            ?.toString();
+    final resourcesAssignment =
+        (json['resources_assignment'] ?? meta['_wc_booking_resources_assignment'])
+            ?.toString();
+    final bookingResources = json['booking_resources'];
+    final hasResources = (json['has_resources'] as bool? ??
+            (meta['_wc_booking_has_resources'] is bool
+                ? meta['_wc_booking_has_resources'] as bool
+                : null) ??
+            (bookingResources is List && bookingResources.isNotEmpty));
+
     return Product(
       id: json['id'] as int,
       name: json['name']?.toString() ?? '',
@@ -187,6 +232,21 @@ class Product extends Equatable {
       subscriptionTrialLength:
           trialRaw is int ? trialRaw : int.tryParse(trialRaw?.toString() ?? ''),
       subscriptionTrialPeriod: trialPeriod.isNotEmpty ? trialPeriod : null,
+      bookingDuration: bookingDuration,
+      bookingDurationUnit: bookingDurationUnit?.isNotEmpty == true
+          ? bookingDurationUnit
+          : null,
+      bookingCost: bookingCost?.isNotEmpty == true ? bookingCost : null,
+      hasResources: hasResources,
+      resourcesAssignment: resourcesAssignment?.isNotEmpty == true
+          ? resourcesAssignment
+          : null,
+      bookingLocation: bookingLocation?.isNotEmpty == true
+          ? bookingLocation
+          : null,
+      bookingLocationType: bookingLocationType?.isNotEmpty == true
+          ? bookingLocationType
+          : null,
     );
   }
 
@@ -215,6 +275,13 @@ class Product extends Equatable {
       'subscription_sign_up_fee': subscriptionSignUpFee,
       'subscription_trial_length': subscriptionTrialLength,
       'subscription_trial_period': subscriptionTrialPeriod,
+      'booking_duration': bookingDuration,
+      'booking_duration_unit': bookingDurationUnit,
+      'booking_cost': bookingCost,
+      'booking_has_resources': hasResources,
+      'booking_resources_assignment': resourcesAssignment,
+      'booking_location': bookingLocation,
+      'booking_location_type': bookingLocationType,
     };
   }
 
@@ -244,6 +311,13 @@ class Product extends Equatable {
     String? subscriptionSignUpFee,
     int? subscriptionTrialLength,
     String? subscriptionTrialPeriod,
+    int? bookingDuration,
+    String? bookingDurationUnit,
+    String? bookingCost,
+    bool? hasResources,
+    String? resourcesAssignment,
+    String? bookingLocation,
+    String? bookingLocationType,
   }) {
     return Product(
       id: id ?? this.id,
@@ -271,6 +345,13 @@ class Product extends Equatable {
       subscriptionSignUpFee: subscriptionSignUpFee ?? this.subscriptionSignUpFee,
       subscriptionTrialLength: subscriptionTrialLength ?? this.subscriptionTrialLength,
       subscriptionTrialPeriod: subscriptionTrialPeriod ?? this.subscriptionTrialPeriod,
+      bookingDuration: bookingDuration ?? this.bookingDuration,
+      bookingDurationUnit: bookingDurationUnit ?? this.bookingDurationUnit,
+      bookingCost: bookingCost ?? this.bookingCost,
+      hasResources: hasResources ?? this.hasResources,
+      resourcesAssignment: resourcesAssignment ?? this.resourcesAssignment,
+      bookingLocation: bookingLocation ?? this.bookingLocation,
+      bookingLocationType: bookingLocationType ?? this.bookingLocationType,
     );
   }
 
@@ -299,6 +380,13 @@ class Product extends Equatable {
         subscriptionSignUpFee,
         subscriptionTrialLength,
         subscriptionTrialPeriod,
+        bookingDuration,
+        bookingDurationUnit,
+        bookingCost,
+        hasResources,
+        resourcesAssignment,
+        bookingLocation,
+        bookingLocationType,
       ];
 }
 

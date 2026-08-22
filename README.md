@@ -6,6 +6,7 @@ A Flutter mobile application for zzmore.store - WooCommerce powered marketplace.
 
 - 🔐 **Authentication**: JWT based authentication for protected API endpoints
 - 📦 **Products**: Browse products from WordPress/WooCommerce REST API
+- 📅 **Service Booking**: Browse bookable services, pick a slot, and confirm bookings
 - 🛒 **Cart**: Add/remove items, manage quantities
 - 📱 **Responsive UI**: Beautiful, responsive design based on provided React template
 - 💾 **Offline Caching**: Hive-based data caching for offline access
@@ -77,6 +78,36 @@ lib/
 ### Authentication
 
 The app uses JWT authentication. Make sure the JWT Authentication for WP REST API plugin is installed on your WordPress site.
+
+## Service Booking Integration
+
+The app integrates the **WooCommerce Bookings** plugin (see `woocommerce-bookings/`) to offer end-to-end service booking.
+
+### How it works
+
+1. **Browse services** — the Explore tab has a `Services` filter chip that queries bookable products via `GET /wp-json/wc/v3/products?type=booking`.
+2. **Choose a slot** — the `BookingSlotPickerScreen` fetches availability from `GET /wp-json/wc-bookings/v1/products/slots?product_ids={id}` and lets the customer pick a date + time.
+3. **Confirm** — the selected slot is stored on the `CartItem` (`bookingDate`, `bookingResourceId`) and synced to the server cart with the plugin's expected `booking_configuration` payload:
+   ```json
+   { "date": "2026-08-23 14:00:00", "resource_id": 12 }
+   ```
+4. **Checkout** — the WooCommerce Bookings Store API extension validates the slot (rejecting double bookings with a `409`) and creates the booking on order completion.
+
+### Key files
+
+- `lib/models/booking_slot.dart` — availability slot model.
+- `lib/models/product.dart` — bookable product fields (`bookingDuration`, `bookingDurationUnit`, `bookingCost`, `hasResources`, …).
+- `lib/models/cart_item.dart` — booking slot persistence + Store API `booking_configuration` mapping.
+- `lib/services/api_service.dart` — `getBookingSlots()` and Store API `addToStoreCart(bookingConfiguration: …)`.
+- `lib/screens/booking_slot_picker_screen.dart` — date/time slot picker UI.
+- `lib/screens/product_detail_screen.dart` — "Book Now" flow for `type=booking` products.
+- `lib/screens/explore_screen.dart` — `Services` browse filter.
+- `lib/providers/cart_provider.dart` — wires booking configuration through local + server cart sync.
+
+### Server-side requirements
+
+- WooCommerce Bookings plugin active on the WordPress site.
+- The plugin's REST (`wc-bookings/v1`) and Store API (`wc/store/v1`) routes must be reachable.
 
 ## Building for Production
 

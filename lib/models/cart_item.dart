@@ -14,13 +14,46 @@ class CartItem extends Equatable {
   /// the customer choose between weekly / monthly / annual tiers).
   final SubscriptionInterval? subscriptionInterval;
 
+  /// Booking slot start time (for bookable products).
+  final DateTime? bookingDate;
+
+  /// Booking resource ID (for bookable products that require resources).
+  final int? bookingResourceId;
+
   CartItem({
     required this.cartItemId,
     required this.product,
     this.quantity = 1,
     this.variationId,
     this.subscriptionInterval,
+    this.bookingDate,
+    this.bookingResourceId,
   });
+
+  /// Payload sent to the Store API `booking_configuration` field when adding
+  /// this item to the server-side cart. The plugin expects `date` in the
+  /// format `Y-m-d H:i:s`.
+  Map<String, dynamic>? get bookingConfiguration {
+    if (bookingDate == null) return null;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final dateStr = '${bookingDate!.year}-${two(bookingDate!.month)}-'
+        '${two(bookingDate!.day)} ${two(bookingDate!.hour)}:'
+        '${two(bookingDate!.minute)}:${two(bookingDate!.second)}';
+    return <String, dynamic>{
+      'date': dateStr,
+      if (bookingResourceId != null) 'resource_id': bookingResourceId,
+    };
+  }
+
+  /// Human-readable label for the selected booking slot.
+  String? get bookingLabel {
+    if (bookingDate == null) return null;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final date = '${bookingDate!.year}-${two(bookingDate!.month)}-${two(bookingDate!.day)}';
+    final time = '${two(bookingDate!.hour)}:${two(bookingDate!.minute)}';
+    return '$date at $time';
+  }
+
 
   double get _basePrice {
     final price = double.tryParse(product.price) ?? 0.0;
@@ -71,6 +104,8 @@ class CartItem extends Equatable {
       'quantity': quantity,
       'variationId': variationId,
       'subscriptionInterval': subscriptionInterval?.name,
+      'bookingDate': bookingDate?.toIso8601String(),
+      'bookingResourceId': bookingResourceId,
     };
   }
 
@@ -95,10 +130,23 @@ class CartItem extends Equatable {
           : int.tryParse(json['quantity']?.toString() ?? '1') ?? 1,
       variationId: json['variationId']?.toString(),
       subscriptionInterval: interval,
+      bookingDate: json['bookingDate'] != null
+          ? DateTime.tryParse(json['bookingDate'].toString())
+          : null,
+      bookingResourceId: json['bookingResourceId'] is int
+          ? json['bookingResourceId'] as int
+          : int.tryParse(json['bookingResourceId']?.toString() ?? ''),
     );
   }
 
   @override
-  List<Object?> get props =>
-      [cartItemId, product, quantity, variationId, subscriptionInterval];
+  List<Object?> get props => [
+        cartItemId,
+        product,
+        quantity,
+        variationId,
+        subscriptionInterval,
+        bookingDate,
+        bookingResourceId,
+      ];
 }

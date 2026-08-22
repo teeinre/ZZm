@@ -23,6 +23,10 @@ class ApiConstants {
   static const String dokanAnnouncementsEndpoint = '$dokanV1Base/announcement';
   static const String couponsEndpoint = '$wcApiBase/coupons';
 
+  // WooCommerce Bookings REST API (wc-bookings/v1)
+  static const String wcBookingsBase = '$baseUrl/wc-bookings/v1';
+  static const String wcBookingsSlotsEndpoint = '$wcBookingsBase/products/slots';
+
   // WooCommerce Store API (block-based checkout — enables Dokan multi-vendor shipping)
   static const String storeApiBase = '$baseUrl/wc/store/v1';
   static const String storeCartEndpoint = '$storeApiBase/cart';
