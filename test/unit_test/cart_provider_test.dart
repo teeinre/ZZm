@@ -4,17 +4,28 @@ import 'package:zzmore_app/providers/cart_provider.dart';
 import 'package:zzmore_app/cache/hive_service.dart';
 import 'package:zzmore_app/models/product.dart';
 
-class MockHiveService extends Mock implements HiveService {}
+/// In-memory HiveService fake that only implements the cart methods the
+/// CartProvider exercises. `Fake` provides safe no-op defaults for the rest.
+class FakeHiveService extends Fake implements HiveService {
+  List<Map<String, dynamic>> _cart = [];
+
+  @override
+  List<Map<String, dynamic>> getCart() => List<Map<String, dynamic>>.from(_cart);
+
+  @override
+  Future<void> saveCart(List<Map<String, dynamic>> cartItems) async {
+    _cart = List<Map<String, dynamic>>.from(cartItems);
+  }
+}
 
 void main() {
   group('CartProvider', () {
     late CartProvider cartProvider;
-    late MockHiveService mockHiveService;
+    late FakeHiveService hiveService;
 
     setUp(() {
-      mockHiveService = MockHiveService();
-      when(mockHiveService.getCart()).thenReturn([]);
-      cartProvider = CartProvider(hiveService: mockHiveService);
+      hiveService = FakeHiveService();
+      cartProvider = CartProvider(hiveService: hiveService);
     });
 
     test('initial state should be empty cart', () {
