@@ -64,7 +64,7 @@ function zzmore_dpl_list_links( WP_REST_Request $request ) {
 	$vendor_id = get_current_user_id();
 	$page      = max( 1, absint( $request->get_param( 'page' ) ) );
 
-	return dpl()->order->get_vendor_links( $vendor_id, 20, $page );
+	return dpl()->payment_link->get_vendor_links( $vendor_id, 20, $page );
 }
 
 /**
@@ -98,7 +98,6 @@ function zzmore_dpl_create_link( WP_REST_Request $request ) {
 	$label          = isset( $body['label'] ) ? sanitize_text_field( wp_unslash( $body['label'] ) ) : '';
 	$needs_shipping = ! empty( $body['needs_shipping'] );
 	$delivery_note  = isset( $body['delivery_note'] ) ? sanitize_textarea_field( wp_unslash( $body['delivery_note'] ) ) : '';
-	$customer_email = isset( $body['customer_email'] ) ? sanitize_email( wp_unslash( $body['customer_email'] ) ) : '';
 	$expiry         = isset( $body['expiry'] ) ? sanitize_text_field( wp_unslash( $body['expiry'] ) ) : 'none';
 
 	$valid_expiry = [ '24h', '3d', '7d', 'none' ];
@@ -107,13 +106,12 @@ function zzmore_dpl_create_link( WP_REST_Request $request ) {
 	}
 
 	try {
-		$result = dpl()->order->create_payment_link_order( [
+		$result = dpl()->payment_link->create( [
 			'vendor_id'      => $vendor_id,
 			'amount'         => $amount,
 			'label'          => $label,
 			'needs_shipping' => $needs_shipping,
 			'delivery_note'  => $delivery_note,
-			'customer_email' => $customer_email,
 			'expiry'         => $expiry,
 		] );
 
@@ -121,9 +119,9 @@ function zzmore_dpl_create_link( WP_REST_Request $request ) {
 		set_transient( $rate_key, $count + 1, HOUR_IN_SECONDS );
 
 		return [
-			'order_id' => $result['order_id'],
-			'pay_url'  => $result['pay_url'],
-			'status'   => $result['status'],
+			'link_id' => $result['link_id'],
+			'pay_url' => $result['pay_url'],
+			'status'  => $result['status'],
 		];
 	} catch ( Exception $e ) {
 		return new WP_Error( 'dpl_create_failed', $e->getMessage(), [ 'status' => 400 ] );
@@ -139,9 +137,9 @@ function zzmore_dpl_cancel_link( WP_REST_Request $request ) {
 	}
 
 	$vendor_id = get_current_user_id();
-	$order_id  = absint( $request->get_param( 'id' ) );
+	$link_id   = absint( $request->get_param( 'id' ) );
 
-	$result = dpl()->order->cancel_link_order( $order_id, $vendor_id );
+	$result = dpl()->payment_link->cancel( $link_id, $vendor_id );
 	if ( is_wp_error( $result ) ) {
 		return $result;
 	}

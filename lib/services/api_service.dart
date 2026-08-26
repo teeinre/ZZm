@@ -1496,7 +1496,6 @@ class ApiService {
     required String label,
     bool needsShipping = false,
     String? deliveryNote,
-    String? customerEmail,
     String expiry = 'none',
   }) async {
     final response = await _post(
@@ -1506,7 +1505,6 @@ class ApiService {
         'label': label,
         'needs_shipping': needsShipping,
         if (deliveryNote != null && deliveryNote.isNotEmpty) 'delivery_note': deliveryNote,
-        if (customerEmail != null && customerEmail.isNotEmpty) 'customer_email': customerEmail,
         'expiry': expiry,
       },
       useWcAuth: false,
