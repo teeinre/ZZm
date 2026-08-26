@@ -54,13 +54,13 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
   }
 
   Future<void> _openCreateSheet() async {
-    final created = await showModalBottomSheet<PaymentLink>(
+    final created = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => const _CreatePaymentLinkSheet(),
     );
-    if (created != null && mounted) {
+    if (created == true && mounted) {
       await _loadLinks();
     }
   }
