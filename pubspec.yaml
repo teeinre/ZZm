@@ -1,7 +1,7 @@
 name: zzmore_app
 description: "ZZmore Store – African-owned multi-vendor marketplace mobile app."
 publish_to: 'none'
-version: 3.2.0+5
+version: 3.3.0+6
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -27,6 +27,7 @@ dependencies:
   http_parser: ^4.1.2
   webview_flutter: ^4.10.0
   url_launcher: ^6.3.1
+  qr_flutter: ^4.1.0
   firebase_core: ^4.12.1
   firebase_messaging: ^16.4.3
   flutter_local_notifications: ^22.1.0
