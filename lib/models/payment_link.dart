@@ -1,10 +1,14 @@
 import 'package:equatable/equatable.dart';
 
-/// A Dokan vendor payment link (a pending WC_Order with a shareable pay URL).
+/// A reusable Dokan vendor payment link.
 ///
-/// Mirrors the `format_link_data()` structure returned by the Dokan Payment
-/// Links plugin, exposed to the app through the `vendor-bridge/v1/payment-links`
-/// REST route (`server/mu-plugin/zzmore-payment-links.php`).
+/// Mirrors `DPL_Payment_Link::format_link_data()` + `get_link_stats()` from the
+/// Dokan Payment Links plugin (v1.1.x), exposed to the app through the
+/// `vendor-bridge/v1/payment-links` REST route.
+///
+/// A link can be paid by any number of customers; each payment mints its own
+/// independent order, so `paidCount`/`orderCount` track usage rather than a
+/// single `isPaid` flag.
 class PaymentLink extends Equatable {
   final int id;
   final String label;
@@ -18,8 +22,11 @@ class PaymentLink extends Equatable {
   final String expires;
   final int expiresTimestamp;
   final bool isExpired;
-  final bool isPaid;
+  final bool isCancelled;
   final bool isCancellable;
+  final int orderCount;
+  final int paidCount;
+  final double totalPaid;
 
   const PaymentLink({
     required this.id,
@@ -34,8 +41,11 @@ class PaymentLink extends Equatable {
     required this.expires,
     required this.expiresTimestamp,
     required this.isExpired,
-    required this.isPaid,
+    required this.isCancelled,
     required this.isCancellable,
+    required this.orderCount,
+    required this.paidCount,
+    required this.totalPaid,
   });
 
   factory PaymentLink.fromJson(Map<String, dynamic> json) {
@@ -44,16 +54,19 @@ class PaymentLink extends Equatable {
       label: json['label']?.toString() ?? 'Payment',
       amount: _toDouble(json['amount']),
       currency: json['currency']?.toString() ?? '',
-      status: json['status']?.toString() ?? 'pending',
-      needsShipping: json['needs_shipping'] == true || json['needs_shipping'] == 1,
+      status: json['status']?.toString() ?? 'active',
+      needsShipping: _toBool(json['needs_shipping']),
       deliveryNote: json['delivery_note']?.toString(),
       payUrl: json['pay_url']?.toString() ?? '',
       createdDate: json['created_date']?.toString() ?? '',
       expires: json['expires']?.toString() ?? '',
       expiresTimestamp: _toInt(json['expires_timestamp']),
-      isExpired: json['is_expired'] == true || json['is_expired'] == 1,
-      isPaid: json['is_paid'] == true || json['is_paid'] == 1,
-      isCancellable: json['is_cancellable'] == true || json['is_cancellable'] == 1,
+      isExpired: _toBool(json['is_expired']),
+      isCancelled: _toBool(json['is_cancelled']),
+      isCancellable: _toBool(json['is_cancellable']),
+      orderCount: _toInt(json['order_count']),
+      paidCount: _toInt(json['paid_count']),
+      totalPaid: _toDouble(json['total_paid']),
     );
   }
 
@@ -66,6 +79,11 @@ class PaymentLink extends Equatable {
     if (v is double) return v;
     if (v is int) return v.toDouble();
     return double.tryParse(v?.toString() ?? '') ?? 0;
+  }
+
+  static bool _toBool(dynamic v) {
+    if (v is bool) return v;
+    return v == 1 || v == '1' || v == 'yes' || v == 'true';
   }
 
   @override
@@ -82,7 +100,10 @@ class PaymentLink extends Equatable {
         expires,
         expiresTimestamp,
         isExpired,
-        isPaid,
+        isCancelled,
         isCancellable,
+        orderCount,
+        paidCount,
+        totalPaid,
       ];
 }
