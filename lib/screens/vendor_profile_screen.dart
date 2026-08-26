@@ -132,6 +132,7 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
             widget.vendorId,
             authorUserId: uid,
             perPage: 50,
+            status: 'publish',
           );
         }
       }
@@ -139,7 +140,9 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
       // ── Step 3: vendor-api.php fallback ──
       if (products.isEmpty) {
         final raw = await _apiService.getVendorApiProducts(perPage: 50);
-        products = raw.where((p) => p['id'] != null).map<Product>((p) => Product(
+        products = raw
+            .where((p) => p['id'] != null && (p['status']?.toString() == 'publish'))
+            .map<Product>((p) => Product(
           id: int.tryParse(p['id']?.toString() ?? '') ?? 0,
           name: p['name']?.toString() ?? '',
           price: p['price']?.toString() ?? '0',

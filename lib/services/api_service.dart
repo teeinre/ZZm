@@ -6,6 +6,7 @@ import '../models/product.dart';
 import '../models/category.dart';
 import '../models/user.dart';
 import '../models/booking_slot.dart';
+import '../models/payment_link.dart';
 
 class ApiService {
   final http.Client client;
@@ -370,7 +371,7 @@ class ApiService {
     String? search,
     String? type,
   }) async {
-    var url = '${ApiConstants.productsEndpoint}?page=$page&per_page=$perPage';
+    var url = '${ApiConstants.productsEndpoint}?page=$page&per_page=$perPage&status=publish';
     if (category != null) {
       url += '&category=$category';
     }
@@ -632,11 +633,14 @@ class ApiService {
   /// Uses [authorUserId] (vendor's WP user ID) as primary filter — this is
   /// the reliable post_author filter. Falls back to store_id if authorUserId
   /// is not provided.
-  Future<List<Product>> getVendorProducts(int vendorId, {int? authorUserId, int page = 1, int perPage = 20}) async {
+  Future<List<Product>> getVendorProducts(int vendorId, {int? authorUserId, int page = 1, int perPage = 20, String? status}) async {
     // Build URL with proper author filter (store_id is not a WC API parameter)
     var url = '${ApiConstants.productsEndpoint}?page=$page&per_page=$perPage';
     if (authorUserId != null && authorUserId > 0) {
       url += '&author=$authorUserId';
+    }
+    if (status != null && status.isNotEmpty) {
+      url += '&status=$status';
     }
     // Note: If authorUserId is not provided, products are NOT filtered by vendor.
     // Callers should always pass authorUserId for vendor-scoped product queries.
@@ -648,7 +652,7 @@ class ApiService {
   /// Fetches products for a specific Dokan store using the Dokan REST API.
   /// Uses the public endpoint — no authentication required for browsing.
   Future<List<Product>> getDokanStoreProducts(int storeId, {int page = 1, int perPage = 20}) async {
-    final url = '${ApiConstants.dokanStoresEndpoint}/$storeId/products?page=$page&per_page=$perPage';
+    final url = '${ApiConstants.dokanStoresEndpoint}/$storeId/products?page=$page&per_page=$perPage&status=publish';
     try {
       final response = await _get(url, useWcAuth: false);
       final List<dynamic> data = jsonDecode(response.body);
@@ -1467,6 +1471,55 @@ class ApiService {
     } catch (e) {
       return false;
     }
+  }
+
+  /// List the current vendor's Dokan payment links.
+  ///
+  /// Calls `GET /wp-json/vendor-bridge/v1/payment-links?page=N` (JWT auth).
+  /// The bridge returns `{ links: [...], total, total_pages, paged }`.
+  Future<List<PaymentLink>> getPaymentLinks({int page = 1, int perPage = 20}) async {
+    final url = '${ApiConstants.paymentLinksEndpoint}?page=$page&per_page=$perPage';
+    final response = await _get(url, useWcAuth: false, requireAuth: true);
+    final Map<String, dynamic> body = Map<String, dynamic>.from(jsonDecode(response.body));
+    final raw = body['links'] ?? body['data'] ?? const [];
+    final List<dynamic> list = raw is List ? raw : const [];
+    return list
+        .map((json) => PaymentLink.fromJson(Map<String, dynamic>.from(json)))
+        .toList();
+  }
+
+  /// Create a new Dokan payment link for the current vendor.
+  ///
+  /// Returns the bridge payload `{ order_id, pay_url, status }`.
+  Future<Map<String, dynamic>?> createPaymentLink({
+    required double amount,
+    required String label,
+    bool needsShipping = false,
+    String? deliveryNote,
+    String? customerEmail,
+    String expiry = 'none',
+  }) async {
+    final response = await _post(
+      ApiConstants.paymentLinksEndpoint,
+      {
+        'amount': amount,
+        'label': label,
+        'needs_shipping': needsShipping,
+        if (deliveryNote != null && deliveryNote.isNotEmpty) 'delivery_note': deliveryNote,
+        if (customerEmail != null && customerEmail.isNotEmpty) 'customer_email': customerEmail,
+        'expiry': expiry,
+      },
+      useWcAuth: false,
+      requireAuth: true,
+    );
+    return Map<String, dynamic>.from(jsonDecode(response.body));
+  }
+
+  /// Cancel an unpaid payment link (ownership verified server-side).
+  Future<bool> cancelPaymentLink(int id) async {
+    final url = '${ApiConstants.paymentLinksEndpoint}/$id/cancel';
+    await _post(url, {}, useWcAuth: false, requireAuth: true);
+    return true;
   }
 
   /// Fetch product reviews for vendor.

@@ -16,6 +16,7 @@ import 'vendor_livestream_screen.dart';
 import 'vendor_shipping_screen.dart';
 import 'vendor_refunds_screen.dart';
 import 'vendor_verification_screen.dart';
+import 'vendor_payment_links_screen.dart';
 
 class VendorDashboardScreen extends StatefulWidget {
   const VendorDashboardScreen({super.key});
@@ -422,6 +423,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
     final actions = [
       {'icon': Icons.inventory_2, 'label': 'Products', 'color': AppColors.indigoColor, 'route': 'products'},
       {'icon': Icons.receipt_long, 'label': 'Orders', 'color': const Color(0xFF10B981), 'route': 'orders'},
+      {'icon': Icons.qr_code_2, 'label': 'Pay Links', 'color': const Color(0xFF06B6D4), 'route': 'payment-links'},
       {'icon': Icons.local_shipping, 'label': 'Shipping', 'color': const Color(0xFF06B6D4), 'route': 'shipping'},
       {'icon': Icons.discount, 'label': 'Coupons', 'color': AppColors.goldColor, 'route': 'coupons'},
       {'icon': Icons.reviews, 'label': 'Reviews', 'color': const Color(0xFF8B5CF6), 'route': 'reviews'},
@@ -537,6 +539,9 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
         break;
       case 'verification':
         screen = const VendorVerificationScreen();
+        break;
+      case 'payment-links':
+        screen = const VendorPaymentLinksScreen();
         break;
       case 'announcements':
         // Announcements are shown inline on dashboard
