@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
 import '../providers/auth_provider.dart';
-import '../providers/theme_provider.dart';
 import '../services/api_service.dart';
 import '../services/storage_service.dart';
 import 'main_screen.dart';
@@ -266,11 +265,9 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   bool _notificationsEnabled = true;
   bool _emailOffers = true;
-  String _selectedCurrency = 'GBP';
 
   @override
   Widget build(BuildContext context) {
-    final themeProvider = context.watch<ThemeProvider>();
     return Scaffold(
       backgroundColor: AppColors.creamColor,
       appBar: AppBar(
@@ -297,26 +294,6 @@ class _SettingsPageState extends State<SettingsPage> {
             onChanged: (val) => setState(() => _emailOffers = val),
             title: const Text('Email Offers'),
             activeColor: AppColors.goldColor,
-          ),
-          _buildSectionTitle('Appearance'),
-          SwitchListTile(
-            value: themeProvider.isDarkMode,
-            onChanged: (val) => themeProvider.setDarkMode(val),
-            title: const Text('Dark Mode'),
-            activeColor: AppColors.goldColor,
-          ),
-          _buildSectionTitle('Currency'),
-          DropdownButtonFormField<String>(
-            value: _selectedCurrency,
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: AppColors.whiteColor,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-            ),
-            items: ['GBP', 'USD', 'EUR', 'NGN']
-                .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                .toList(),
-            onChanged: (val) => setState(() => _selectedCurrency = val!),
           ),
           const SizedBox(height: 40),
         ],
