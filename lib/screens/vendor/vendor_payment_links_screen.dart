@@ -208,6 +208,16 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
                 fontWeight: FontWeight.w700,
                 fontFamily: 'Fraunces'),
           ),
+          if (link.paidCount > 0) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${link.paidCount} paid order${link.paidCount == 1 ? '' : 's'}',
+              style: const TextStyle(
+                  color: Color(0xFF10B981),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600),
+            ),
+          ],
           if (link.needsShipping) ...[
             const SizedBox(height: 6),
             const Row(
@@ -261,18 +271,15 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
   Widget _statusChip(PaymentLink link) {
     Color color;
     String text;
-    if (link.isPaid) {
-      color = const Color(0xFF10B981);
-      text = 'PAID';
+    if (link.isCancelled) {
+      color = AppColors.coralColor;
+      text = 'CANCELLED';
     } else if (link.isExpired) {
       color = AppColors.inkSoftColor;
       text = 'EXPIRED';
-    } else if (link.status == 'cancelled') {
-      color = AppColors.coralColor;
-      text = 'CANCELLED';
     } else {
-      color = AppColors.goldColor;
-      text = 'PENDING';
+      color = const Color(0xFF10B981);
+      text = 'ACTIVE';
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -337,7 +344,6 @@ class _CreatePaymentLinkSheetState extends State<_CreatePaymentLinkSheet> {
   final _amountController = TextEditingController();
   final _labelController = TextEditingController();
   final _deliveryNoteController = TextEditingController();
-  final _emailController = TextEditingController();
   bool _needsShipping = false;
   String _expiry = 'none';
   bool _submitting = false;
@@ -347,7 +353,6 @@ class _CreatePaymentLinkSheetState extends State<_CreatePaymentLinkSheet> {
     _amountController.dispose();
     _labelController.dispose();
     _deliveryNoteController.dispose();
-    _emailController.dispose();
     super.dispose();
   }
 
@@ -361,7 +366,6 @@ class _CreatePaymentLinkSheetState extends State<_CreatePaymentLinkSheet> {
         label: _labelController.text.trim(),
         needsShipping: _needsShipping,
         deliveryNote: _deliveryNoteController.text.trim(),
-        customerEmail: _emailController.text.trim(),
         expiry: _expiry,
       );
       if (mounted) {
@@ -460,15 +464,6 @@ class _CreatePaymentLinkSheetState extends State<_CreatePaymentLinkSheet> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'Customer email (optional)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: _expiry,
