@@ -7,6 +7,7 @@ import '../models/category.dart';
 import '../models/user.dart';
 import '../models/booking_slot.dart';
 import '../models/payment_link.dart';
+import '../models/payment_link_order.dart';
 
 class ApiService {
   final http.Client client;
@@ -1490,7 +1491,7 @@ class ApiService {
 
   /// Create a new Dokan payment link for the current vendor.
   ///
-  /// Returns the bridge payload `{ order_id, pay_url, status }`.
+  /// Returns the bridge payload `{ link_id, pay_url, status }`.
   Future<Map<String, dynamic>?> createPaymentLink({
     required double amount,
     required String label,
@@ -1518,6 +1519,27 @@ class ApiService {
     final url = '${ApiConstants.paymentLinksEndpoint}/$id/cancel';
     await _post(url, {}, useWcAuth: false, requireAuth: true);
     return true;
+  }
+
+  /// List all orders minted for a specific payment link (ownership verified).
+  ///
+  /// Calls `GET /wp-json/vendor-bridge/v1/payment-links/{id}/orders?page=N`.
+  /// The bridge returns `{ orders: [...], total, total_pages, paged }`.
+  Future<List<PaymentLinkOrder>> getPaymentLinkOrders(
+    int id, {
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    final url = '${ApiConstants.paymentLinksEndpoint}/$id/orders'
+        '?page=$page&per_page=$perPage';
+    final response = await _get(url, useWcAuth: false, requireAuth: true);
+    final Map<String, dynamic> body =
+        Map<String, dynamic>.from(jsonDecode(response.body));
+    final raw = body['orders'] ?? body['data'] ?? const [];
+    final List<dynamic> list = raw is List ? raw : const [];
+    return list
+        .map((json) => PaymentLinkOrder.fromJson(Map<String, dynamic>.from(json)))
+        .toList();
   }
 
   /// Fetch product reviews for vendor.

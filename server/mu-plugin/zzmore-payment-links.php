@@ -9,6 +9,7 @@
  *   GET  /wp-json/vendor-bridge/v1/payment-links?page=N
  *   POST /wp-json/vendor-bridge/v1/payment-links
  *   POST /wp-json/vendor-bridge/v1/payment-links/{id}/cancel
+ *   GET  /wp-json/vendor-bridge/v1/payment-links/{id}/orders
  *
  * Requires: Dokan Payment Links plugin active + Dokan + JWT Auth plugin.
  * Install:  Drop into wp-content/mu-plugins/zzmore-payment-links.php
@@ -19,6 +20,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 add_action( 'rest_api_init', function () {
+	// Diagnostic route — no auth, no Dokan dependency. Confirms the bridge is
+	// loaded and reports whether the Dokan Payment Links plugin exposes the
+	// exact methods this bridge depends on.
+	register_rest_route( 'vendor-bridge/v1', '/payment-links/ping', [
+		'methods'             => 'GET',
+		'permission_callback' => '__return_true',
+		'callback'            => 'zzmore_dpl_ping',
+	] );
+
 	if ( ! function_exists( 'dokan_is_user_seller' ) ) {
 		return;
 	}
@@ -44,13 +54,48 @@ add_action( 'rest_api_init', function () {
 		'permission_callback' => $permission,
 		'callback'            => 'zzmore_dpl_cancel_link',
 	] );
+
+	register_rest_route( 'vendor-bridge/v1', '/payment-links/(?P<id>\d+)/orders', [
+		'methods'             => 'GET',
+		'permission_callback' => $permission,
+		'callback'            => 'zzmore_dpl_link_orders',
+	] );
 } );
 
 /**
  * Whether the Dokan Payment Links plugin is fully bootstrapped.
  */
 function zzmore_dpl_ready() {
-	return function_exists( 'dpl' ) && class_exists( 'Dokan_Payment_Links' );
+	if ( ! function_exists( 'dpl' ) || ! class_exists( 'Dokan_Payment_Links' ) ) {
+		return false;
+	}
+
+	$link = dpl()->payment_link ?? null;
+
+	return is_object( $link )
+		&& method_exists( $link, 'get_vendor_links' )
+		&& method_exists( $link, 'create' )
+		&& method_exists( $link, 'cancel' );
+}
+
+/**
+ * Diagnostic — reports whether the Dokan Payment Links plugin is loaded and
+ * exposes the exact methods this bridge calls. Hit this to confirm the deployed
+ * plugin version matches the bridge.
+ */
+function zzmore_dpl_ping() {
+	$instance = function_exists( 'dpl' ) ? dpl() : null;
+	$link     = $instance ? ( $instance->payment_link ?? null ) : null;
+
+	return [
+		'dpl_function'     => function_exists( 'dpl' ),
+		'dpl_class'        => class_exists( 'Dokan_Payment_Links' ),
+		'plugin_version'   => defined( 'DPL_VERSION' ) ? DPL_VERSION : null,
+		'has_payment_link' => is_object( $link ),
+		'get_vendor_links' => is_object( $link ) && method_exists( $link, 'get_vendor_links' ),
+		'create'           => is_object( $link ) && method_exists( $link, 'create' ),
+		'cancel'           => is_object( $link ) && method_exists( $link, 'cancel' ),
+	];
 }
 
 /**
@@ -58,7 +103,7 @@ function zzmore_dpl_ready() {
  */
 function zzmore_dpl_list_links( WP_REST_Request $request ) {
 	if ( ! zzmore_dpl_ready() ) {
-		return new WP_Error( 'dpl_inactive', 'Dokan Payment Links plugin is not active.', [ 'status' => 503 ] );
+		return new WP_Error( 'dpl_inactive', 'Dokan Payment Links plugin is missing or its API does not match this bridge.', [ 'status' => 503 ] );
 	}
 
 	$vendor_id = get_current_user_id();
@@ -72,7 +117,7 @@ function zzmore_dpl_list_links( WP_REST_Request $request ) {
  */
 function zzmore_dpl_create_link( WP_REST_Request $request ) {
 	if ( ! zzmore_dpl_ready() ) {
-		return new WP_Error( 'dpl_inactive', 'Dokan Payment Links plugin is not active.', [ 'status' => 503 ] );
+		return new WP_Error( 'dpl_inactive', 'Dokan Payment Links plugin is missing or its API does not match this bridge.', [ 'status' => 503 ] );
 	}
 
 	$vendor_id = get_current_user_id();
@@ -133,7 +178,7 @@ function zzmore_dpl_create_link( WP_REST_Request $request ) {
  */
 function zzmore_dpl_cancel_link( WP_REST_Request $request ) {
 	if ( ! zzmore_dpl_ready() ) {
-		return new WP_Error( 'dpl_inactive', 'Dokan Payment Links plugin is not active.', [ 'status' => 503 ] );
+		return new WP_Error( 'dpl_inactive', 'Dokan Payment Links plugin is missing or its API does not match this bridge.', [ 'status' => 503 ] );
 	}
 
 	$vendor_id = get_current_user_id();
@@ -145,4 +190,35 @@ function zzmore_dpl_cancel_link( WP_REST_Request $request ) {
 	}
 
 	return [ 'success' => true, 'message' => 'Payment link cancelled.' ];
+}
+
+/**
+ * GET — list all orders minted for a specific payment link (ownership-verified).
+ */
+function zzmore_dpl_link_orders( WP_REST_Request $request ) {
+	if ( ! zzmore_dpl_ready() ) {
+		return new WP_Error( 'dpl_inactive', 'Dokan Payment Links plugin is missing or its API does not match this bridge.', [ 'status' => 503 ] );
+	}
+
+	$vendor_id = get_current_user_id();
+	$link_id   = absint( $request->get_param( 'id' ) );
+
+	$link = dpl()->payment_link->get_link( $link_id );
+	if ( ! $link || absint( $link['vendor_id'] ) !== $vendor_id ) {
+		return new WP_Error( 'unauthorized', 'You do not own this payment link.', [ 'status' => 403 ] );
+	}
+
+	$order = dpl()->order ?? null;
+	if ( ! is_object( $order ) || ! method_exists( $order, 'get_link_orders' ) ) {
+		return new WP_Error( 'dpl_inactive', 'Dokan Payment Links order API is missing or does not match this bridge.', [ 'status' => 503 ] );
+	}
+
+	$per_page = absint( $request->get_param( 'per_page' ) );
+	if ( ! $per_page ) {
+		$per_page = 20;
+	}
+	$per_page = min( 50, max( 1, $per_page ) );
+	$page     = max( 1, absint( $request->get_param( 'page' ) ) );
+
+	return $order->get_link_orders( $link_id, $per_page, $page );
 }
