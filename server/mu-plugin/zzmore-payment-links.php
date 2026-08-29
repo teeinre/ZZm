@@ -86,6 +86,7 @@ function zzmore_dpl_ready() {
 function zzmore_dpl_ping() {
 	$instance = function_exists( 'dpl' ) ? dpl() : null;
 	$link     = $instance ? ( $instance->payment_link ?? null ) : null;
+	$order    = $instance ? ( $instance->order ?? null ) : null;
 
 	return [
 		'dpl_function'     => function_exists( 'dpl' ),
@@ -95,6 +96,9 @@ function zzmore_dpl_ping() {
 		'get_vendor_links' => is_object( $link ) && method_exists( $link, 'get_vendor_links' ),
 		'create'           => is_object( $link ) && method_exists( $link, 'create' ),
 		'cancel'           => is_object( $link ) && method_exists( $link, 'cancel' ),
+		'get_link'         => is_object( $link ) && method_exists( $link, 'get_link' ),
+		'has_order'        => is_object( $order ),
+		'get_link_orders'  => is_object( $order ) && method_exists( $order, 'get_link_orders' ),
 	];
 }
 
@@ -203,7 +207,12 @@ function zzmore_dpl_link_orders( WP_REST_Request $request ) {
 	$vendor_id = get_current_user_id();
 	$link_id   = absint( $request->get_param( 'id' ) );
 
-	$link = dpl()->payment_link->get_link( $link_id );
+	$link_repo = dpl()->payment_link;
+	if ( ! is_object( $link_repo ) || ! method_exists( $link_repo, 'get_link' ) ) {
+		return new WP_Error( 'dpl_inactive', 'Dokan Payment Links order API is missing or does not match this bridge.', [ 'status' => 503 ] );
+	}
+
+	$link = $link_repo->get_link( $link_id );
 	if ( ! $link || absint( $link['vendor_id'] ) !== $vendor_id ) {
 		return new WP_Error( 'unauthorized', 'You do not own this payment link.', [ 'status' => 403 ] );
 	}
