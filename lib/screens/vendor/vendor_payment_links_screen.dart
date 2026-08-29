@@ -23,6 +23,9 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
   bool _isCreating = false;
   String? _error;
 
+  /// Ids of cards whose non-essential details are expanded on mobile.
+  final Set<int> _expanded = {};
+
   @override
   void initState() {
     super.initState();
@@ -162,13 +165,28 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
                   ? _buildErrorState()
                   : _links.isEmpty
                       ? _buildEmptyState()
-                      : _buildLinksTable(),
+                      : _buildLinksBody(),
             ),
     );
   }
 
-  Widget _buildLinksTable() {
+  Widget _buildLinksBody() {
     final currency = context.watch<CurrencyProvider>().currencySymbol;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Tablets / wide screens keep the full table (horizontal-scrollable).
+        // Phones get a vertically stacked, touch-friendly card list.
+        if (constraints.maxWidth >= 600) {
+          return _buildLinksTable(currency);
+        }
+        return _buildLinksCards(currency);
+      },
+    );
+  }
+
+  /// Wide-screen table. Kept horizontally scrollable so that every column
+  /// (including actions) stays reachable without squeezing content.
+  Widget _buildLinksTable(String currency) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 16, 12, 88),
       children: [
@@ -184,8 +202,8 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
               columnWidths: const {
                 0: FlexColumnWidth(),
                 1: FixedColumnWidth(70),
-                2: FixedColumnWidth(84),
-                3: FixedColumnWidth(96),
+                2: FixedColumnWidth(90),
+                3: FixedColumnWidth(110),
                 4: FixedColumnWidth(120),
               },
               defaultVerticalAlignment: TableCellVerticalAlignment.middle,
@@ -200,6 +218,240 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  /// Mobile stacked-card list. Prioritizes the highest-value fields
+  /// (id, label, amount, status, orders) and folds secondary details behind
+  /// an expandable "Details" row.
+  Widget _buildLinksCards(String currency) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+      itemCount: _links.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) =>
+          _buildLinkCard(_links[index], currency),
+    );
+  }
+
+  Widget _buildLinkCard(PaymentLink link, String currency) {
+    final expanded = _expanded.contains(link.id);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.whiteColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.inkSoftColor.withOpacity(0.08)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('#${link.id}',
+                  style: const TextStyle(
+                      color: AppColors.inkSoftColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+              const Spacer(),
+              _statusChip(link),
+            ],
+          ),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: () => _openOrders(link),
+            child: Text(
+              link.label,
+              style: const TextStyle(
+                color: AppColors.inkColor,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'Fraunces',
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _amountLabel(link, currency),
+            style: const TextStyle(
+              color: AppColors.goldColor,
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              fontFamily: 'Fraunces',
+            ),
+          ),
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: () => _openOrders(link),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  const Icon(Icons.receipt_long_outlined,
+                      size: 16, color: AppColors.inkSoftColor),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${link.orderCount} order${link.orderCount == 1 ? '' : 's'}'
+                    '${link.paidCount > 0 ? ' · ${link.paidCount} paid' : ''}',
+                    style: const TextStyle(
+                        color: AppColors.inkColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(width: 2),
+                  const Icon(Icons.chevron_right,
+                      size: 18, color: AppColors.inkSoftColor),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _cardButton(
+                icon: Icons.qr_code_2,
+                label: 'QR Page',
+                onTap: () => _openQr(link),
+                filled: true,
+              ),
+              _cardButton(
+                icon: Icons.copy,
+                label: 'Copy',
+                onTap: () => _copyLink(link),
+              ),
+              if (link.isCancellable)
+                _cardButton(
+                  icon: Icons.close,
+                  label: 'Cancel',
+                  onTap: () => _cancelLink(link),
+                  destructive: true,
+                ),
+            ],
+          ),
+          InkWell(
+            onTap: () => setState(() {
+              if (expanded) {
+                _expanded.remove(link.id);
+              } else {
+                _expanded.add(link.id);
+              }
+            }),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline,
+                      size: 16, color: AppColors.inkSoftColor),
+                  const SizedBox(width: 6),
+                  const Text('Details',
+                      style: TextStyle(
+                          color: AppColors.inkSoftColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  Icon(expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 20, color: AppColors.inkSoftColor),
+                ],
+              ),
+            ),
+          ),
+          if (expanded) _buildCardDetails(link, currency),
+        ],
+      ),
+    );
+  }
+
+  void _copyLink(PaymentLink link) {
+    Clipboard.setData(ClipboardData(text: link.payUrl));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Payment link copied')),
+    );
+  }
+
+  Widget _cardButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool filled = false,
+    bool destructive = false,
+  }) {
+    final foreground = destructive
+        ? AppColors.coralColor
+        : (filled ? AppColors.whiteColor : AppColors.inkColor);
+    final background = filled ? AppColors.goldColor : Colors.transparent;
+    final side = filled
+        ? BorderSide.none
+        : BorderSide(
+            color: (destructive ? AppColors.coralColor : AppColors.inkColor)
+                .withOpacity(0.4));
+
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: foreground,
+        backgroundColor: background,
+        side: side,
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  Widget _buildCardDetails(PaymentLink link, String currency) {
+    final rows = <(String, String)>[
+      if (link.createdDate.isNotEmpty) ('Created', link.createdDate),
+      if (link.expires.isNotEmpty) ('Expires', link.expires),
+      if (link.paidCount > 0)
+        ('Total paid', '$currency${link.totalPaid.toStringAsFixed(2)}'),
+      if (link.needsShipping) ('Shipping', 'Required'),
+      if (link.deliveryNote != null && link.deliveryNote!.isNotEmpty)
+        ('Delivery note', link.deliveryNote!),
+    ];
+    if (rows.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 8),
+        child: Text('No additional details',
+            style: TextStyle(color: AppColors.inkSoftColor, fontSize: 12)),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final (label, value) in rows)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 96,
+                  child: Text(label,
+                      style: const TextStyle(
+                          color: AppColors.inkSoftColor, fontSize: 12)),
+                ),
+                Expanded(
+                  child: Text(value,
+                      style: const TextStyle(
+                          color: AppColors.inkColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500)),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -231,6 +483,8 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
                 onTap: () => _openOrders(link),
                 child: Text(
                   link.label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: AppColors.goldColor,
                     fontSize: 13,
@@ -243,6 +497,8 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
               const SizedBox(height: 4),
               Text(
                 _amountLabel(link, currency),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style:
                     const TextStyle(color: AppColors.inkSoftColor, fontSize: 11),
               ),
@@ -273,8 +529,8 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
               foregroundColor: AppColors.indigoDeepColor,
               side:
                   BorderSide(color: AppColors.indigoDeepColor.withOpacity(0.4)),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              visualDensity: VisualDensity.compact,
+              minimumSize: const Size(0, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
           ),
         ),
@@ -285,12 +541,7 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
             children: [
               IconButton(
                 tooltip: 'Copy link',
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: link.payUrl));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Payment link copied')),
-                  );
-                },
+                onPressed: () => _copyLink(link),
                 icon: const Icon(Icons.copy, size: 17, color: AppColors.inkColor),
               ),
               if (link.isCancellable)
@@ -335,7 +586,7 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
       ),
       child: Text(text,
           style: TextStyle(
-              color: color, fontSize: 9, fontWeight: FontWeight.bold)),
+              color: color, fontSize: 10, fontWeight: FontWeight.bold)),
     );
   }
 
