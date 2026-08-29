@@ -111,103 +111,110 @@ class _VendorPaymentLinkOrdersScreenState
                 fontWeight: FontWeight.w600),
           ),
         ),
-        Container(
-          decoration: BoxDecoration(
-            color: AppColors.whiteColor,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.inkSoftColor.withOpacity(0.08)),
-          ),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Table(
-              columnWidths: const {
-                0: FixedColumnWidth(72),
-                1: FlexColumnWidth(),
-                2: FixedColumnWidth(96),
-                3: FixedColumnWidth(96),
-                4: FixedColumnWidth(104),
-              },
-              border: TableBorder(
-                horizontalInside: BorderSide(
-                    color: AppColors.inkSoftColor.withOpacity(0.08)),
+        for (final order in _orders) _orderCard(order, symbol),
+      ],
+    );
+  }
+
+  Widget _orderCard(PaymentLinkOrder order, String symbol) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.whiteColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.inkSoftColor.withOpacity(0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  _customerHeading(order),
+                  style: const TextStyle(
+                      color: AppColors.inkColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'Fraunces'),
+                ),
               ),
-              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-              children: [
-                _headerRow(),
-                for (final order in _orders) _orderRow(order, symbol),
-              ],
-            ),
+              const SizedBox(width: 8),
+              _statusChip(order.status),
+            ],
           ),
-        ),
-      ],
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _orderDetail(
+                  'Order',
+                  '#${order.id}',
+                  valueColor: AppColors.inkColor,
+                  valueWeight: FontWeight.w700,
+                ),
+              ),
+              Expanded(child: _orderDetail('Date', order.date)),
+              Expanded(
+                child: _orderDetail(
+                  'Total',
+                  '$symbol${order.total.toStringAsFixed(2)}',
+                  valueColor: AppColors.goldColor,
+                  valueWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  TableRow _headerRow() {
-    const style = TextStyle(
-        color: AppColors.inkSoftColor, fontSize: 11, fontWeight: FontWeight.w700);
-    return TableRow(
-      decoration: BoxDecoration(color: AppColors.creamColor),
-      children: const [
-        _Cell(text: 'Order', style: style, padding: 12),
-        _Cell(text: 'Customer', style: style, padding: 12),
-        _Cell(text: 'Date', style: style, padding: 12),
-        _Cell(text: 'Total', style: style, padding: 12),
-        _Cell(text: 'Status', style: style, padding: 12),
-      ],
-    );
-  }
-
-  TableRow _orderRow(PaymentLinkOrder order, String symbol) {
-    return TableRow(
-      children: [
-        _Cell(
-          text: '#${order.id}',
-          padding: 12,
-          style: const TextStyle(
-              color: AppColors.inkColor, fontWeight: FontWeight.w700),
-        ),
-        _Cell(padding: 12, child: _customerColumn(order)),
-        _Cell(
-          text: order.date,
-          padding: 12,
-          style: const TextStyle(color: AppColors.inkSoftColor, fontSize: 12),
-        ),
-        _Cell(
-          text: '$symbol${order.total.toStringAsFixed(2)}',
-          padding: 12,
-          style: const TextStyle(
-              color: AppColors.goldColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w700),
-        ),
-        _Cell(padding: 12, child: _statusChip(order.status)),
-      ],
-    );
-  }
-
-  Widget _customerColumn(PaymentLinkOrder order) {
-    final name = order.customerName.isNotEmpty
-        ? order.customerName
-        : (order.customer.isNotEmpty ? order.customer : 'Guest');
+  Widget _orderDetail(
+    String label,
+    String value, {
+    Color? valueColor,
+    FontWeight valueWeight = FontWeight.w500,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(name,
-            style: const TextStyle(
-                color: AppColors.inkColor,
-                fontSize: 12,
-                fontWeight: FontWeight.w600)),
-        if (order.customerUsername.isNotEmpty)
-          Text('@${order.customerUsername}',
-              style: const TextStyle(
-                  color: AppColors.inkSoftColor, fontSize: 11)),
-        if (order.customerEmail.isNotEmpty)
-          Text(order.customerEmail,
-              style: const TextStyle(
-                  color: AppColors.inkSoftColor, fontSize: 11)),
+        Text(
+          label.toUpperCase(),
+          style: const TextStyle(
+              color: AppColors.inkSoftColor,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.04),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          value,
+          style: TextStyle(
+              color: valueColor ?? AppColors.inkSoftColor,
+              fontSize: 12,
+              fontWeight: valueWeight),
+        ),
       ],
     );
+  }
+
+  String _customerHeading(PaymentLinkOrder order) {
+    final designation = order.customerUsername.isEmpty ? 'Guest' : 'Customer';
+    final name = _customerFullName(order);
+    return name.isEmpty ? designation : '$designation: $name';
+  }
+
+  String _customerFullName(PaymentLinkOrder order) {
+    if (order.customerName.isNotEmpty) return order.customerName;
+    if (order.customer.isNotEmpty && order.customer.toLowerCase() != 'guest') {
+      return order.customer;
+    }
+    if (order.customerEmail.isNotEmpty) return order.customerEmail;
+    return '';
   }
 
   Widget _statusChip(String status) {
@@ -281,28 +288,6 @@ class _VendorPaymentLinkOrdersScreenState
           style: const TextStyle(color: AppColors.inkSoftColor, fontSize: 13),
         ),
       ],
-    );
-  }
-}
-
-class _Cell extends StatelessWidget {
-  const _Cell({
-    this.text,
-    this.child,
-    this.padding = 16,
-    this.style,
-  });
-
-  final String? text;
-  final Widget? child;
-  final double padding;
-  final TextStyle? style;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.all(padding),
-      child: child ?? Text(text ?? '', style: style),
     );
   }
 }
