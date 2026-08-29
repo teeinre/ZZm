@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../constants/app_colors.dart';
 import '../../models/payment_link.dart';
 import '../../providers/currency_provider.dart';
+import '../../services/qr_print_service.dart';
 
 /// Dedicated QR page for a single payment link.
 ///
@@ -93,6 +96,19 @@ class VendorPaymentLinkQrScreen extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.inkSoftColor, fontSize: 13),
                 ),
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: () => _printQr(context),
+                  icon: const Icon(Icons.print, size: 20),
+                  label: const Text('Print QR Code'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.inkColor,
+                    foregroundColor: AppColors.whiteColor,
+                    minimumSize: const Size.fromHeight(52),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
                 const SizedBox(height: 24),
                 Align(
                   alignment: Alignment.centerLeft,
@@ -122,6 +138,116 @@ class VendorPaymentLinkQrScreen extends StatelessWidget {
     if (formatted != null && formatted.isNotEmpty) return formatted;
     if (link.amount > 0) return '$symbol${link.amount.toStringAsFixed(2)}';
     return 'Customer chooses amount';
+  }
+
+  /// Generate a printer-friendly version of the QR page and open the platform
+  /// print dialog. On web this opens a clean, scannable QR document in a new
+  /// tab; on other platforms it falls back to a helpful message.
+  Future<void> _printQr(BuildContext context) async {
+    final symbol = context.read<CurrencyProvider>().currencySymbol;
+    final amountLabel = _amountLabel(symbol);
+
+    final qrBytes = await _generateQrPng();
+    if (qrBytes == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Could not prepare the QR code for printing.')),
+        );
+      }
+      return;
+    }
+
+    final printed = await printQrHtml(_buildPrintHtml(amountLabel, qrBytes));
+    if (!printed && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Printing is available in the web app. Use Share to send this QR instead.'),
+        ),
+      );
+    }
+  }
+
+  Future<Uint8List?> _generateQrPng() async {
+    final painter = QrPainter(
+      data: link.payUrl,
+      version: QrVersions.auto,
+      errorCorrectionLevel: QrErrorCorrectLevel.M,
+      gapless: true,
+    );
+    final data = await painter.toImageData(512.0);
+    if (data == null) return null;
+    return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+  }
+
+  String _buildPrintHtml(String amountLabel, Uint8List qrBytes) {
+    final base64 = base64Encode(qrBytes);
+    final label = _escapeHtml(link.label);
+    final amount = _escapeHtml(amountLabel);
+    final url = _escapeHtml(link.payUrl);
+
+    return '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$label — QR Payment</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; color: #161B2B; background: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .toolbar { text-align: right; margin-bottom: 16px; }
+  .print-btn { background: #E67E14; color: #fff; border: none; border-radius: 8px;
+    padding: 11px 20px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .card { max-width: 420px; margin: 0 auto; border: 1px solid #eee; border-radius: 16px;
+    padding: 32px 24px; text-align: center; }
+  .label { font-size: 22px; font-weight: 700; margin: 0 0 6px; overflow-wrap: anywhere; }
+  .amount { font-size: 16px; color: #E67E14; font-weight: 600; margin: 0 0 22px; }
+  .qr-wrap { display: inline-block; border: 1px solid #eee; border-radius: 12px;
+    padding: 12px; background: #fff; }
+  .qr { display: block; width: 320px; height: 320px; max-width: 100%; }
+  .hint { font-size: 13px; color: #5B5F70; margin: 14px 0 20px; }
+  .link { font-size: 12px; color: #555; overflow-wrap: anywhere; }
+  @media print {
+    body { padding: 0; }
+    .toolbar { display: none; }
+    .card { border: none; max-width: none; }
+    .qr-wrap { border: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar"><button class="print-btn" onclick="window.print()">Print</button></div>
+  <div class="card">
+    <h1 class="label">$label</h1>
+    <p class="amount">$amount</p>
+    <div class="qr-wrap"><img class="qr" src="data:image/png;base64,$base64" alt="QR code"></div>
+    <p class="hint">Scan this QR code with your phone camera to pay</p>
+    <p class="link">$url</p>
+  </div>
+  <script>
+    window.addEventListener('load', function () {
+      setTimeout(function () { window.print(); }, 250);
+    });
+  </script>
+</body>
+</html>
+''';
+  }
+
+  String _escapeHtml(String value) {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
   }
 
   Future<void> _shareNative(BuildContext context, PaymentLink link) async {
