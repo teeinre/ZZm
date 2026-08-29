@@ -14,6 +14,7 @@ class PaymentLink extends Equatable {
   final String label;
   final double amount;
   final String currency;
+  final String? amountFormatted;
   final String status;
   final bool needsShipping;
   final String? deliveryNote;
@@ -33,6 +34,7 @@ class PaymentLink extends Equatable {
     required this.label,
     required this.amount,
     required this.currency,
+    this.amountFormatted,
     required this.status,
     required this.needsShipping,
     required this.deliveryNote,
@@ -54,6 +56,7 @@ class PaymentLink extends Equatable {
       label: json['label']?.toString() ?? 'Payment',
       amount: _toDouble(json['amount']),
       currency: json['currency']?.toString() ?? '',
+      amountFormatted: json['amount_formatted']?.toString(),
       status: json['status']?.toString() ?? 'active',
       needsShipping: _toBool(json['needs_shipping']),
       deliveryNote: json['delivery_note']?.toString(),
@@ -92,6 +95,7 @@ class PaymentLink extends Equatable {
         label,
         amount,
         currency,
+        amountFormatted,
         status,
         needsShipping,
         deliveryNote,

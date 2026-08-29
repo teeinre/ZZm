@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:qr_flutter/qr_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../constants/app_colors.dart';
 import '../../models/payment_link.dart';
 import '../../providers/vendor_provider.dart';
 import '../../providers/currency_provider.dart';
+import 'vendor_payment_link_orders_screen.dart';
+import 'vendor_payment_link_qr_screen.dart';
 
 /// Dokan Payment Links management — create, share (via QR), and cancel
 /// shareable payment links from the vendor dashboard.
@@ -108,12 +108,18 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
     }
   }
 
-  void _showQr(PaymentLink link) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _QrShareSheet(link: link),
+  void _openQr(PaymentLink link) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => VendorPaymentLinkQrScreen(link: link)),
+    );
+  }
+
+  void _openOrders(PaymentLink link) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (_) => VendorPaymentLinkOrdersScreen(link: link)),
     );
   }
 
@@ -156,116 +162,156 @@ class _VendorPaymentLinksScreenState extends State<VendorPaymentLinksScreen> {
                   ? _buildErrorState()
                   : _links.isEmpty
                       ? _buildEmptyState()
-                      : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
-                          itemCount: _links.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (ctx, idx) => _buildLinkCard(_links[idx]),
-                        ),
+                      : _buildLinksTable(),
             ),
     );
   }
 
-  Widget _buildLinkCard(PaymentLink link) {
+  Widget _buildLinksTable() {
     final currency = context.watch<CurrencyProvider>().currencySymbol;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.whiteColor,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.inkSoftColor.withOpacity(0.08)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 88),
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.whiteColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.inkSoftColor.withOpacity(0.08)),
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Table(
+              columnWidths: const {
+                0: FlexColumnWidth(),
+                1: FixedColumnWidth(70),
+                2: FixedColumnWidth(84),
+                3: FixedColumnWidth(96),
+                4: FixedColumnWidth(120),
+              },
+              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+              border: TableBorder(
+                horizontalInside: BorderSide(
+                    color: AppColors.inkSoftColor.withOpacity(0.08)),
+              ),
+              children: [
+                _headerRow(),
+                for (final link in _links) _linkRow(link, currency),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  TableRow _headerRow() {
+    const style = TextStyle(
+        color: AppColors.inkSoftColor, fontSize: 11, fontWeight: FontWeight.w700);
+    return TableRow(
+      decoration: BoxDecoration(color: AppColors.creamColor),
+      children: const [
+        _Cell(text: 'Payment Link', style: style, padding: 12),
+        _Cell(text: 'Orders', style: style, padding: 12),
+        _Cell(text: 'Status', style: style, padding: 12),
+        _Cell(text: 'QR Page', style: style, padding: 12),
+        _Cell(text: 'Actions', style: style, padding: 12),
+      ],
+    );
+  }
+
+  TableRow _linkRow(PaymentLink link, String currency) {
+    return TableRow(
+      children: [
+        _Cell(
+          padding: 12,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
+              InkWell(
+                onTap: () => _openOrders(link),
                 child: Text(
                   link.label,
                   style: const TextStyle(
-                      color: AppColors.inkColor,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600),
+                    color: AppColors.goldColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    decoration: TextDecoration.underline,
+                    decorationColor: AppColors.goldColor,
+                  ),
                 ),
               ),
-              _statusChip(link),
+              const SizedBox(height: 4),
+              Text(
+                _amountLabel(link, currency),
+                style:
+                    const TextStyle(color: AppColors.inkSoftColor, fontSize: 11),
+              ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            '$currency${link.amount.toStringAsFixed(2)}',
-            style: const TextStyle(
-                color: AppColors.goldColor,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                fontFamily: 'Fraunces'),
-          ),
-          if (link.paidCount > 0) ...[
-            const SizedBox(height: 4),
-            Text(
-              '${link.paidCount} paid order${link.paidCount == 1 ? '' : 's'}',
+        ),
+        _Cell(
+          padding: 12,
+          child: InkWell(
+            onTap: () => _openOrders(link),
+            child: Text(
+              '${link.orderCount}',
               style: const TextStyle(
-                  color: Color(0xFF10B981),
-                  fontSize: 11,
+                  color: AppColors.inkColor,
+                  fontSize: 13,
                   fontWeight: FontWeight.w600),
             ),
-          ],
-          if (link.needsShipping) ...[
-            const SizedBox(height: 6),
-            const Row(
-              children: [
-                Icon(Icons.local_shipping_outlined,
-                    size: 14, color: AppColors.inkSoftColor),
-                SizedBox(width: 6),
-                Text('Requires shipping address',
-                    style: TextStyle(color: AppColors.inkSoftColor, fontSize: 12)),
-              ],
+          ),
+        ),
+        _Cell(padding: 12, child: _statusChip(link)),
+        _Cell(
+          padding: 12,
+          child: OutlinedButton.icon(
+            onPressed: () => _openQr(link),
+            icon: const Icon(Icons.qr_code_2, size: 15),
+            label: const Text('View'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.indigoDeepColor,
+              side:
+                  BorderSide(color: AppColors.indigoDeepColor.withOpacity(0.4)),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              visualDensity: VisualDensity.compact,
             ),
-          ],
-          if (link.expires.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text('Expires: ${link.expires}',
-                style: const TextStyle(color: AppColors.inkSoftColor, fontSize: 11)),
-          ],
-          const SizedBox(height: 12),
-          Row(
+          ),
+        ),
+        _Cell(
+          padding: 12,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _showQr(link),
-                  icon: const Icon(Icons.qr_code_2, size: 18),
-                  label: const Text('QR code'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.indigoDeepColor,
-                    side: BorderSide(color: AppColors.indigoDeepColor.withOpacity(0.4)),
-                  ),
-                ),
+              IconButton(
+                tooltip: 'Copy link',
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: link.payUrl));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Payment link copied')),
+                  );
+                },
+                icon: const Icon(Icons.copy, size: 17, color: AppColors.inkColor),
               ),
-              if (link.isCancellable) ...[
-                const SizedBox(width: 10),
-                OutlinedButton.icon(
+              if (link.isCancellable)
+                IconButton(
+                  tooltip: 'Cancel link',
                   onPressed: () => _cancelLink(link),
-                  icon: const Icon(Icons.close, size: 18),
-                  label: const Text('Cancel'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.coralColor,
-                    side: BorderSide(color: AppColors.coralColor.withOpacity(0.4)),
-                  ),
+                  icon:
+                      const Icon(Icons.close, size: 17, color: AppColors.coralColor),
                 ),
-              ],
             ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
+  }
+
+  String _amountLabel(PaymentLink link, String currency) {
+    final formatted = link.amountFormatted;
+    if (formatted != null && formatted.isNotEmpty) return formatted;
+    if (link.amount > 0) return '$currency${link.amount.toStringAsFixed(2)}';
+    return 'Open amount';
   }
 
   Widget _statusChip(PaymentLink link) {
@@ -511,103 +557,19 @@ class _CreatePaymentLinkSheetState extends State<_CreatePaymentLinkSheet> {
   }
 }
 
-class _QrShareSheet extends StatelessWidget {
-  const _QrShareSheet({required this.link});
+class _Cell extends StatelessWidget {
+  const _Cell({this.text, this.child, this.padding = 16, this.style});
 
-  final PaymentLink link;
+  final String? text;
+  final Widget? child;
+  final double padding;
+  final TextStyle? style;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-      decoration: const BoxDecoration(
-        color: AppColors.whiteColor,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.inkSoftColor.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text('Scan to pay',
-                style: TextStyle(
-                    color: AppColors.inkColor,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    fontFamily: 'Fraunces')),
-            const SizedBox(height: 4),
-            Text(link.label,
-                style: const TextStyle(
-                    color: AppColors.inkSoftColor, fontSize: 13)),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.inkSoftColor.withOpacity(0.15)),
-              ),
-              child: QrImageView(
-                data: link.payUrl,
-                version: QrVersions.auto,
-                size: 220,
-                backgroundColor: Colors.white,
-                errorCorrectionLevel: QrErrorCorrectLevel.M,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: link.payUrl));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Payment link copied')),
-                      );
-                    },
-                    icon: const Icon(Icons.copy, size: 18),
-                    label: const Text('Copy'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => _openLink(context),
-                    icon: const Icon(Icons.open_in_new, size: 18),
-                    label: const Text('Open'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.goldColor,
-                      foregroundColor: AppColors.whiteColor,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
+    return Padding(
+      padding: EdgeInsets.all(padding),
+      child: child ?? Text(text ?? '', style: style),
     );
-  }
-
-  Future<void> _openLink(BuildContext context) async {
-    final uri = Uri.parse(link.payUrl);
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open the link')),
-        );
-      }
-    }
   }
 }
