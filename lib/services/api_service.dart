@@ -1348,6 +1348,12 @@ class ApiService {
 
   /// Fetch vendor withdrawal history.
   Future<List<Map<String, dynamic>>> getVendorWithdrawals({int page = 1, int perPage = 20}) async {
+    // Prefer vendor-api.php (reliable bypass) so successful withdrawals appear
+    // in history immediately after submission.
+    final viaVendorApi = await getVendorApiWithdrawals();
+    if (viaVendorApi.isNotEmpty) return viaVendorApi;
+
+    // Fallback: Dokan REST withdraw endpoint
     try {
       final url = '${ApiConstants.dokanWithdrawEndpoint}?page=$page&per_page=$perPage';
       final response = await _get(url, useWcAuth: false, requireAuth: true);
@@ -1740,33 +1746,34 @@ class ApiService {
     }
   }
 
-  /// Create a new product.
+  /// Create a new product — uses the Dokan vendor endpoint so the product is
+  /// automatically assigned to the authenticated vendor (post_author + store id).
   Future<Map<String, dynamic>?> createProduct(Map<String, dynamic> data) async {
     try {
-      final url = ApiConstants.productsEndpoint;
-      final response = await _post(url, data, useWcAuth: true);
+      final url = '${ApiConstants.dokanV1Base}/products';
+      final response = await _post(url, data, useWcAuth: false, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
     }
   }
 
-  /// Update a product.
+  /// Update a product via the Dokan vendor endpoint.
   Future<bool> updateProduct(int id, Map<String, dynamic> data) async {
     try {
-      final url = '${ApiConstants.productsEndpoint}/$id';
-      await _put(url, data, useWcAuth: true);
+      final url = '${ApiConstants.dokanV1Base}/products/$id';
+      await _put(url, data, useWcAuth: false, requireAuth: true);
       return true;
     } catch (e) {
       return false;
     }
   }
 
-  /// Delete a product.
+  /// Delete a product via the Dokan vendor endpoint.
   Future<bool> deleteProduct(int id) async {
     try {
-      final url = '${ApiConstants.productsEndpoint}/$id';
-      await _delete(url, useWcAuth: true);
+      final url = '${ApiConstants.dokanV1Base}/products/$id';
+      await _delete(url, useWcAuth: false, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -2049,6 +2056,24 @@ class ApiService {
       debugPrint('[VendorAPI] Balance fetch failed: $e');
     }
     return null;
+  }
+
+  /// Fetch vendor withdrawal history via vendor-api.php (reliable bypass).
+  Future<List<Map<String, dynamic>>> getVendorApiWithdrawals() async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_balance';
+      final response = await _vendorApiGet(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final wList = data['withdrawals'];
+        if (wList is List) {
+          return wList.map((w) => Map<String, dynamic>.from(w)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Withdrawals fetch failed: $e');
+    }
+    return [];
   }
 
   // ─── Customer / User API Bypass (vendor-api.php) ───

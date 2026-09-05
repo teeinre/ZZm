@@ -1081,7 +1081,7 @@ Widget _buildGoLiveCTA() {
     final vendorName = product.vendorName ?? 'Unknown Vendor';
     final firstImage = product.images.isNotEmpty ? product.images.first : null;
     return GestureDetector(
-      onTap: () => _showProductDetail(product),
+      onTap: () => _openSpotlightProduct(product),
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(10),
@@ -1147,18 +1147,27 @@ Widget _buildGoLiveCTA() {
             ),
             const SizedBox(width: 4),
             GestureDetector(
-              onTap: () => _addSpotlightToCart(product),
+              onTap: () => _openSpotlightProduct(product),
               child: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   color: AppColors.goldColor,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.add_shopping_cart, color: Colors.white, size: 16),
+                child: const Icon(Icons.arrow_forward, color: Colors.white, size: 16),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _openSpotlightProduct(Product product) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProductDetailScreen(product: product),
       ),
     );
   }
@@ -1684,6 +1693,16 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
       // Filter out excluded vendor products from search results
       final filtered = results.where((p) =>
           !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName)).toList();
+      // Sort by relevance: products whose name matches the term first, then
+      // products that only match in the description.
+      final q = query.toLowerCase();
+      filtered.sort((a, b) {
+        final aName = a.name.toLowerCase().contains(q);
+        final bName = b.name.toLowerCase().contains(q);
+        if (aName && !bName) return -1;
+        if (!aName && bName) return 1;
+        return 0;
+      });
       if (mounted) {
         setState(() {
           _results = filtered;
