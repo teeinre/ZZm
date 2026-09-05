@@ -49,10 +49,11 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
                 fontWeight: FontWeight.w600,
                 fontFamily: 'Fraunces')),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add_circle, color: AppColors.goldColor, size: 28),
-            onPressed: () => _openAddEditProduct(),
-          ),
+          // Product creation temporarily disabled — keep the "+" hidden for now.
+          // IconButton(
+          //   icon: const Icon(Icons.add_circle, color: AppColors.goldColor, size: 28),
+          //   onPressed: () => _openAddEditProduct(),
+          // ),
         ],
       ),
       body: Consumer<VendorProvider>(
@@ -397,17 +398,18 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
           const Text('Start adding products to your store',
               style: TextStyle(color: AppColors.inkSoftColor, fontSize: 13)),
           const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: () => _openAddEditProduct(),
-            icon: const Icon(Icons.add, size: 20),
-            label: const Text('Add Product'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.goldColor,
-              foregroundColor: AppColors.whiteColor,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          ),
+          // Product creation temporarily disabled.
+          // ElevatedButton.icon(
+          //   onPressed: () => _openAddEditProduct(),
+          //   icon: const Icon(Icons.add, size: 20),
+          //   label: const Text('Add Product'),
+          //   style: ElevatedButton.styleFrom(
+          //     backgroundColor: AppColors.goldColor,
+          //     foregroundColor: AppColors.whiteColor,
+          //     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          //     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          //   ),
+          // ),
         ],
       ),
     );
@@ -814,6 +816,17 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
   }
 
   void _openAddEditProduct({Map<String, dynamic>? product}) {
+    // Product creation is temporarily disabled (see "Add Product" buttons below).
+    // Only editing existing products is allowed for now.
+    if (product == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Adding new products is temporarily unavailable.'),
+          backgroundColor: AppColors.inkSoftColor,
+        ),
+      );
+      return;
+    }
     final vendorProvider = context.read<VendorProvider>();
     Navigator.push(
       context,
@@ -883,6 +896,10 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
   List<int> _categoryIds = [];
   List<int> _tagIds = [];
 
+  // Shipping
+  List<Map<String, dynamic>> _shippingClasses = [];
+  String _shippingClassId = ''; // '' = no shipping class
+
   // Image management
   List<_ProductImage> _images = [];
   final ImagePicker _imagePicker = ImagePicker();
@@ -921,10 +938,12 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
   Future<void> _loadFormData() async {
     final cats = await _api.getProductCategories();
     final tags = await _api.getProductTags();
+    final shippingClasses = await _api.getProductShippingClasses();
     if (mounted) {
       setState(() {
         _categories = cats;
         _tags = tags;
+        _shippingClasses = shippingClasses;
       });
     }
 
@@ -944,6 +963,16 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
       _taxStatus = p['tax_status']?.toString() ?? 'taxable';
       _catalogVisibility = p['catalog_visibility']?.toString() ?? 'visible';
       _productStatus = p['status']?.toString() ?? 'publish';
+
+      // Shipping
+      _weightCtrl.text = p['weight']?.toString() ?? '';
+      final dims = p['dimensions'];
+      if (dims is Map) {
+        _dimLengthCtrl.text = dims['length']?.toString() ?? '';
+        _dimWidthCtrl.text = dims['width']?.toString() ?? '';
+        _dimHeightCtrl.text = dims['height']?.toString() ?? '';
+      }
+      _shippingClassId = p['shipping_class']?.toString() ?? '';
 
       // Load existing images
       if (p['images'] is List) {
@@ -1154,6 +1183,22 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
     }
     if (_lowStockCtrl.text.isNotEmpty) {
       data['low_stock_amount'] = int.tryParse(_lowStockCtrl.text);
+    }
+
+    // Shipping: weight, dimensions, shipping class
+    if (_weightCtrl.text.trim().isNotEmpty) {
+      data['weight'] = _weightCtrl.text.trim();
+    }
+    final dims = <String, String>{
+      'length': _dimLengthCtrl.text.trim(),
+      'width': _dimWidthCtrl.text.trim(),
+      'height': _dimHeightCtrl.text.trim(),
+    };
+    if (dims.values.any((v) => v.isNotEmpty)) {
+      data['dimensions'] = dims;
+    }
+    if (_shippingClassId.isNotEmpty) {
+      data['shipping_class'] = _shippingClassId;
     }
 
     // Images: existing by id, new by src
@@ -1434,6 +1479,23 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                 const SizedBox(height: 20),
               ],
 
+              _buildSectionHeader('Shipping'),
+              const SizedBox(height: 12),
+              _buildTextField(_weightCtrl, 'Weight (kg)', keyboardType: TextInputType.number),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(child: _buildTextField(_dimLengthCtrl, 'Length (cm)', keyboardType: TextInputType.number)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _buildTextField(_dimWidthCtrl, 'Width (cm)', keyboardType: TextInputType.number)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _buildTextField(_dimHeightCtrl, 'Height (cm)', keyboardType: TextInputType.number)),
+                ],
+              ),
+              const SizedBox(height: 10),
+              _buildShippingClassDropdown(),
+              const SizedBox(height: 20),
+
               _buildSectionHeader('Settings'),
               const SizedBox(height: 12),
               _buildDropdown(
@@ -1657,6 +1719,38 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
             child: Text(o[0].toUpperCase() + o.substring(1),
                 style: const TextStyle(fontSize: 13)))).toList(),
         onChanged: onChanged,
+        style: const TextStyle(color: AppColors.inkColor, fontSize: 13),
+      ),
+    );
+  }
+
+  Widget _buildShippingClassDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.whiteColor,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: DropdownButtonFormField<String>(
+        value: _shippingClassId.isEmpty ? '' : _shippingClassId,
+        decoration: InputDecoration(
+          labelText: 'Shipping Class',
+          labelStyle: const TextStyle(color: AppColors.inkSoftColor, fontSize: 12),
+          border: InputBorder.none,
+          isDense: true,
+        ),
+        items: [
+          const DropdownMenuItem(value: '', child: Text('No shipping class')),
+          ..._shippingClasses.map((c) {
+            final slug = c['slug']?.toString() ?? '';
+            final name = c['name']?.toString() ?? slug;
+            return DropdownMenuItem(
+              value: slug,
+              child: Text(name),
+            );
+          }),
+        ],
+        onChanged: (v) => setState(() => _shippingClassId = v ?? ''),
         style: const TextStyle(color: AppColors.inkColor, fontSize: 13),
       ),
     );

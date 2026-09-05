@@ -925,13 +925,20 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   Widget _buildAboutTab() {
     final biography = _vendorData?['biography']?.toString();
     final description = _vendorData?['description']?.toString();
+    final vendorBiography = _vendorData?['vendor_biography']?.toString();
+    final shopDescription = _vendorData?['shop_description']?.toString();
     final toc = _vendorData?['store_toc']?.toString();
     final social = _social;
     // About tab pulls from the vendor_biography field (with a fallback to the
-    // legacy shop description for older stores that never set a biography).
+    // legacy shop description / WP user bio for older stores that never set a
+    // dedicated biography).
     final rawAbout = (biography != null && biography.trim().isNotEmpty)
         ? biography
-        : description;
+        : (vendorBiography != null && vendorBiography.trim().isNotEmpty)
+            ? vendorBiography
+            : (shopDescription != null && shopDescription.trim().isNotEmpty)
+                ? shopDescription
+                : description;
     final aboutText = rawAbout != null ? _stripHtml(rawAbout) : null;
     final hasDesc = aboutText != null && aboutText.trim().isNotEmpty;
     final hasToc = toc != null && toc.trim().isNotEmpty && toc != description;
