@@ -173,6 +173,86 @@ add_filter( 'woocommerce_rest_prepare_product_object', function ( WP_REST_Respon
         // which takes precedence in the Dart getter isSubscriptionProduct.
     }
 
+    // ── WooCommerce Bookings meta injection ──
+    // WooCommerce Bookings / Dokan Bookings don't reliably expose all booking
+    // meta fields in /wc/v3/products REST responses.  Same pattern as subs:
+    // read directly from post meta and inject both at top-level AND into
+    // meta_data array so either extraction path works.
+    $booking_meta_keys = [
+        '_wc_booking_duration',
+        '_wc_booking_duration_unit',
+        '_wc_booking_duration_type',
+        '_wc_booking_cost',
+        '_wc_booking_block_cost',
+        '_wc_display_cost',
+        '_wc_booking_has_resources',
+        '_wc_booking_resources_assignment',
+        '_wc_booking_location',
+        '_wc_booking_location_type',
+        '_wc_booking_has_persons',
+        '_wc_booking_min_persons_group',
+        '_wc_booking_max_persons_group',
+        '_wc_booking_min_date',
+        '_wc_booking_min_date_unit',
+        '_wc_booking_max_date',
+        '_wc_booking_max_date_unit',
+        '_wc_booking_default_date_availability',
+        '_wc_booking_first_block_time',
+        '_wc_booking_restricted_days',
+        '_wc_booking_has_restricted_days',
+        '_wc_booking_requires_confirmation',
+        '_wc_booking_user_can_cancel',
+        '_wc_booking_qty',
+        '_bookable',
+    ];
+    $pid = $product->get_id();
+    $has_booking = false;
+    foreach ( $booking_meta_keys as $bk ) {
+        $val = get_post_meta( $pid, $bk, true );
+        if ( $val !== '' && $val !== null ) {
+            $has_booking = true;
+            // Strip leading _wc_booking_ for cleaner top-level keys
+            // (keep both so either parser path works).
+            $short = $bk;
+            if ( strpos( $short, '_wc_booking_' ) === 0 ) {
+                $short = substr( $short, 12 );
+            } elseif ( strpos( $short, '_' ) === 0 ) {
+                $short = substr( $short, 1 );
+            }
+            $data[ $short ] = $val;
+            $data[ 'booking_' . $short ] = $val;
+            // Also push into meta_data list
+            if ( empty( $data['meta_data'] ) ) {
+                $data['meta_data'] = [];
+            }
+            $found_in_meta = false;
+            foreach ( $data['meta_data'] as &$md ) {
+                $md_key = is_object( $md ) ? ( $md->key ?? '' ) : ( is_array( $md ) ? ( $md['key'] ?? '' ) : '' );
+                if ( $md_key === $bk ) {
+                    if ( is_object( $md ) ) $md->value = $val;
+                    elseif ( is_array( $md ) ) $md['value'] = $val;
+                    $found_in_meta = true;
+                    break;
+                }
+            }
+            unset( $md );
+            if ( ! $found_in_meta ) {
+                $data['meta_data'][] = (object) [ 'id' => 0, 'key' => $bk, 'value' => $val ];
+            }
+        }
+    }
+    // If ANY booking meta exists, also set the top-level type hint to 'booking'
+    // (unless already set to booking or a subscription type — don't clobber those).
+    if ( $has_booking && empty( $data['type'] ) ) {
+        $data['type'] = 'booking';
+    }
+    // Mark product-level bookable flag so the Flutter isBookable getter's
+    // 4-way fallback (type || metaIsBookable || bookingDuration || firstBlockTime)
+    // catches products with legacy meta combinations.
+    if ( $has_booking ) {
+        $data['bookable'] = true;
+    }
+
     $response->set_data( $data );
     return $response;
 }, 20, 3 );

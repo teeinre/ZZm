@@ -56,16 +56,13 @@ class _AllLivestreamsScreenState extends State<AllLivestreamsScreen> {
 
   void _openStreamViewer(int index) {
     try {
-      final active = _streams.where((s) {
-        final rawStatus = s['status'];
-        final status = rawStatus?.toString().toLowerCase() ?? '';
-        return status == 'live' || status.isEmpty;
-      }).toList();
+      // Include ALL streams (not just live) so recorded/past videos still play.
+      final active = List<Map<String, dynamic>>.from(_streams);
       final idx = active.indexWhere((s) => s['id'] == _streams[index]['id']);
       if (idx >= 0) {
         Navigator.push(context, MaterialPageRoute(
           builder: (_) => LivestreamViewerScreen(
-            streams: active.cast<Map<String, dynamic>>(),
+            streams: active,
             initialIndex: idx,
           ),
         ));
@@ -144,6 +141,12 @@ class _AllLivestreamsScreenState extends State<AllLivestreamsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Native livestream grid (videos play even when a stream is no longer live).
+    return _buildNativeStreamsGrid();
+  }
+
+  // Native livestream grid.
+  Widget _buildNativeStreamsGrid() {
     return Scaffold(
       backgroundColor: AppColors.creamColor,
       appBar: AppBar(

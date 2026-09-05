@@ -86,16 +86,61 @@ class BridgeCartItem {
     required this.productId,
     required this.quantity,
     this.variationId,
+    this.bookingStartDate,   // booking: "2026-09-20" (YYYY-MM-DD) or "2026-09-20 14:00"
+    this.bookingStartTime,   // booking: "14:00" (HH:MM)
+    this.bookingEndDate,     // booking optional: "2026-09-21"
+    this.bookingEndTime,     // booking optional: "15:00"
+    this.bookingResourceId,  // booking: ID of selected resource (0 if none)
+    this.bookingPersons,     // booking: persons count (1 by default)
+    this.bookingConfiguration, // booking: flat legacy object for wc_bookings_compat
   });
   final int productId;
   final int quantity;
   final int? variationId;
+  final String? bookingStartDate;
+  final String? bookingStartTime;
+  final String? bookingEndDate;
+  final String? bookingEndTime;
+  final int? bookingResourceId;
+  final int? bookingPersons;
+  final Map<String, dynamic>? bookingConfiguration;
 
-  Map<String, dynamic> toJson() => {
-        'product_id': productId,
-        'quantity': quantity,
-        'variation_id': variationId ?? 0,
+  Map<String, dynamic> toJson() {
+    final base = <String, dynamic>{
+      'product_id': productId,
+      'quantity': quantity,
+      'variation_id': variationId ?? 0,
+    };
+    // Attach booking fields only when present (PHP bridge's add_to_cart logic
+    // looks for these keys and passes them through to WooCommerce Bookings
+    // cart item meta hooks when rebuilding the cart from the token).
+    if (bookingStartDate != null) base['booking_start_date'] = bookingStartDate;
+    if (bookingStartTime != null) base['booking_start_time'] = bookingStartTime;
+    if (bookingEndDate != null)   base['booking_end_date'] = bookingEndDate;
+    if (bookingEndTime != null)   base['booking_end_time'] = bookingEndTime;
+    if (bookingResourceId != null && bookingResourceId! > 0) {
+      base['booking_resource_id'] = bookingResourceId!;
+    }
+    if (bookingPersons != null && bookingPersons! > 0) {
+      base['booking_persons'] = bookingPersons!;
+    }
+    if (bookingConfiguration != null) {
+      base['booking_configuration'] = bookingConfiguration!;
+    }
+    // Legacy shape for very old Bookings / custom extensions.
+    if (bookingStartDate != null || bookingStartTime != null || (bookingResourceId ?? 0) > 0 || bookingConfiguration != null) {
+      base['_legacy_booking'] = <String, dynamic>{
+        'start_date': bookingStartDate ?? '',
+        'start_time': bookingStartTime ?? '',
+        'end_date': bookingEndDate ?? '',
+        'end_time': bookingEndTime ?? '',
+        'resource_id': bookingResourceId ?? 0,
+        'persons': bookingPersons ?? 1,
+        if (bookingConfiguration != null) 'configuration': bookingConfiguration!,
       };
+    }
+    return base;
+  }
 }
 
 /// Full order details returned by the bridge after checkout completes.

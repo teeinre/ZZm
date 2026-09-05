@@ -20,6 +20,9 @@ class CartItem extends Equatable {
   /// Booking resource ID (for bookable products that require resources).
   final int? bookingResourceId;
 
+  /// Person count selected for the booking (defaults to 1 if unset).
+  final int? bookingPersonsCount;
+
   CartItem({
     required this.cartItemId,
     required this.product,
@@ -28,6 +31,7 @@ class CartItem extends Equatable {
     this.subscriptionInterval,
     this.bookingDate,
     this.bookingResourceId,
+    this.bookingPersonsCount,
   });
 
   /// Payload sent to the Store API `booking_configuration` field when adding
@@ -42,6 +46,7 @@ class CartItem extends Equatable {
     return <String, dynamic>{
       'date': dateStr,
       if (bookingResourceId != null) 'resource_id': bookingResourceId,
+      if (bookingPersonsCount != null) 'persons': bookingPersonsCount,
     };
   }
 
@@ -106,6 +111,7 @@ class CartItem extends Equatable {
       'subscriptionInterval': subscriptionInterval?.name,
       'bookingDate': bookingDate?.toIso8601String(),
       'bookingResourceId': bookingResourceId,
+      'bookingPersonsCount': bookingPersonsCount,
     };
   }
 
@@ -136,6 +142,9 @@ class CartItem extends Equatable {
       bookingResourceId: json['bookingResourceId'] is int
           ? json['bookingResourceId'] as int
           : int.tryParse(json['bookingResourceId']?.toString() ?? ''),
+      bookingPersonsCount: json['bookingPersonsCount'] is int
+          ? json['bookingPersonsCount'] as int
+          : int.tryParse(json['bookingPersonsCount']?.toString() ?? ''),
     );
   }
 
@@ -148,5 +157,6 @@ class CartItem extends Equatable {
         subscriptionInterval,
         bookingDate,
         bookingResourceId,
+        bookingPersonsCount,
       ];
 }

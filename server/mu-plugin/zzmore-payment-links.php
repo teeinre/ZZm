@@ -167,10 +167,34 @@ function zzmore_dpl_create_link( WP_REST_Request $request ) {
 		// Increment rate limiter.
 		set_transient( $rate_key, $count + 1, HOUR_IN_SECONDS );
 
+		// Normalise the plugin's return value (array, object, or WP_Error)
+		// so the app always receives a consistent { link_id, pay_url, status }.
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$link_id = 0;
+		$pay_url = '';
+		$status  = 'active';
+
+		if ( is_array( $result ) ) {
+			$link_id = isset( $result['link_id'] ) ? absint( $result['link_id'] ) : ( isset( $result['id'] ) ? absint( $result['id'] ) : 0 );
+			$pay_url = isset( $result['pay_url'] ) ? (string) $result['pay_url'] : ( isset( $result['url'] ) ? (string) $result['url'] : '' );
+			$status  = isset( $result['status'] ) ? (string) $result['status'] : 'active';
+		} elseif ( is_object( $result ) ) {
+			$link_id = absint( $result->link_id ?? $result->id ?? 0 );
+			$pay_url = (string) ( $result->pay_url ?? $result->url ?? '' );
+			$status  = (string) ( $result->status ?? 'active' );
+		}
+
+		if ( ! $link_id ) {
+			return new WP_Error( 'dpl_create_failed', 'Payment link was not created.', [ 'status' => 400 ] );
+		}
+
 		return [
-			'link_id' => $result['link_id'],
-			'pay_url' => $result['pay_url'],
-			'status'  => $result['status'],
+			'link_id' => $link_id,
+			'pay_url' => $pay_url,
+			'status'  => $status,
 		];
 	} catch ( Exception $e ) {
 		return new WP_Error( 'dpl_create_failed', $e->getMessage(), [ 'status' => 400 ] );

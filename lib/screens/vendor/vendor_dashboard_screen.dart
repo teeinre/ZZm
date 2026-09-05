@@ -7,15 +7,12 @@ import '../../providers/currency_provider.dart';
 import 'vendor_products_screen.dart';
 import 'vendor_orders_screen.dart';
 import 'vendor_coupons_screen.dart';
-import 'vendor_reviews_screen.dart';
 import 'vendor_withdrawals_screen.dart';
 import 'vendor_store_settings_screen.dart';
-import 'vendor_sales_report_screen.dart';
 import 'vendor_quote_credit_screen.dart';
 import 'vendor_livestream_screen.dart';
 import 'vendor_shipping_screen.dart';
 import 'vendor_refunds_screen.dart';
-import 'vendor_verification_screen.dart';
 import 'vendor_payment_links_screen.dart';
 
 class VendorDashboardScreen extends StatefulWidget {
@@ -36,17 +33,22 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
     final auth = context.read<AuthProvider>();
     final vendor = context.read<VendorProvider>();
 
-    // Inject WordPress user ID from JWT — critical for reliable
-    // product/order filtering via the post_author WC API parameter.
     if (auth.user != null) {
       vendor.setWordPressUserId(auth.user!.id);
     }
 
-    // ── STEP 1: Resolve vendor store info ──
-    if (auth.user != null && auth.user!.id > 0) {
-      int? resolvedStoreId = auth.user!.vendorStoreId;
+    // ── STEP 0: Keep loading spinner visible until everything resolves ──
+    if (mounted) {
+      setState(() {
+        // No-op trigger: Consumer builder already shows spinner while
+        // isLoadingStats || isLoadingStore || isLoadingOrders || isLoadingProducts
+      });
+    }
 
-      // If vendorStoreId not persisted from login, try to find it live
+    int? resolvedStoreId;
+    if (auth.user != null && auth.user!.id > 0) {
+      resolvedStoreId = auth.user!.vendorStoreId;
+
       if (resolvedStoreId == null || resolvedStoreId <= 0) {
         try {
           final store = await vendor.apiService.getVendorStoreByUserId(auth.user!.id);
@@ -56,7 +58,6 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
                 : int.tryParse(store['id']?.toString() ?? '');
           }
         } catch (_) {
-          // Last resort: try loading store by user ID directly
           try {
             await vendor.loadStoreInfo(auth.user!.id);
             resolvedStoreId = vendor.vendorId;
@@ -65,35 +66,57 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       }
 
       if (resolvedStoreId != null && resolvedStoreId > 0) {
-        // 1) Restore cached dashboard instantly -- no network, no spinner
+        // 1) Restore cached dashboard FIRST -- this updates derived getters
+        //    and populates tiles instantly from Hive so user NEVER sees 0
+        //    on first login while fresh network load runs.
         final hadCached = vendor.restoreFromCache(vendorId: resolvedStoreId);
-        if (hadCached) {
+        if (hadCached && mounted) {
+          // Force consumer rebuild so restored stats paint immediately
+          // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
+          vendor.notifyListeners();
           debugPrint('Vendor dashboard restored from Hive cache for vendor $resolvedStoreId');
         }
-        // 2) Then load fresh store info (network � updates cached data in background)
-        await vendor.loadStoreInfo(resolvedStoreId);
+        // 2) Then load fresh store info (network)
+        try {
+          await vendor.loadStoreInfo(resolvedStoreId);
+        } catch (e) {
+          debugPrint('[Dashboard] loadStoreInfo failed for $resolvedStoreId: $e');
+        }
       }
     }
 
     if (!mounted) return;
 
-    // ── STEP 2: Load all vendor data in parallel ──
-    if (vendor.storeInfo != null) {
-      debugPrint('Using cached dashboard data while refreshing...');
-    }
-    final vid = vendor.vendorId;
+    // ── STEP 1: Run data loads -- ONLY AFTER storeInfo resolved / cache applied ──
+    //    loadDashboard internally calls loadDashboardStats which already has
+    //    500ms retry-on-empty.  Separately, loadOrders populates the list
+    //    used by the order-total-aggregation fallback in totalSales getter.
     final futures = <Future<void>>[
-      vendor.loadDashboard(),           // stats, balance, announcements
+      vendor.loadDashboard(),
       vendor.loadOrders(),
       vendor.loadCoupons(),
-      vendor.loadReviews(),
       vendor.loadWithdrawals(),
     ];
-    // Only load products if we have a valid vendor ID
+    final vid = vendor.vendorId ?? resolvedStoreId;
     if (vid != null && vid > 0) {
       futures.add(vendor.loadVendorProducts(vendorId: vid));
     }
-    await Future.wait(futures);
+
+    try {
+      await Future.wait(futures, eagerError: false);
+    } catch (e) {
+      debugPrint('[Dashboard] Future.wait batch finished with error(s): $e');
+    }
+
+    // ── STEP 2: Final refresh -- after loadOrders() finishes, the derived
+    //    totalSales/totalOrders/pendingOrders/completedOrders getters that
+    //    aggregate from the _orders list need another Consumer rebuild
+    //    because loadDashboard ran in parallel and may have already painted
+    //    its first (all-zero) result before orders were available.
+    if (mounted) {
+      // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
+      vendor.notifyListeners();
+    }
   }
 
   @override
@@ -209,10 +232,6 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
                         _buildStatCards(vendor),
                         const SizedBox(height: 20),
                         _buildQuickActions(),
-                        const SizedBox(height: 20),
-                        _buildInventorySummary(vendor),
-                        const SizedBox(height: 20),
-                        _buildEngagementStats(vendor),
                         const SizedBox(height: 20),
                         _buildPerformanceReport(vendor),
                         const SizedBox(height: 20),
@@ -426,14 +445,11 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       {'icon': Icons.qr_code_2, 'label': 'Pay Links', 'color': const Color(0xFF06B6D4), 'route': 'payment-links'},
       {'icon': Icons.local_shipping, 'label': 'Shipping', 'color': const Color(0xFF06B6D4), 'route': 'shipping'},
       {'icon': Icons.discount, 'label': 'Coupons', 'color': AppColors.goldColor, 'route': 'coupons'},
-      {'icon': Icons.reviews, 'label': 'Reviews', 'color': const Color(0xFF8B5CF6), 'route': 'reviews'},
       {'icon': Icons.request_quote, 'label': 'RFQ', 'color': AppColors.coralColor, 'route': 'quote'},
       {'icon': Icons.live_tv, 'label': 'Live', 'color': const Color(0xFFEF4444), 'route': 'livestream'},
       {'icon': Icons.assignment_return, 'label': 'Refunds', 'color': const Color(0xFFF97316), 'route': 'refunds'},
       {'icon': Icons.account_balance_wallet, 'label': 'Withdraw', 'color': AppColors.coralColor, 'route': 'withdrawals'},
       {'icon': Icons.settings, 'label': 'Settings', 'color': AppColors.inkSoftColor, 'route': 'settings'},
-      {'icon': Icons.bar_chart, 'label': 'Reports', 'color': const Color(0xFF3B82F6), 'route': 'reports'},
-      {'icon': Icons.verified_user, 'label': 'Verified', 'color': const Color(0xFF10B981), 'route': 'verification'},
     ];
 
     return Column(
@@ -513,17 +529,11 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       case 'coupons':
         screen = const VendorCouponsScreen();
         break;
-      case 'reviews':
-        screen = const VendorReviewsScreen();
-        break;
       case 'withdrawals':
         screen = const VendorWithdrawalsScreen();
         break;
       case 'settings':
         screen = const VendorStoreSettingsScreen();
-        break;
-      case 'reports':
-        screen = const VendorSalesReportScreen();
         break;
       case 'quote':
         screen = const VendorQuoteCreditScreen();
@@ -537,9 +547,6 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       case 'refunds':
         screen = const VendorRefundsScreen();
         break;
-      case 'verification':
-        screen = const VendorVerificationScreen();
-        break;
       case 'payment-links':
         screen = const VendorPaymentLinksScreen();
         break;
@@ -552,255 +559,10 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
     }
   }
 
-  Widget _buildInventorySummary(VendorProvider vendor) {
-    final total = vendor.totalProducts;
-    final inStock = vendor.inStockProducts;
-    final oos = vendor.outOfStockProducts;
-    final low = vendor.lowStockProducts;
-    final currency = context.watch<CurrencyProvider>().currencySymbol;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Inventory Levels',
-            style: TextStyle(
-                color: AppColors.inkColor,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                fontFamily: 'Fraunces')),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.whiteColor,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  _inventoryPill(
-                    'Total',
-                    '$total',
-                    color: AppColors.indigoColor,
-                    icon: Icons.inventory_2_outlined,
-                  ),
-                  const SizedBox(width: 10),
-                  _inventoryPill(
-                    'In stock',
-                    '$inStock',
-                    color: const Color(0xFF10B981),
-                    icon: Icons.check_circle_outline,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  _inventoryPill(
-                    'Low stock',
-                    '$low',
-                    color: AppColors.goldColor,
-                    icon: Icons.warning_amber_outlined,
-                  ),
-                  const SizedBox(width: 10),
-                  _inventoryPill(
-                    'Out of stock',
-                    '$oos',
-                    color: AppColors.coralColor,
-                    icon: Icons.remove_circle_outline,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _inventoryPill(String label, String value,
-      {required Color color, required IconData icon}) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withOpacity(0.18)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: color, size: 18),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(value,
-                      style: TextStyle(
-                          color: AppColors.inkColor,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'Fraunces')),
-                  const SizedBox(height: 1),
-                  Text(label,
-                      style: const TextStyle(
-                          color: AppColors.inkSoftColor, fontSize: 11)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildEngagementStats(VendorProvider vendor) {
-    final currency = context.watch<CurrencyProvider>().currencySymbol;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Customer Engagement',
-            style: TextStyle(
-                color: AppColors.inkColor,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                fontFamily: 'Fraunces')),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.whiteColor,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: AppColors.goldColor.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Icon(Icons.star_rate_rounded,
-                              color: AppColors.goldColor, size: 16),
-                        ),
-                        const SizedBox(width: 8),
-                        Text('${vendor.averageRating.toStringAsFixed(1)}',
-                            style: const TextStyle(
-                                color: AppColors.inkColor,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                                fontFamily: 'Fraunces')),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text('Average rating',
-                        style: TextStyle(
-                            color: AppColors.inkSoftColor, fontSize: 11)),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.whiteColor,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF8B5CF6).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Icon(Icons.rate_review_outlined,
-                              color: Color(0xFF8B5CF6), size: 16),
-                        ),
-                        const SizedBox(width: 8),
-                        Text('${vendor.reviewCount}',
-                            style: const TextStyle(
-                                color: AppColors.inkColor,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                                fontFamily: 'Fraunces')),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text('Reviews',
-                        style: TextStyle(
-                            color: AppColors.inkSoftColor, fontSize: 11)),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.whiteColor,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF06B6D4).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Icon(Icons.account_circle_outlined,
-                              color: Color(0xFF06B6D4), size: 16),
-                        ),
-                        const SizedBox(width: 8),
-                        Text('${vendor.completedOrders}',
-                            style: const TextStyle(
-                                color: AppColors.inkColor,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                                fontFamily: 'Fraunces')),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text('Completed orders',
-                        style: TextStyle(
-                            color: AppColors.inkSoftColor, fontSize: 11)),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
+    // Removed: Customer Engagement (reviews/rating) section per user request.
+    // Kept as a stub so no callers break if referenced elsewhere.
+    return const SizedBox.shrink();
   }
 
   Widget _buildPerformanceReport(VendorProvider vendor) {

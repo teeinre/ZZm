@@ -376,8 +376,8 @@ class ApiService {
     if (category != null) {
       url += '&category=$category';
     }
-    if (search != null) {
-      url += '&search=$search';
+    if (search != null && search.isNotEmpty) {
+      url += '&search=${Uri.encodeQueryComponent(search)}';
     }
     if (type != null) {
       url += '&type=$type';
@@ -824,15 +824,27 @@ class ApiService {
   /// Fetch available booking slots for a bookable product from the
   /// `wc-bookings/v1/products/slots` endpoint. The endpoint returns slots in
   /// `{records: [...], count: N}`.
-  Future<List<BookingSlot>> getBookingSlots(int productId) async {
+  ///
+  /// By default the WC Bookings endpoint only returns *today's* slots unless a
+  /// `from`/`to` range is supplied, so we request a full year ahead to surface
+  /// every vendor-defined available date/time slot.
+  Future<List<BookingSlot>> getBookingSlots(int productId,
+      {DateTime? from, DateTime? to}) async {
+    String ymd(DateTime d) =>
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}';
+    final fromDate = from ?? DateTime.now();
+    final toDate = to ?? fromDate.add(const Duration(days: 365));
     try {
-      final url =
-          '${ApiConstants.wcBookingsSlotsEndpoint}?product_ids=$productId';
-      final response = await _get(url, useWcAuth: false);
+      final url = '${ApiConstants.wcBookingsSlotsEndpoint}?product_ids=$productId'
+          '&from=${ymd(fromDate)}&to=${ymd(toDate)}';
+      final response = await _get(url, useWcAuth: true);
+      debugPrint('[Bookings] slots HTTP status=${response.statusCode} body-preview=${response.body.length > 120 ? '${response.body.substring(0, 120)}…' : response.body}');
       final body = jsonDecode(response.body);
       final records = (body is Map && body['records'] is List)
           ? body['records'] as List<dynamic>
           : <dynamic>[];
+      debugPrint('[Bookings] records returned=${records.length}');
       return records
           .map((r) => BookingSlot.fromJson(Map<String, dynamic>.from(r)))
           .toList();
@@ -1246,15 +1258,39 @@ class ApiService {
 
   /// Update an order via Dokan REST API (vendor-scoped via JWT).
   /// Uses `dokan/v1/orders/{id}` PUT which checks `dokan_get_seller_id_by_order()`
-  /// to ensure the vendor owns this order.
+  /// to ensure the vendor owns this order. Falls back to the vendor-api.php
+  /// bypass which updates the WC order status directly.
   Future<bool> updateDokanOrder(int orderId, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.dokanOrdersEndpoint}/$orderId';
       await _put(url, data, requireAuth: true, useWcAuth: false);
       return true;
     } catch (e) {
+      debugPrint('[ApiService] updateDokanOrder failed — falling back to vendor-api.php: $e');
+      final status = data['status']?.toString();
+      if (status != null && status.isNotEmpty) {
+        return updateVendorApiOrderStatus(orderId, status);
+      }
       return false;
     }
+  }
+
+  /// Update an order status via vendor-api.php (bypasses the Dokan REST API).
+  Future<bool> updateVendorApiOrderStatus(int orderId, String status) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=update_order_status';
+      final response = await _vendorApiPost(url, {
+        'order_id': orderId,
+        'status': status,
+      });
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data is Map && data['success'] == true;
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Order status update failed: $e');
+    }
+    return false;
   }
 
   /// Add a note to an order via Dokan REST API (vendor-scoped via JWT).
@@ -1323,7 +1359,15 @@ class ApiService {
   }
 
   /// Request a withdrawal.
+  ///
+  /// Prefers the vendor-api.php bypass (direct SQL insert into wp_dokan_withdraw)
+  /// because the Dokan REST `/dokan/v1/withdraw` endpoint is unreliable on
+  /// Dokan Lite and can silently fail to write a row.
   Future<bool> requestWithdrawal(double amount, String method) async {
+    final viaVendorApi = await requestVendorApiWithdrawal(amount, method);
+    if (viaVendorApi) return true;
+
+    // Fallback: Dokan REST withdraw endpoint
     try {
       final url = ApiConstants.dokanWithdrawEndpoint;
       await _post(url, {
@@ -1332,8 +1376,52 @@ class ApiService {
       }, requireAuth: true);
       return true;
     } catch (e) {
+      debugPrint('[ApiService] requestWithdrawal fallback failed: $e');
       return false;
     }
+  }
+
+  /// Request a withdrawal via vendor-api.php (bypasses the Dokan REST API).
+  Future<bool> requestVendorApiWithdrawal(double amount, String method) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=request_withdrawal';
+      final response = await _vendorApiPost(url, {
+        'amount': amount,                      // Send as number (double) — PHP
+                                                // floatval/direct SQL both
+                                                // accept numeric JSON correctly.
+        'method': method.toLowerCase().trim(), // Already length-safe on server.
+        // Include a minimal details payload with currency info to match the
+        // DB serialized longtext shape Dokan expects.
+        'details': <String, dynamic>{
+          'currency': 'GBP',
+          'withdraw_mode': 'by_request',
+          'is_auto_withdrawal': '',
+        },
+      });
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data is Map && data['success'] == true;
+      }
+      // Surface specific server-side rejection codes so the UI can tell the
+      // user exactly what went wrong (insufficient balance, bad method, etc.)
+      if (response.statusCode >= 400) {
+        try {
+          final data = jsonDecode(response.body);
+          if (data is Map && data['error'] != null) {
+            debugPrint('[VendorAPI] Withdrawal rejected (${data['code'] ?? 'unknown'}): ${data['error']}');
+            if (data['requested'] != null) {
+              debugPrint('[VendorAPI]   requested: ${data['requested']}');
+            }
+            if (data['sql_errors'] != null) {
+              debugPrint('[VendorAPI]   sql_errors: ${data['sql_errors']}');
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Withdrawal request failed: $e');
+    }
+    return false;
   }
 
   /// Get vendor current balance.
@@ -1626,6 +1714,21 @@ class ApiService {
     }).toList();
   }
 
+  /// Fetch reviews for a single product (approved only) — public endpoint, no auth.
+  Future<List<Map<String, dynamic>>> getProductReviews(int productId, {int perPage = 20}) async {
+    try {
+      final url = '${ApiConstants.wcApiBase}/products/reviews?product=$productId&per_page=$perPage&status=approved';
+      final response = await _get(url, useWcAuth: true, requireAuth: false);
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((r) => Map<String, dynamic>.from(r)).toList();
+      }
+    } catch (e) {
+      debugPrint('[ApiService] getProductReviews($productId) failed: $e');
+    }
+    return [];
+  }
+
   /// Reply to a review (via WC API - product review).
   Future<bool> replyToReview(int reviewId, int productId, String reply) async {
     try {
@@ -1686,6 +1789,30 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getProductTags() async {
     try {
       final url = '${ApiConstants.wcApiBase}/products/tags?per_page=100';
+      final response = await _get(url, useWcAuth: true);
+      final List<dynamic> data = jsonDecode(response.body);
+      return data.map((t) => Map<String, dynamic>.from(t)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Get global (admin-defined) product attributes for quick attribute setup.
+  Future<List<Map<String, dynamic>>> getProductAttributes() async {
+    try {
+      final url = '${ApiConstants.wcApiBase}/products/attributes?per_page=100';
+      final response = await _get(url, useWcAuth: true);
+      final List<dynamic> data = jsonDecode(response.body);
+      return data.map((a) => Map<String, dynamic>.from(a)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Get terms (values) for a global product attribute.
+  Future<List<Map<String, dynamic>>> getProductAttributeTerms(int attributeId) async {
+    try {
+      final url = '${ApiConstants.wcApiBase}/products/attributes/$attributeId/terms?per_page=100';
       final response = await _get(url, useWcAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
       return data.map((t) => Map<String, dynamic>.from(t)).toList();
@@ -1828,11 +1955,11 @@ class ApiService {
   }
 
   Future<http.Response> _vendorApiGet(String url) async {
-    return _get(_vendorApiUrl(url), useWcAuth: false, requireAuth: false);
+    return _get(_vendorApiUrl(url), useWcAuth: false, requireAuth: true);
   }
 
   Future<http.Response> _vendorApiPost(String url, Map<String, dynamic> data) async {
-    return _post(_vendorApiUrl(url), data, useWcAuth: false, requireAuth: false);
+    return _post(_vendorApiUrl(url), data, useWcAuth: false, requireAuth: true);
   }
 
   // ─── Vendor API Bypass (vendor-api.php — bypasses REST blockage) ───
@@ -1938,6 +2065,48 @@ class ApiService {
       }
     } catch (e) {
       debugPrint('[VendorAPI] Reviews fetch failed: $e');
+    }
+    return [];
+  }
+
+  /// Fetch a store's public profile info (description, rating, social, etc.)
+  /// via vendor-api.php — no auth required. Used by the customer-facing
+  /// vendor profile screen.
+  Future<Map<String, dynamic>?> getVendorApiPublicStore(int storeId) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_store_public&store_id=$storeId';
+      debugPrint('[VendorAPI] GET public store (store_id=$storeId): $url');
+      final response = await _get(url, useWcAuth: false, requireAuth: false);
+      debugPrint('[VendorAPI] public-store HTTP=${response.statusCode} body-len=${response.body.length} preview=${response.body.length > 180 ? '${response.body.substring(0, 180)}…' : response.body}');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map && data.isNotEmpty) {
+          debugPrint('[VendorAPI] public-store parsed: keys=${data.keys.take(15).toList()} description-len=${(data['description']?.toString() ?? '').length} rating=${data['rating']} rating_count=${data['rating_count']}');
+          return Map<String, dynamic>.from(data);
+        }
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Public store fetch failed: $e');
+    }
+    return null;
+  }
+
+  /// Fetch approved store reviews for a store via vendor-api.php — no auth
+  /// required. Returns reviews sorted by recency (newest first).
+  Future<List<Map<String, dynamic>>> getVendorApiPublicStoreReviews(int storeId) async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_store_reviews&store_id=$storeId';
+      debugPrint('[VendorAPI] GET public store reviews (store_id=$storeId): $url');
+      final response = await _get(url, useWcAuth: false, requireAuth: false);
+      debugPrint('[VendorAPI] public-store-reviews HTTP=${response.statusCode} body-len=${response.body.length} preview=${response.body.length > 180 ? '${response.body.substring(0, 180)}…' : response.body}');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final reviews = data['reviews'] as List<dynamic>? ?? [];
+        debugPrint('[VendorAPI] public-store-reviews parsed count=${reviews.length}');
+        return reviews.map((r) => Map<String, dynamic>.from(r)).toList();
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] Public store reviews fetch failed: $e');
     }
     return [];
   }
@@ -2250,6 +2419,7 @@ class ApiService {
     int? variationId,
     Map<String, dynamic>? bookingConfiguration,
   }) async {
+    http.Response? response;
     try {
       final effectiveId = (variationId != null && variationId > 0)
           ? variationId
@@ -2265,20 +2435,72 @@ class ApiService {
       }
 
       if (bookingConfiguration != null && bookingConfiguration.isNotEmpty) {
+        String two(int n) => n.toString().padLeft(2, '0');
+        final dateStr = bookingConfiguration['date']?.toString() ?? '';
+        final dt = DateTime.tryParse(dateStr);
+        final resourceId = bookingConfiguration['resource_id'];
+
+        // Fallback A: legacy root booking_configuration bucket
         data['booking_configuration'] = bookingConfiguration;
+
+        // Fallback B: flat start_date / start_time / resource_id at root
+        // (matches the HTML form's wc_bookings_field_start_date_* fields)
+        if (dt != null) {
+          data['start_date'] = '${dt.year}-${two(dt.month)}-${two(dt.day)}';
+          data['start_time'] = '${two(dt.hour)}:${two(dt.minute)}';
+        }
+        if (resourceId != null) {
+          data['resource_id'] = resourceId;
+        }
+
+        // Fallback C: Store API extensions namespace (Bookings extension
+        // on WC Store API reads custom cart-add fields from here)
+        final extensionsMap = <String, dynamic>{};
+        final bookingsExt = <String, dynamic>{};
+        if (dt != null) {
+          bookingsExt['start_date'] = '${dt.year}-${two(dt.month)}-${two(dt.day)}';
+          bookingsExt['start_time'] = '${two(dt.hour)}:${two(dt.minute)}';
+        }
+        if (resourceId != null) {
+          bookingsExt['resource_id'] = resourceId;
+        }
+        bookingsExt['booking_configuration'] = bookingConfiguration;
+        extensionsMap['woocommerce-bookings'] = bookingsExt;
+        data['extensions'] = extensionsMap;
+
+        debugPrint('[StoreAPI] addToCart booking payload: date=$dateStr dt=$dt resourceId=$resourceId');
       }
 
-      debugPrint('[StoreAPI] addToCart: product=$effectiveId qty=$quantity variationId=$variationId booking=${bookingConfiguration != null}');
-      final response = await _storePost(ApiConstants.storeCartAddItemEndpoint, data);
+      debugPrint('[StoreAPI] addToCart: product=$effectiveId qty=$quantity variationId=$variationId booking=${bookingConfiguration != null} payloadKeys=${data.keys.join(',')}');
+      response = await _storePost(ApiConstants.storeCartAddItemEndpoint, data);
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final body = jsonDecode(response.body);
         if (body is Map) return Map<String, dynamic>.from(body);
-        debugPrint('[StoreAPI] addToCart unexpected response type: ${body.runtimeType}');
+        final detail = 'addToCart unexpected response body type: ${body.runtimeType}';
+        debugPrint('[StoreAPI] $detail');
+        throw Exception(detail);
       } else {
-        debugPrint('[StoreAPI] addToCart FAILED: ${response.statusCode}');
+        String? detail;
+        try {
+          final body = jsonDecode(response.body);
+          if (body is Map) {
+            detail = (body['message'] ?? body['error'] ?? body['code'] ?? '').toString();
+          }
+        } catch (_) {}
+        detail ??= response.body.length > 240
+            ? '${response.body.substring(0, 240)}…'
+            : response.body;
+        final msg = 'HTTP ${response.statusCode}: $detail';
+        debugPrint('[StoreAPI] addToCart FAILED — $msg');
+        throw Exception(msg);
       }
     } catch (e) {
-      debugPrint('[StoreAPI] addToCart exception: $e');
+      if (e is Exception) {
+        debugPrint('[StoreAPI] addToCart exception: $e');
+        rethrow;
+      }
+      debugPrint('[StoreAPI] addToCart error: $e');
+      throw Exception(e.toString());
     }
     return null;
   }
