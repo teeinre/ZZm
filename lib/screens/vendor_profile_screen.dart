@@ -48,6 +48,10 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   final TextEditingController _reviewEmailController = TextEditingController();
   int _reviewRating = 5;
 
+  // Store reviews
+  List<Map<String, dynamic>> _reviews = [];
+  bool _isLoadingReviews = false;
+
   @override
   void initState() {
     super.initState();
@@ -89,15 +93,56 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
     });
     try {
       final data = await _apiService.getDokanStore(widget.vendorId);
+
+      // Public store endpoint reliably returns the "About Us" description,
+      // rating and social links (Dokan REST can omit these fields).
+      Map<String, dynamic>? publicStore;
+      try {
+        publicStore = await _apiService.getVendorApiPublicStore(widget.vendorId);
+      } catch (e) {
+        debugPrint('[VendorProfile] public-store endpoint failed: $e');
+      }
+
       if (!mounted) return;
-      if (data != null) {
-        final uid = data['user_id'];
+
+      final merged = <String, dynamic>{
+        if (data != null) ...data,
+        if (publicStore != null) ...publicStore,
+      };
+
+      // ── Defensive: ensure description exists — pull from Dokan's
+      //    store_toc if description is still empty
+      if (merged['description'] == null ||
+          merged['description'].toString().trim().isEmpty) {
+        final toc = merged['store_toc']?.toString();
+        if (toc != null && toc.trim().isNotEmpty) {
+          merged['description'] = toc;
+        }
+      }
+      // ── Defensive: ensure rating fields populated from merged rating / rating_count
+      if (merged['rating'] == null || merged['rating'] == 0) {
+        final altRating = data?['rating'] ?? publicStore?['rating'];
+        if (altRating != null) merged['rating'] = altRating;
+      }
+      if (merged['rating_count'] == null || merged['rating_count'] == 0) {
+        final altCount = data?['rating_count'] ?? publicStore?['rating_count'];
+        if (altCount != null) merged['rating_count'] = altCount;
+      }
+
+      debugPrint('[VendorProfile] merged data keys: ${merged.keys.toList()} — desc present=${(merged['description']?.toString() ?? '').length > 0} chars, rating=${merged['rating']}, count=${merged['rating_count']}');
+
+      if (merged.isNotEmpty) {
+        final uid = merged['user_id'];
         setState(() {
-          _vendorData = data;
+          _vendorData = merged;
           _vendorUserId = uid is int ? uid : int.tryParse(uid?.toString() ?? '');
           _isLoadingVendor = false;
         });
-        _loadProducts();
+        // CRITICAL: await _loadProducts() BEFORE calling _loadReviews() —
+        // the review-fallback aggregator iterates _products to pull per-product
+        // reviews. Without await it runs over an empty _products list every time.
+        await _loadProducts();
+        await _loadReviews();
       } else {
         setState(() {
           _vendorError = 'Vendor not found';
@@ -105,11 +150,63 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
         });
       }
     } catch (e) {
+      debugPrint('[VendorProfile] _loadVendorData error: $e');
       if (!mounted) return;
       setState(() {
         _vendorError = 'Failed to load vendor';
         _isLoadingVendor = false;
       });
+    }
+  }
+
+  Future<void> _loadReviews() async {
+    setState(() => _isLoadingReviews = true);
+    try {
+      // Primary: vendor-api.php get_store_reviews (new bypass endpoint)
+      var reviews = await _apiService.getVendorApiPublicStoreReviews(widget.vendorId);
+      debugPrint('[VendorProfile] Primary reviews source: vendor-api.php returned ${reviews.length} reviews');
+
+      // Fallback: if primary returned empty, try gathering reviews from the vendor's products list.
+      if (reviews.isEmpty) {
+        debugPrint('[VendorProfile] Primary returned empty — trying fallback: get product reviews for vendor products');
+        final fallbackReviews = <Map<String, dynamic>>[];
+        final productsSnapshot = List<Product>.from(_products);
+        // Try up to 10 products (batched would be better but single call is defensive)
+        for (int i = 0; i < productsSnapshot.length && i < 10; i++) {
+          try {
+            final pr = await _apiService.getProductReviews(productsSnapshot[i].id);
+            for (final r in pr) {
+              // Normalize fields into same shape as get_store_reviews returns
+              fallbackReviews.add({
+                'id': r['id'],
+                'product_id': r['product_id'],
+                'rating': r['rating'],
+                'author': r['reviewer']?.toString() ?? r['name']?.toString() ?? 'Customer',
+                'content': r['review']?.toString() ?? r['content']?.toString() ?? '',
+                'date': r['date_created']?.toString() ?? r['date']?.toString() ?? DateTime.now().toIso8601String(),
+              });
+            }
+          } catch (_) {}
+        }
+        // Sort newest first
+        fallbackReviews.sort((a, b) {
+          final da = DateTime.tryParse(a['date']?.toString() ?? '') ?? DateTime(1970);
+          final db = DateTime.tryParse(b['date']?.toString() ?? '') ?? DateTime(1970);
+          return db.compareTo(da);
+        });
+        reviews = fallbackReviews;
+        debugPrint('[VendorProfile] Fallback reviews fallback: aggregated ${reviews.length} reviews from ${productsSnapshot.length} products');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _reviews = reviews;
+        _isLoadingReviews = false;
+      });
+    } catch (e) {
+      debugPrint('[VendorProfile] _loadReviews error: $e');
+      if (!mounted) return;
+      setState(() => _isLoadingReviews = false);
     }
   }
 
@@ -234,15 +331,38 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   }
 
   double get _rating {
+    // Prefer Dokan's stored store rating; if absent/zero, derive it from the
+    // customer reviews actually shown in the Reviews tab.
     final r = _vendorData?['rating'];
-    if (r is num) return r.toDouble();
-    return double.tryParse(r?.toString() ?? '') ?? 0.0;
+    final stored = r is num
+        ? r.toDouble()
+        : double.tryParse(r?.toString() ?? '') ?? 0.0;
+    if (stored > 0) return stored;
+    return _reviewsRating;
   }
 
   int get _ratingCount {
     final c = _vendorData?['rating_count'];
-    if (c is int) return c;
-    return int.tryParse(c?.toString() ?? '') ?? 0;
+    final stored = c is int
+        ? c
+        : int.tryParse(c?.toString() ?? '') ?? 0;
+    if (stored > 0) return stored;
+    return _reviews.length;
+  }
+
+  double get _reviewsRating {
+    if (_reviews.isEmpty) return 0.0;
+    double sum = 0;
+    int count = 0;
+    for (final r in _reviews) {
+      final v = double.tryParse(r['rating']?.toString() ?? '');
+      if (v != null && v > 0) {
+        sum += v;
+        count++;
+      }
+    }
+    if (count == 0) return 0.0;
+    return sum / count;
   }
 
   bool get _isOpen {
@@ -265,6 +385,8 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Native vendor profile (About + Reviews + Products). WebView approach
+    // was removed because the store URL construction was unreliable.
     return Scaffold(
       backgroundColor: AppColors.creamColor,
       body: _isLoadingVendor
@@ -570,39 +692,124 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
       return const Center(
           child: CircularProgressIndicator(color: AppColors.goldColor));
     }
-    if (_products.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+    final reviewSummary = Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      color: Colors.transparent,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.whiteColor,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
           children: [
-            Icon(Icons.shopping_bag_outlined,
-                size: 64, color: AppColors.goldColor.withOpacity(0.4)),
-            const SizedBox(height: 16),
-            const Text('No products yet',
-                style: TextStyle(color: AppColors.inkSoftColor, fontSize: 15)),
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: AppColors.goldColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child:
+                  const Icon(Icons.star, color: AppColors.goldColor, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(_rating.toStringAsFixed(1),
+                          style: const TextStyle(
+                              color: AppColors.inkColor,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'Fraunces')),
+                      const SizedBox(width: 6),
+                      _buildRatingStars(_rating, size: 14),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '$_ratingCount review${_ratingCount != 1 ? 's' : ''} from happy customers',
+                    style: const TextStyle(
+                        color: AppColors.inkSoftColor, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: () => _tabController.animateTo(2),
+              style: TextButton.styleFrom(
+                backgroundColor: AppColors.goldColor,
+                foregroundColor: AppColors.whiteColor,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+              ),
+              child: const Text('Read reviews',
+                  style:
+                      TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+            ),
           ],
         ),
+      ),
+    );
+
+    if (_products.isEmpty) {
+      return ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          reviewSummary,
+          const SizedBox(height: 24),
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.shopping_bag_outlined,
+                    size: 64, color: AppColors.goldColor.withOpacity(0.4)),
+                const SizedBox(height: 16),
+                const Text('No products yet',
+                    style:
+                        TextStyle(color: AppColors.inkSoftColor, fontSize: 15)),
+              ],
+            ),
+          ),
+        ],
       );
     }
     return RefreshIndicator(
       color: AppColors.goldColor,
       onRefresh: _loadProducts,
-      child: GridView.builder(
-        padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 0.72,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-        ),
-        itemCount: _products.length,
-        itemBuilder: (context, index) {
-          final product = _products[index];
-          return GestureDetector(
-            onTap: () => _openProductDetail(product),
-            child: ProductTile(product: product),
-          );
-        },
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(child: reviewSummary),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 0.72,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final product = _products[index];
+                  return GestureDetector(
+                    onTap: () => _openProductDetail(product),
+                    child: ProductTile(product: product),
+                  );
+                },
+                childCount: _products.length,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -716,17 +923,79 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   // ─── About Tab ───
 
   Widget _buildAboutTab() {
+    final description = _vendorData?['description']?.toString();
     final toc = _vendorData?['store_toc']?.toString();
     final social = _social;
+    final hasDesc = description != null && description.trim().isNotEmpty;
+    final hasToc = toc != null && toc.trim().isNotEmpty && toc != description;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Store Description / Terms
-          if (toc != null && toc.isNotEmpty) ...[
+          // Store Description / About Us
+          if (hasDesc) ...[
             const Text('About the Store',
+                style: TextStyle(
+                    color: AppColors.inkColor,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'Fraunces')),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.whiteColor,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                description!,
+                style: const TextStyle(
+                    color: AppColors.inkColor, fontSize: 14, height: 1.6),
+              ),
+            ),
+            const SizedBox(height: 24),
+          ]
+          // Empty state: vendor hasn't filled out About yet
+          else if (!hasToc && social.isEmpty) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(28),
+              decoration: BoxDecoration(
+                color: AppColors.whiteColor,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                    color: AppColors.sandColor.withOpacity(0.5)),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.info_outline,
+                      size: 40,
+                      color: AppColors.inkSoftColor.withOpacity(0.4)),
+                  const SizedBox(height: 12),
+                  Text('${_storeName} has not yet filled out their store description.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: AppColors.inkSoftColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 4),
+                  const Text(
+                      'Check back soon — this section usually contains store policies, shipping information, and contact details.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: AppColors.inkSoftColor, fontSize: 12)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
+
+          // Terms & Conditions (when provided separately)
+          if (hasToc) ...[
+            const Text('Terms & Conditions',
                 style: TextStyle(
                     color: AppColors.inkColor,
                     fontSize: 18,
@@ -785,50 +1054,6 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
               ],
             ),
             const SizedBox(height: 24),
-          ],
-
-          // Address with map placeholder
-          if (_address != null) ...[
-            const Text('Location',
-                style: TextStyle(
-                    color: AppColors.inkColor,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'Fraunces')),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              height: 160,
-              decoration: BoxDecoration(
-                color: AppColors.indigoPaleColor,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.map_outlined,
-                      color: AppColors.indigoColor, size: 40),
-                  const SizedBox(height: 8),
-                  const Text('Map View',
-                      style: TextStyle(
-                          color: AppColors.indigoColor,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Text(
-                      _address!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          color: AppColors.inkSoftColor, fontSize: 12),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ],
         ],
       ),
@@ -910,7 +1135,7 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
           ),
           const SizedBox(height: 24),
 
-          // Reviews placeholder
+          // Customer reviews
           const Text('Customer Reviews',
               style: TextStyle(
                   color: AppColors.inkColor,
@@ -918,30 +1143,60 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
                   fontWeight: FontWeight.w600,
                   fontFamily: 'Fraunces')),
           const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: AppColors.whiteColor,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              children: [
-                Icon(Icons.rate_review_outlined,
-                    size: 48, color: AppColors.goldColor.withOpacity(0.5)),
-                const SizedBox(height: 12),
-                const Text('Reviews will appear here',
-                    style: TextStyle(
-                        color: AppColors.inkSoftColor, fontSize: 14)),
-                const SizedBox(height: 4),
-                const Text(
-                    'Customer feedback and ratings for this vendor.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: AppColors.inkSoftColor, fontSize: 12)),
-              ],
-            ),
-          ),
+          if (_isLoadingReviews)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(
+                  child: CircularProgressIndicator(color: AppColors.goldColor)),
+            )
+          else if (_reviews.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppColors.whiteColor,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.rate_review_outlined,
+                      size: 48, color: AppColors.goldColor.withOpacity(0.5)),
+                  const SizedBox(height: 12),
+                  const Text('No reviews yet',
+                      style: TextStyle(
+                          color: AppColors.inkSoftColor, fontSize: 14)),
+                  const SizedBox(height: 4),
+                  const Text(
+                      'Customer feedback and ratings for this vendor will appear here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: AppColors.inkSoftColor, fontSize: 12)),
+                ],
+              ),
+            )
+          else
+            ..._reviews
+                // ── Flutter-side scope guard (belt + suspenders) ──
+                // vendor-api.php already filters at the SQL/PHP layer (this
+                // is the PRIMARY filter).  This secondary Dart filter is a
+                // defence-in-depth guard: every review must have either
+                // (a) store_id == this vendor's store_id, OR
+                // (b) product_id that belongs to this vendor (we can't
+                //     check product ownership here, so product reviews
+                //     are trusted — PHP Source 3 already scoped them via
+                //     post_author=$owner_id).
+                // Any row where store_id is explicitly set AND does NOT
+                // match widget.vendorId is DROPPED at the UI layer too.
+                .where((r) {
+              final rowStoreId = r['store_id'];
+              if (rowStoreId == null) return true;
+              final int parsed;
+              if (rowStoreId is int) parsed = rowStoreId;
+              else if (rowStoreId is String) parsed = int.tryParse(rowStoreId) ?? 0;
+              else parsed = 0;
+              if (parsed == 0) return true;
+              return parsed == widget.vendorId;
+            }).map((r) => _buildReviewItem(r)),
           const SizedBox(height: 24),
 
           // Leave a review
@@ -1093,6 +1348,120 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReviewItem(Map<String, dynamic> review) {
+    final author = review['author']?.toString() ?? 'Customer';
+    final title = review['title']?.toString() ?? '';
+    final content = review['content']?.toString() ?? '';
+    final rating = double.tryParse(review['rating']?.toString() ?? '') ?? 0;
+    final date = review['date']?.toString() ?? '';
+    final source = review['source']?.toString() ?? '';
+    final displayDate = date.length >= 10 ? date.substring(0, 10) : date;
+
+    String sourceLabel = '';
+    Color sourceColor = AppColors.inkSoftColor;
+    switch (source) {
+      case 'dokan_store_reviews_cpt':
+        sourceLabel = 'Store Review';
+        sourceColor = AppColors.inkColor;
+        break;
+      case 'wp_comments_store_review':
+      case 'store_review_comment':
+        sourceLabel = 'Legacy Review';
+        sourceColor = AppColors.goldColor;
+        break;
+      case 'wp_comments_product_review':
+      case 'product_review':
+        sourceLabel = 'From Product';
+        sourceColor = AppColors.coralColor;
+        break;
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.whiteColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.sandColor.withOpacity(0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: AppColors.indigoPaleColor,
+                child: Text(
+                  author.isNotEmpty ? author[0].toUpperCase() : '?',
+                  style: const TextStyle(
+                      color: AppColors.indigoColor,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(author,
+                              style: const TextStyle(
+                                  color: AppColors.inkColor,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                        if (sourceLabel.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: sourceColor.withOpacity(0.10),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(sourceLabel,
+                                style: TextStyle(
+                                    color: sourceColor,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700)),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    if (displayDate.isNotEmpty)
+                      Text(displayDate,
+                          style: const TextStyle(
+                              color: AppColors.inkSoftColor, fontSize: 11)),
+                  ],
+                ),
+              ),
+              _buildRatingStars(rating, size: 16),
+            ],
+          ),
+          if (title.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(title,
+                style: const TextStyle(
+                    color: AppColors.inkColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'Fraunces')),
+          ],
+          if (content.isNotEmpty) ...[
+            SizedBox(height: title.isNotEmpty ? 6 : 10),
+            Text(content,
+                style: const TextStyle(
+                    color: AppColors.inkColor, fontSize: 13, height: 1.5)),
+          ],
         ],
       ),
     );

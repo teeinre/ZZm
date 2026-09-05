@@ -133,3 +133,12 @@ $RECYCLE.BIN/
 
 # Codemagic CI — keep the config (codemagic.yaml), ignore timestamped/backup variants
 codemagic_*.yaml
+
+# ─── Database dumps (contain sensitive customer data — never commit) ───
+/*.sql
+
+# ─── Scraped website source / reference copies (not project source) ───
+/bookable prduct page source code.php
+/vendor profile on website sourcecode.php
+/bookingproductcreation.php
+

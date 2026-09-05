@@ -704,15 +704,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     return GestureDetector(
       onTap: () {
-        final activeStreams = _liveStreams.where((s) {
-          final status = s['status']?.toString()?.toLowerCase() ?? '';
-          return status == 'live' || status.isEmpty;
-        }).toList();
+        // Include ALL streams (not just live) so recorded/past videos still play.
+        final activeStreams = List<Map<String, dynamic>>.from(_liveStreams);
         final idx = activeStreams.indexWhere((s) => s['id'] == stream['id']);
         if (idx >= 0) {
           Navigator.push(context, MaterialPageRoute(
             builder: (_) => LivestreamViewerScreen(
-              streams: activeStreams.cast<Map<String, dynamic>>(),
+              streams: activeStreams,
               initialIndex: idx,
             ),
           ));
@@ -1048,6 +1046,7 @@ Widget _buildGoLiveCTA() {
         final spotlightProducts = products.where((p) {
           final vendorName = (p.vendorName ?? '').trim().toLowerCase();
           if (vendorName == 'zzmore open market') return false;
+          if (p.isBookable) return false; // services/bookings are not spotlight products
           if (p.vendorId != null && !seenVendors.contains(p.vendorId)) {
             seenVendors.add(p.vendorId!);
             return true;

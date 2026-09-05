@@ -44,9 +44,14 @@ class _VendorWithdrawalsScreenState extends State<VendorWithdrawalsScreen> {
     final ok = await vendor.requestWithdrawal(amt, _withdrawMethod);
     if (mounted) {
       setState(() => _isRequesting = false);
+      final err = vendor.lastWithdrawalError;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(ok ? 'Withdrawal request submitted' : 'Failed to submit request'),
+        content: Text(ok
+            ? 'Withdrawal request submitted — awaiting admin approval'
+            : (err != null && err.isNotEmpty ? err : 'Failed to submit request')),
         backgroundColor: ok ? const Color(0xFF10B981) : AppColors.coralColor,
+        duration: Duration(seconds: ok ? 4 : 8),
+        behavior: SnackBarBehavior.floating,
       ));
       if (ok) _amountCtrl.clear();
     }

@@ -184,7 +184,11 @@ class _VendorProductsScreenState extends State<VendorProductsScreen> {
     final salePrice = product['sale_price']?.toString();
     final images = product['images'] as List<dynamic>? ?? [];
     final imageUrl = images.isNotEmpty ? images[0]['src']?.toString() : null;
-    final stockQty = product['stock_quantity']?.toString();
+    final manageStock = product['manage_stock'] == true;
+    final stockQtyRaw = product['stock_quantity']?.toString();
+    final stockQty = manageStock && stockQtyRaw != null && stockQtyRaw.isNotEmpty
+        ? stockQtyRaw
+        : null;
 
     Color statusColor;
     String statusLabel;
@@ -889,6 +893,9 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
   List<Map<String, dynamic>> _variations = [];
   bool _loadingVariations = false;
   int? _activeAttributeIndex;
+  List<Map<String, dynamic>> _globalAttributes = [];
+  bool _loadingGlobalAttributes = false;
+  final TextEditingController _optionValueCtrl = TextEditingController();
 
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _tags = [];
@@ -963,6 +970,7 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
         _attributes = (p['attributes'] as List).map((a) {
           final options = (a['options'] as List?)?.map((o) => o.toString()).toList() ?? [];
           return _ProductAttribute(
+            id: a['id'] as int?,
             name: a['name']?.toString() ?? '',
             options: options,
             visible: a['visible'] == true,
@@ -1008,6 +1016,7 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
     _dimLengthCtrl.dispose();
     _dimWidthCtrl.dispose();
     _dimHeightCtrl.dispose();
+    _optionValueCtrl.dispose();
     super.dispose();
   }
 
@@ -1162,11 +1171,15 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
 
     // Attributes for variable products
     if (_productType == 'variable' && _attributes.isNotEmpty) {
-      data['attributes'] = _attributes.where((a) => a.name.isNotEmpty).map((a) => {
-        'name': a.name,
-        'visible': a.visible,
-        'variation': a.variation,
-        'options': a.options,
+      data['attributes'] = _attributes.where((a) => a.name.isNotEmpty).map((a) {
+        final attr = <String, dynamic>{
+          'name': a.name,
+          'visible': a.visible,
+          'variation': a.variation,
+          'options': a.options,
+        };
+        if (a.id != null) attr['id'] = a.id;
+        return attr;
       }).toList();
     }
 
@@ -1391,15 +1404,34 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                   return _buildAttributeEditor(idx, _attributes[idx]);
                 }),
                 const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () => setState(() => _attributes.add(_ProductAttribute())),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add Attribute'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.goldColor,
-                    side: const BorderSide(color: AppColors.goldColor),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => setState(() => _attributes.add(_ProductAttribute())),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Add Attribute', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.goldColor,
+                          side: const BorderSide(color: AppColors.goldColor),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _loadingGlobalAttributes ? null : _pickGlobalAttribute,
+                        icon: const Icon(Icons.list_alt, size: 18),
+                        label: const Text('Use Existing', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.indigoColor,
+                          side: const BorderSide(color: AppColors.indigoColor),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
 
                 // Variations
@@ -1889,7 +1921,10 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                 // Add value button / inline form
                 if (!isActive)
                   GestureDetector(
-                    onTap: () => setState(() => _activeAttributeIndex = index),
+                    onTap: () => setState(() {
+                      _optionValueCtrl.clear();
+                      _activeAttributeIndex = index;
+                    }),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
                       decoration: BoxDecoration(
@@ -1995,8 +2030,188 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
     );
   }
 
+  Future<void> _pickGlobalAttribute() async {
+    setState(() => _loadingGlobalAttributes = true);
+    try {
+      if (_globalAttributes.isEmpty) {
+        _globalAttributes = await _api.getProductAttributes();
+      }
+    } catch (_) {
+      _globalAttributes = [];
+    }
+    if (mounted) setState(() => _loadingGlobalAttributes = false);
+    if (!mounted) return;
+
+    if (_globalAttributes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No existing attributes found in your store admin.'),
+          backgroundColor: AppColors.coralColor,
+        ),
+      );
+      return;
+    }
+
+    final selected = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      backgroundColor: AppColors.whiteColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return ListView(
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Choose an existing attribute',
+                  style: TextStyle(
+                      color: AppColors.inkColor,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'Fraunces')),
+            ),
+            ..._globalAttributes.map((a) {
+              final name = a['name']?.toString() ?? 'Attribute';
+              return ListTile(
+                leading: const Icon(Icons.checklist, color: AppColors.goldColor),
+                title: Text(name),
+                onTap: () => Navigator.pop(ctx, a),
+              );
+            }),
+          ],
+        );
+      },
+    );
+
+    if (selected == null) return;
+
+    final name = selected['name']?.toString() ?? '';
+    final attrId = selected['id'] is int
+        ? selected['id'] as int
+        : int.tryParse(selected['id']?.toString() ?? '');
+    if (name.isEmpty || attrId == null) return;
+
+    // Load terms (values) for the selected attribute, then let the vendor
+    // choose which values to include (instead of auto-adding all of them).
+    List<String> allOptions = [];
+    try {
+      final terms = await _api.getProductAttributeTerms(attrId);
+      allOptions = terms.map((t) => t['name']?.toString() ?? '').where((s) => s.isNotEmpty).toList();
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    if (allOptions.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This attribute has no values configured yet.'),
+          backgroundColor: AppColors.coralColor,
+        ),
+      );
+      return;
+    }
+
+    final chosen = <String>[];
+    final chosenResult = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppColors.whiteColor,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheet) {
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text('Choose values for "$name"',
+                              style: const TextStyle(
+                                  color: AppColors.inkColor,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: 'Fraunces')),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('Cancel',
+                              style: TextStyle(color: AppColors.inkSoftColor)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: allOptions.map((opt) {
+                        final isSel = chosen.contains(opt);
+                        return CheckboxListTile(
+                          value: isSel,
+                          activeColor: AppColors.goldColor,
+                          title: Text(opt),
+                          onChanged: (v) {
+                            setSheet(() {
+                              if (v == true) {
+                                if (!chosen.contains(opt)) chosen.add(opt);
+                              } else {
+                                chosen.remove(opt);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.goldColor,
+                          foregroundColor: AppColors.whiteColor,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: const Text('Add selected values'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (chosenResult != true || chosen.isEmpty || !mounted) return;
+
+    setState(() {
+      _attributes.add(_ProductAttribute(
+        id: attrId,
+        name: name,
+        options: List<String>.from(chosen),
+        variation: true,
+        visible: true,
+      ));
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Added "$name" with ${chosen.length} values.'),
+        backgroundColor: const Color(0xFF10B981),
+      ),
+    );
+  }
+
   Widget _buildAttributeInlineForm(int attrIndex) {
-    final optionCtrl = TextEditingController();
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
       decoration: BoxDecoration(
@@ -2011,7 +2226,7 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
             children: [
               Expanded(
                 child: TextField(
-                  controller: optionCtrl,
+                  controller: _optionValueCtrl,
                   autofocus: true,
                   style: const TextStyle(fontSize: 12),
                   decoration: const InputDecoration(
@@ -2021,12 +2236,12 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                     isDense: true,
                     contentPadding: EdgeInsets.symmetric(vertical: 6),
                   ),
-                  onSubmitted: (v) => _addValuesToAttribute(attrIndex, v, optionCtrl),
+                  onSubmitted: (v) => _addValuesToAttribute(attrIndex, v),
                 ),
               ),
               const SizedBox(width: 6),
               ElevatedButton(
-                onPressed: () => _addValuesToAttribute(attrIndex, optionCtrl.text, optionCtrl),
+                onPressed: () => _addValuesToAttribute(attrIndex, _optionValueCtrl.text),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.goldColor,
                   foregroundColor: AppColors.whiteColor,
@@ -2053,7 +2268,7 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
     );
   }
 
-  void _addValuesToAttribute(int attrIndex, String raw, TextEditingController ctrl) {
+  void _addValuesToAttribute(int attrIndex, String raw) {
     final separator = raw.contains('|') ? '|' : ',';
     final values = raw
         .split(separator)
@@ -2070,7 +2285,7 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
         _activeAttributeIndex = null;
       });
     }
-    ctrl.dispose();
+    _optionValueCtrl.clear();
   }
 
   // ─── Variations ───
@@ -2287,12 +2502,14 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
 }
 
 class _ProductAttribute {
+  int? id;
   String name;
   List<String> options;
   bool visible;
   bool variation;
 
   _ProductAttribute({
+    this.id,
     this.name = '',
     this.options = const [],
     this.visible = true,

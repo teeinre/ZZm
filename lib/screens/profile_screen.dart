@@ -33,8 +33,6 @@ class ProfileScreen extends StatelessWidget {
                     const SizedBox(height: 24),
                     ...[
                       {'icon': Icons.inventory_2_outlined, 'label': 'Your orders', 'route': 'orders'},
-                      {'icon': Icons.favorite_border, 'label': 'Saved vendors', 'route': 'saved'},
-                      {'icon': Icons.credit_card_outlined, 'label': 'Payment methods', 'route': 'payment'},
                       {'icon': Icons.person_outline, 'label': 'My Account', 'route': 'my_account'},
                       {'icon': Icons.settings_outlined, 'label': 'Settings', 'route': 'settings'},
                       // Vendor Dashboard for verified vendor accounts
@@ -155,20 +153,6 @@ class ProfileScreen extends StatelessWidget {
         } else {
           _showInfoSheet(context, 'Sign In Required', 'Please sign in to view your orders.');
         }
-        break;
-      case 'saved':
-        if (auth.isAuthenticated) {
-          MainScreen.innerNavigatorOf(context, 3)?.push(
-            MaterialPageRoute(builder: (_) => const SavedVendorsPage()),
-          );
-        } else {
-          _showInfoSheet(context, 'Sign In Required', 'Please sign in to save your favorite vendors.');
-        }
-        break;
-      case 'payment':
-        MainScreen.innerNavigatorOf(context, 3)?.push(
-          MaterialPageRoute(builder: (_) => const PaymentMethodsPage()),
-        );
         break;
       case 'my_account':
         if (auth.isAuthenticated) {
@@ -456,176 +440,6 @@ class _OrdersPageState extends State<OrdersPage> {
   }
 }
 
-// ─── Saved Vendors Page ───
-class SavedVendorsPage extends StatefulWidget {
-  const SavedVendorsPage({super.key});
-
-  @override
-  State<SavedVendorsPage> createState() => _SavedVendorsPageState();
-}
-
-class _SavedVendorsPageState extends State<SavedVendorsPage> {
-  List<Map<String, dynamic>> _vendors = [];
-  bool _isLoading = true;
-
-  final StorageService _storage = StorageService();
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSavedVendors();
-  }
-
-  Future<void> _loadSavedVendors() async {
-    try {
-      final savedIds = await _storage.getSavedVendorIds();
-      if (savedIds.isEmpty) {
-        if (mounted) setState(() => _isLoading = false);
-        return;
-      }
-
-      final api = ApiService();
-      final List<Map<String, dynamic>> vendors = [];
-      for (final id in savedIds) {
-        try {
-          final store = await api.getDokanStore(id);
-          if (store != null) vendors.add(store);
-        } catch (_) {
-          // Skip vendors that fail to load (store may have been deleted)
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          _vendors = vendors;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('[SavedVendors] Error: $e');
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.creamColor,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.inkColor),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text('Saved Vendors', style: TextStyle(color: AppColors.inkColor, fontWeight: FontWeight.bold)),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.goldColor))
-          : _vendors.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.storefront_outlined, size: 64, color: AppColors.goldColor.withOpacity(0.5)),
-                      const SizedBox(height: 16),
-                      const Text('No saved vendors yet', style: TextStyle(color: AppColors.inkSoftColor)),
-                      const SizedBox(height: 8),
-                      const Text('Vendors you follow will appear here', style: TextStyle(color: AppColors.inkSoftColor, fontSize: 12)),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  itemCount: _vendors.length,
-                  itemBuilder: (context, index) {
-                    final vendor = _vendors[index];
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.whiteColor,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 48, height: 48,
-                            decoration: BoxDecoration(
-                              color: AppColors.goldColor.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(Icons.store, color: AppColors.goldColor, size: 24),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(vendor['store_name']?.toString() ?? 'Vendor',
-                                    style: const TextStyle(color: AppColors.inkColor, fontWeight: FontWeight.w600)),
-                                const SizedBox(height: 2),
-                                Text(vendor['address']?['city']?.toString() ?? '',
-                                    style: const TextStyle(color: AppColors.inkSoftColor, fontSize: 12)),
-                              ],
-                            ),
-                          ),
-                          const Icon(Icons.chevron_right, color: AppColors.inkSoftColor),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-    );
-  }
-}
-
-// ─── Payment Methods Page ───
-class PaymentMethodsPage extends StatelessWidget {
-  const PaymentMethodsPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.creamColor,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.inkColor),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text('Payment Methods', style: TextStyle(color: AppColors.inkColor, fontWeight: FontWeight.bold)),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.credit_card_outlined, size: 64, color: AppColors.goldColor.withOpacity(0.5)),
-            const SizedBox(height: 16),
-            const Text('No saved payment methods', style: TextStyle(color: AppColors.inkSoftColor)),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Payment method linking coming soon. Pay at checkout.')),
-                );
-              },
-              icon: const Icon(Icons.add),
-              label: const Text('Add Payment Method'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.goldColor,
-                foregroundColor: AppColors.whiteColor,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 // ─── Login Page (Full Screen) ───
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -639,6 +453,7 @@ class _LoginPageState extends State<LoginPage> {
   final _passCtrl = TextEditingController();
   bool _isLoading = false;
   bool _isVendorLogin = false;
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
@@ -712,7 +527,7 @@ class _LoginPageState extends State<LoginPage> {
                     const SizedBox(height: 16),
                     TextField(
                       controller: _passCtrl,
-                      obscureText: true,
+                      obscureText: _obscurePassword,
                       textInputAction: TextInputAction.done,
                       autofillHints: const [AutofillHints.password],
                       onSubmitted: (_) {
@@ -723,6 +538,16 @@ class _LoginPageState extends State<LoginPage> {
                         labelText: 'Password',
                         prefixIcon: const Icon(Icons.lock_outlined,
                             color: AppColors.inkSoftColor),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            color: AppColors.inkSoftColor,
+                          ),
+                          onPressed: () => setState(
+                              () => _obscurePassword = !_obscurePassword),
+                        ),
                         filled: true,
                         fillColor: AppColors.whiteColor,
                         border: OutlineInputBorder(
