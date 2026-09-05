@@ -23,6 +23,8 @@ class VendorDashboardScreen extends StatefulWidget {
 }
 
 class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
+  bool _initComplete = false;
+
   @override
   void initState() {
     super.initState();
@@ -32,6 +34,15 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
   Future<void> _initDashboard() async {
     final auth = context.read<AuthProvider>();
     final vendor = context.read<VendorProvider>();
+
+    // Wait for auth to finish restoring so vendor identity is available on the
+    // very first open (fixes "empty stats until refresh").
+    if (auth.user == null && auth.isLoading) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (auth.user == null) {
+        await auth.initialize();
+      }
+    }
 
     if (auth.user != null) {
       vendor.setWordPressUserId(auth.user!.id);
@@ -116,6 +127,10 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
     if (mounted) {
       // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
       vendor.notifyListeners();
+    }
+
+    if (mounted) {
+      setState(() => _initComplete = true);
     }
 
     // ── STEP 3: Automatic 1-second delayed refresh so the latest stats show
@@ -221,7 +236,7 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
               ),
             ],
           ),
-          body: vendor.isLoadingStats || vendor.isLoadingStore || vendor.isLoadingOrders || vendor.isLoadingProducts
+          body: !_initComplete
               ? const Center(
                   child: CircularProgressIndicator(color: AppColors.goldColor))
               : vendor.dashboardError != null && !vendor.hasStoreInfo

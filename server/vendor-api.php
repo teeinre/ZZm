@@ -349,7 +349,9 @@ if ( $action === 'get_store_public' ) {
         'gravatar'         => $vendor->get_avatar(),
         'address'          => method_exists( $vendor, 'get_address' ) ? $vendor->get_address() : [],
         'description'      => $vendor->get_shop_description(),
-        'biography'        => get_user_meta( $owner_id, 'vendor_biography', true ),
+        'biography'        => is_array( $profile )
+            ? ( $profile['vendor_biography'] ?? $profile['shop_description'] ?? '' )
+            : '',
         'social'           => is_array( $profile['social'] ?? null ) ? $profile['social'] : [],
         'store_open_close' => is_array( $profile['store_open_close'] ?? null ) ? $profile['store_open_close'] : [],
         'rating'           => function_exists( 'dokan_get_seller_rating' ) ? dokan_get_seller_rating( $owner_id ) : 0,
