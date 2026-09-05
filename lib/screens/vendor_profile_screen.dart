@@ -923,10 +923,17 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   // ─── About Tab ───
 
   Widget _buildAboutTab() {
+    final biography = _vendorData?['biography']?.toString();
     final description = _vendorData?['description']?.toString();
     final toc = _vendorData?['store_toc']?.toString();
     final social = _social;
-    final hasDesc = description != null && description.trim().isNotEmpty;
+    // About tab pulls from the vendor_biography field (with a fallback to the
+    // legacy shop description for older stores that never set a biography).
+    final rawAbout = (biography != null && biography.trim().isNotEmpty)
+        ? biography
+        : description;
+    final aboutText = rawAbout != null ? _stripHtml(rawAbout) : null;
+    final hasDesc = aboutText != null && aboutText.trim().isNotEmpty;
     final hasToc = toc != null && toc.trim().isNotEmpty && toc != description;
 
     return SingleChildScrollView(
@@ -951,7 +958,7 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Text(
-                description!,
+                aboutText!,
                 style: const TextStyle(
                     color: AppColors.inkColor, fontSize: 14, height: 1.6),
               ),
@@ -1058,6 +1065,22 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
         ],
       ),
     );
+  }
+
+  String _stripHtml(String html) {
+    var text = html
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'</(p|div|li|h[1-6])>', caseSensitive: false), '\n');
+    text = text.replaceAll(RegExp(r'<[^>]*>'), '');
+    text = text
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&quot;', '"');
+    text = text.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+    return text.trim();
   }
 
   Widget _buildSocialChip(IconData icon, String label, String url) {
