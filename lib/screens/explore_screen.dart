@@ -21,9 +21,8 @@ class _ExploreScreenState extends State<ExploreScreen> {
   final ScrollController _scroll = ScrollController();
 
   List<cat_model.Category> _categories = [];
-  final Set<int> _selectedIds = {};
   List<Product> _products = [];
-  bool _servicesOnly = false;
+  String _selectedFilter = 'all'; // 'all' | 'services' | 'cat:<id>'
 
   bool _loading = true;
   bool _loadingMore = false;
@@ -53,13 +52,30 @@ class _ExploreScreenState extends State<ExploreScreen> {
     }
   }
 
-  /// Comma-separated category IDs for the WooCommerce `category` param
-  /// (supports OR-matching across multiple categories), or null for all.
-  String? get _categoryQuery =>
-      _selectedIds.isEmpty ? null : _selectedIds.join(',');
+  /// Comma-separated category IDs for the WooCommerce `category` param,
+  /// or null for all. The Services option maps to the "services" category.
+  String? get _categoryQuery {
+    if (_selectedFilter == 'services') {
+      final id = _servicesCategoryId;
+      if (id != null) return '$id';
+      return null;
+    }
+    if (_selectedFilter.startsWith('cat:')) {
+      return _selectedFilter.substring(4);
+    }
+    return null;
+  }
 
-  /// Product type filter — `booking` when the Services chip is active.
-  String? get _typeQuery => _servicesOnly ? 'booking' : null;
+  int? get _servicesCategoryId {
+    for (final c in _categories) {
+      final name = c.name.toLowerCase();
+      final slug = c.slug?.toLowerCase() ?? '';
+      if (name.contains('service') || slug.contains('service')) {
+        return c.id;
+      }
+    }
+    return null;
+  }
 
   List<Product> _filterExcluded(List<Product> list) => list
       .where((p) => !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName))
@@ -84,7 +100,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
     _page = 1;
     _hasMore = true;
     try {
-      final products = await _api.getProducts(page: _page, category: _categoryQuery, type: _typeQuery);
+      var products = await _api.getProducts(page: _page, category: _categoryQuery);
       final filtered = _filterExcluded(products);
       if (mounted) {
         setState(() {
@@ -95,6 +111,23 @@ class _ExploreScreenState extends State<ExploreScreen> {
         });
       }
     } catch (e) {
+      debugPrint('[Explore] load products failed: $e');
+      // If a category filter caused the failure, fall back to unfiltered.
+      if (_categoryQuery != null) {
+        try {
+          final products = await _api.getProducts(page: _page);
+          final filtered = _filterExcluded(products);
+          if (mounted) {
+            setState(() {
+              _products = filtered;
+              _loading = false;
+              _page++;
+              _hasMore = products.length >= ApiConstants.defaultPerPage;
+            });
+          }
+          return;
+        } catch (_) {}
+      }
       if (mounted) {
         setState(() {
           _loading = false;
@@ -108,7 +141,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
     if (_loadingMore || _loading || !_hasMore) return;
     setState(() => _loadingMore = true);
     try {
-      final more = await _api.getProducts(page: _page, category: _categoryQuery, type: _typeQuery);
+      final more = await _api.getProducts(page: _page, category: _categoryQuery);
       final filtered = _filterExcluded(more);
       if (mounted) {
         setState(() {
@@ -123,32 +156,10 @@ class _ExploreScreenState extends State<ExploreScreen> {
     }
   }
 
-  void _toggleCategory(int id) {
-    setState(() {
-      _servicesOnly = false;
-      if (_selectedIds.contains(id)) {
-        _selectedIds.remove(id);
-      } else {
-        _selectedIds.add(id);
-      }
-    });
-    _loadProducts();
-  }
-
-  void _toggleServices() {
-    setState(() {
-      _servicesOnly = !_servicesOnly;
-      if (_servicesOnly) _selectedIds.clear();
-    });
-    _loadProducts();
-  }
-
-  void _clearFilters() {
-    if (_selectedIds.isEmpty && !_servicesOnly) return;
-    setState(() {
-      _selectedIds.clear();
-      _servicesOnly = false;
-    });
+  void _onFilterChanged(String? value) {
+    if (value == null) return;
+    if (_selectedFilter == value) return;
+    setState(() => _selectedFilter = value);
     _loadProducts();
   }
 
@@ -231,107 +242,67 @@ class _ExploreScreenState extends State<ExploreScreen> {
             style: TextStyle(color: AppColors.inkSoftColor, fontSize: 13),
           ),
           const SizedBox(height: 16),
-          if (_loadingCategories)
-            const SizedBox(
-              height: 40,
-              child: Center(
-                child: SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(
-                      color: AppColors.goldColor, strokeWidth: 2),
-                ),
-              ),
-            )
-          else
-            SizedBox(
-              height: 40,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _filterChip(
-                    label: 'All',
-                    selected: _selectedIds.isEmpty && !_servicesOnly,
-                    onTap: _clearFilters,
-                  ),
-                  _filterChip(
-                    label: 'Services',
-                    selected: _servicesOnly,
-                    onTap: _toggleServices,
-                  ),
-                  ..._categories.map(
-                    (c) => _filterChip(
-                      label: c.name ?? '',
-                      selected: _selectedIds.contains(c.id),
-                      onTap: () => _toggleCategory(c.id),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (_selectedIds.isNotEmpty || _servicesOnly) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${_selectedIds.length + (_servicesOnly ? 1 : 0)} ${_selectedIds.length + (_servicesOnly ? 1 : 0) == 1 ? 'filter' : 'filters'} active',
-                    style: const TextStyle(
-                        color: AppColors.inkSoftColor, fontSize: 13),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: _clearFilters,
-                  icon: const Icon(Icons.close, color: AppColors.coralColor, size: 18),
-                  label: const Text('Reset all',
-                      style: TextStyle(
-                          color: AppColors.coralColor,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13)),
-                ),
-              ],
-            ),
-          ],
+          _buildFilterDropdown(),
         ],
       ),
     );
   }
 
-  Widget _filterChip({
-    required String label,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.goldColor : AppColors.whiteColor,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: selected ? AppColors.goldColor : AppColors.sandColor,
+  Widget _buildFilterDropdown() {
+    if (_loadingCategories) {
+      return Container(
+        height: 52,
+        width: double.infinity,
+        alignment: Alignment.centerLeft,
+        decoration: BoxDecoration(
+          color: AppColors.whiteColor,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.sandColor),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: const SizedBox(
+          height: 20,
+          width: 20,
+          child: CircularProgressIndicator(
+              color: AppColors.goldColor, strokeWidth: 2),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: AppColors.whiteColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.sandColor),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _selectedFilter,
+          isExpanded: true,
+          icon: const Icon(Icons.keyboard_arrow_down,
+              color: AppColors.inkSoftColor),
+          style: const TextStyle(
+              color: AppColors.inkColor,
+              fontSize: 14,
+              fontWeight: FontWeight.w500),
+          items: [
+            const DropdownMenuItem(
+              value: 'all',
+              child: Text('All products'),
             ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (selected) ...[
-                const Icon(Icons.check, color: AppColors.whiteColor, size: 16),
-                const SizedBox(width: 6),
-              ],
-              Text(
-                label,
-                style: TextStyle(
-                  color: selected ? AppColors.whiteColor : AppColors.inkColor,
-                  fontWeight: selected ? FontWeight.bold : FontWeight.w500,
-                  fontSize: 13,
-                ),
-              ),
-            ],
-          ),
+            const DropdownMenuItem(
+              value: 'services',
+              child: Text('Services'),
+            ),
+            ..._categories.map((c) {
+              return DropdownMenuItem(
+                value: 'cat:${c.id}',
+                child: Text(c.name ?? 'Category'),
+              );
+            }),
+          ],
+          onChanged: _onFilterChanged,
         ),
       ),
     );

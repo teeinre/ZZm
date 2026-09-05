@@ -10,8 +10,7 @@ import '../services/api_service.dart';
 import '../providers/currency_provider.dart';
 import '../providers/cart_provider.dart';
 import '../screens/vendor_profile_screen.dart';
-import '../screens/booking_slot_picker_screen.dart';
-import '../models/booking_slot.dart';
+import '../screens/webview_page.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final Product product;
@@ -46,6 +45,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   SubscriptionInterval? _subscriptionInterval;
   bool _isOneTimePurchase = true;
 
+  // Product reviews
+  List<Map<String, dynamic>> _productReviews = [];
+  bool _isLoadingReviews = true;
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +65,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     setState(() {
       _isLoading = true;
       _error = null;
+      _isLoadingReviews = true;
     });
 
     try {
@@ -77,6 +81,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       if (raw['type']?.toString() == 'variable') {
         variations = await _apiService.getProductVariations(widget.product.id);
       }
+
+      // Load product reviews in parallel
+      _apiService.getProductReviews(widget.product.id).then((reviews) {
+        if (!mounted) return;
+        setState(() {
+          _productReviews = reviews;
+          _isLoadingReviews = false;
+        });
+      }).catchError((_) {
+        if (!mounted) return;
+        setState(() => _isLoadingReviews = false);
+      });
 
       if (!mounted) return;
 
@@ -103,6 +119,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       setState(() {
         _error = e.toString();
         _isLoading = false;
+        _isLoadingReviews = false;
       });
     }
   }
@@ -330,47 +347,21 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
   }
 
-  /// Opens the booking slot picker and adds the chosen slot to the cart.
+  /// Opens the booking calendar/date selection in the website product page
+  /// WebView. The user picks a date/time there and completes checkout on the
+  /// website, so booking data flows correctly to WooCommerce checkout.
   Future<void> _bookNow() async {
     if (_isAddingToCart) return;
 
-    final BookingSlot? slot = await Navigator.of(context).push<BookingSlot>(
+    final url = 'https://zzmore.store/?p=${widget.product.id}';
+    await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => BookingSlotPickerScreen(product: widget.product),
+        builder: (_) => WebViewPage(
+          title: widget.product.name,
+          url: url,
+        ),
       ),
     );
-    if (slot == null || !mounted) return;
-
-    setState(() => _isAddingToCart = true);
-    try {
-      final cartProvider = context.read<CartProvider>();
-      await cartProvider.addToCart(
-        widget.product,
-        bookingDate: slot.date,
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Booking confirmed for ${slot.date.year}-'
-              '${slot.date.month.toString().padLeft(2, '0')}-'
-              '${slot.date.day.toString().padLeft(2, '0')} at '
-              '${slot.date.hour.toString().padLeft(2, '0')}:'
-              '${slot.date.minute.toString().padLeft(2, '0')}'),
-          backgroundColor: AppColors.goldColor,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to confirm booking: $e'),
-          backgroundColor: AppColors.coralColor,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isAddingToCart = false);
-    }
   }
 
   // ─── Build ────────────────────────────────────────────────────────────────
@@ -608,50 +599,58 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   // ─── Product Info ─────────────────────────────────────────────────────────
 
   Widget _buildProductInfo() {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.whiteColor,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.inkColor.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppColors.whiteColor,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.inkColor.withOpacity(0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildVendorName(),
-          const SizedBox(height: 8),
-          _buildProductName(),
-          const SizedBox(height: 12),
-          _buildRating(),
-          const SizedBox(height: 16),
-          _buildPrice(),
-          const SizedBox(height: 16),
-          const Divider(color: AppColors.sandColor),
-          const SizedBox(height: 12),
-          _buildStockIndicator(),
-          if (_isVariableProduct) ...[
-            const SizedBox(height: 16),
-            _buildVariationOptions(),
-          ],
-          if (widget.product.isSubscriptionProduct) ...[
-            const SizedBox(height: 20),
-            _buildSubscriptionSelector(),
-          ],
-          const SizedBox(height: 20),
-          _buildQuantitySelector(),
-          const SizedBox(height: 20),
-          const Divider(color: AppColors.sandColor),
-          const SizedBox(height: 12),
-          _buildDescription(),
-        ],
-      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildVendorCard(),
+              const SizedBox(height: 16),
+              const Divider(color: AppColors.sandColor),
+              const SizedBox(height: 12),
+              _buildProductName(),
+              const SizedBox(height: 12),
+              _buildRating(),
+              const SizedBox(height: 16),
+              _buildPrice(),
+              const SizedBox(height: 16),
+              const Divider(color: AppColors.sandColor),
+              const SizedBox(height: 12),
+              _buildStockIndicator(),
+              if (_isVariableProduct) ...[
+                const SizedBox(height: 16),
+                _buildVariationOptions(),
+              ],
+              if (widget.product.isSubscriptionProduct) ...[
+                const SizedBox(height: 20),
+                _buildSubscriptionSelector(),
+              ],
+              const SizedBox(height: 20),
+              _buildQuantitySelector(),
+              const SizedBox(height: 20),
+              const Divider(color: AppColors.sandColor),
+              const SizedBox(height: 12),
+              _buildDescription(),
+            ],
+          ),
+        ),
+        _buildReviewsSection(),
+      ],
     );
   }
 
@@ -849,57 +848,280 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
      return desc;
    }
 
-  // ─── Vendor Name ──────────────────────────────────────────────────────────
+  // ─── Vendor Info Card ─────────────────────────────────────────────────────
 
-  Widget _buildVendorName() {
+  Widget _buildVendorCard() {
     final vendorName = widget.product.vendorName;
-    if (vendorName == null || vendorName.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    final hasVendor = vendorName != null && vendorName.isNotEmpty;
+    final canTap = widget.product.vendorId != null && widget.product.vendorId! > 0
+        && !ApiConstants.isVendorExcluded(id: widget.product.vendorId);
 
     return InkWell(
-      onTap: () {
-        if (widget.product.vendorId != null && widget.product.vendorId! > 0 &&
-            !ApiConstants.isVendorExcluded(id: widget.product.vendorId)) {
-          Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => VendorProfileScreen(
-              vendorId: widget.product.vendorId!,
-              vendorName: vendorName,
+      onTap: canTap && hasVendor
+          ? () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => VendorProfileScreen(
+                  vendorId: widget.product.vendorId!,
+                  vendorName: vendorName,
+                ),
+              ))
+          : null,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.indigoPaleColor.withOpacity(0.25),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: AppColors.indigoColor.withOpacity(0.12)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.indigoPaleColor,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(
+                Icons.store_outlined,
+                size: 22,
+                color: AppColors.indigoColor,
+              ),
             ),
-          ));
-        }
-      },
-      child: Row(
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    hasVendor ? vendorName! : 'Marketplace Vendor',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.inkColor,
+                      fontFamily: 'Fraunces',
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.verified_outlined,
+                        size: 12,
+                        color: AppColors.goldColor,
+                      ),
+                      const SizedBox(width: 4),
+                      const Text(
+                        'Verified Seller',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.inkSoftColor),
+                      ),
+                      const SizedBox(width: 12),
+                      if (widget.product.rating != null &&
+                          widget.product.rating! > 0) ...[
+                        Icon(Icons.star,
+                            size: 12, color: AppColors.goldColor),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${widget.product.rating!.toStringAsFixed(1)}',
+                          style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.inkSoftColor,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (canTap) ...[
+              const SizedBox(width: 8),
+              Icon(
+                Icons.arrow_forward_ios,
+                size: 14,
+                color: AppColors.indigoColor.withOpacity(0.6),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Product Reviews Section ───────────────────────────────────────────────
+
+  Widget _buildReviewsSection() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: AppColors.indigoPaleColor,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              Icons.store_outlined,
-              size: 16,
-              color: AppColors.indigoColor,
-            ),
+          Row(
+            children: [
+              Text(
+                'Customer Reviews',
+                style: GoogleFonts.fraunces(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.inkColor),
+              ),
+              const SizedBox(width: 8),
+              if (!_isLoadingReviews)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.goldColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${_productReviews.length}',
+                    style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.goldColor),
+                  ),
+                ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Text(
-            vendorName,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.indigoColor,
-              decoration: TextDecoration.underline,
+          const SizedBox(height: 12),
+          if (_isLoadingReviews)
+            const Center(
+                child: Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(color: AppColors.goldColor),
+            ))
+          else if (_productReviews.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppColors.whiteColor,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.rate_review_outlined,
+                      size: 40, color: AppColors.goldColor.withOpacity(0.4)),
+                  const SizedBox(height: 10),
+                  const Text('No reviews yet',
+                      style: TextStyle(
+                          color: AppColors.inkSoftColor, fontSize: 14)),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Be the first to share your experience with this product.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: AppColors.inkSoftColor, fontSize: 12),
+                  ),
+                ],
+              ),
+            )
+          else
+            ..._productReviews
+                .take(5)
+                .map((review) => _buildProductReviewItem(review)),
+          if (_productReviews.length > 5)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: TextButton(
+                onPressed: () {},
+                child: const Text('View all reviews',
+                    style: TextStyle(
+                        color: AppColors.goldColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+              ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductReviewItem(Map<String, dynamic> review) {
+    final author = review['reviewer']?.toString() ??
+        review['name']?.toString() ??
+        'Customer';
+    final content = review['review']?.toString() ??
+        review['content']?.toString() ??
+        review['description']?.toString() ??
+        '';
+    final rating = double.tryParse(
+            (review['rating'] ?? review['average_rating'] ?? 0).toString()) ??
+        0;
+    final date = review['date_created']?.toString() ??
+        review['date']?.toString() ??
+        '';
+    final displayDate = date.length >= 10 ? date.substring(0, 10) : date;
+    final avatarUrl = review['avatar_urls'] is Map
+        ? (review['avatar_urls'] as Map).values.first?.toString()
+        : null;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.whiteColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.sandColor.withOpacity(0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: AppColors.indigoPaleColor,
+                backgroundImage:
+                    avatarUrl != null ? NetworkImage(avatarUrl) : null,
+                child: avatarUrl == null
+                    ? Text(
+                        author.isNotEmpty ? author[0].toUpperCase() : '?',
+                        style: const TextStyle(
+                            color: AppColors.indigoColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700),
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(author,
+                        style: const TextStyle(
+                            color: AppColors.inkColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
+                    if (displayDate.isNotEmpty)
+                      Text(displayDate,
+                          style: const TextStyle(
+                              color: AppColors.inkSoftColor, fontSize: 11)),
+                  ],
+                ),
+              ),
+              Row(
+                children: List.generate(5, (i) {
+                  return Icon(
+                    i < rating.round() ? Icons.star : Icons.star_outline,
+                    size: 13,
+                    color: AppColors.goldColor,
+                  );
+                }),
+              ),
+            ],
           ),
-          const SizedBox(width: 4),
-          Icon(
-            Icons.arrow_forward_ios,
-            size: 10,
-            color: AppColors.indigoColor.withOpacity(0.6),
-          ),
+          if (content.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(content,
+                style: const TextStyle(
+                    color: AppColors.inkColor, fontSize: 12, height: 1.5)),
+          ],
         ],
       ),
     );
@@ -1285,9 +1507,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return const SizedBox.shrink();
     }
 
-    // Strip HTML tags for plain text display
     final plainText = _stripHtml(description);
-    if (plainText.isEmpty) return const SizedBox.shrink();
+    final imageUrls = _extractImageUrls(description);
+    if (plainText.isEmpty && imageUrls.isEmpty) return const SizedBox.shrink();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1305,30 +1527,67 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        AnimatedCrossFade(
-          firstChild: Text(
-            plainText,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 14,
-              height: 1.6,
-              color: AppColors.inkSoftColor,
+        // Rich-text images added by the vendor
+        if (imageUrls.isNotEmpty) ...[
+          SizedBox(
+            height: 120,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: imageUrls.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, index) => ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: CachedNetworkImage(
+                  imageUrl: imageUrls[index],
+                  width: 160,
+                  fit: BoxFit.cover,
+                  placeholder: (context, url) => Container(
+                    width: 160,
+                    color: AppColors.sandColor,
+                    child: const Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.goldColor,
+                      ),
+                    ),
+                  ),
+                  errorWidget: (context, url, error) => Container(
+                    width: 160,
+                    color: AppColors.sandColor,
+                    child: const Icon(Icons.broken_image,
+                        color: AppColors.inkSoftColor, size: 32),
+                  ),
+                ),
+              ),
             ),
           ),
-          secondChild: Text(
-            plainText,
-            style: const TextStyle(
-              fontSize: 14,
-              height: 1.6,
-              color: AppColors.inkSoftColor,
+          const SizedBox(height: 12),
+        ],
+        if (plainText.isNotEmpty)
+          AnimatedCrossFade(
+            firstChild: Text(
+              plainText,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.6,
+                color: AppColors.inkSoftColor,
+              ),
             ),
+            secondChild: Text(
+              plainText,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.6,
+                color: AppColors.inkSoftColor,
+              ),
+            ),
+            crossFadeState: _isDescriptionExpanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 300),
           ),
-          crossFadeState: _isDescriptionExpanded
-              ? CrossFadeState.showSecond
-              : CrossFadeState.showFirst,
-          duration: const Duration(milliseconds: 300),
-        ),
         if (plainText.length > 150)
           GestureDetector(
             onTap: () {
@@ -1363,9 +1622,27 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     );
   }
 
+  /// Extract `src` URLs from `<img>` tags inside a raw HTML description.
+  List<String> _extractImageUrls(String html) {
+    final urls = <String>[];
+    final regex = RegExp('<img[^>]+src=["\']([^"\']+)["\']',
+        caseSensitive: false);
+    for (final m in regex.allMatches(html)) {
+      final src = m.group(1);
+      if (src != null && src.isNotEmpty) urls.add(src);
+    }
+    return urls;
+  }
+
   String _stripHtml(String html) {
+    // Convert block-level tags and <br> to newlines so line breaks survive.
+    String text = html.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
+    text = text.replaceAll(RegExp(r'</(p|div|li|h[1-6])>', caseSensitive: false), '\n');
+    text = text.replaceAll(RegExp(r'<(ul|ol)>', caseSensitive: false), '');
+    text = text.replaceAll(RegExp(r'<li[^>]*>', caseSensitive: false), '• ');
+
     final regex = RegExp(r'<[^>]*>');
-    String text = html.replaceAll(regex, '');
+    text = text.replaceAll(regex, '');
     text = text
         .replaceAll('&amp;', '&')
         .replaceAll('&lt;', '<')
@@ -1373,6 +1650,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         .replaceAll('&nbsp;', ' ')
         .replaceAll('&quot;', '"')
         .replaceAll('&#39;', "'");
+    // Collapse excessive blank lines.
+    text = text.replaceAll(RegExp(r'\n{3,}'), '\n\n');
     return text.trim();
   }
 

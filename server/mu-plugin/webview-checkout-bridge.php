@@ -80,6 +80,127 @@ add_filter( 'determine_current_user', function ( $user_id ) {
 }, 20 );
 
 // =========================================================================
+// WooCommerce Bookings Integration — ensure booking fields survive the
+// cart rebuild.  Two layers:
+//   (1) add_to_cart() 5th parameter $cart_item_data carries booking keys
+//       per-item when rebuilding from the bridge token.
+//   (2) woocommerce_add_cart_item_data filter ensures that, no matter how
+//       items enter the cart, booking_* keys are translated into the
+//       _booking_start / _booking_end / _booking_persons format that
+//       WooCommerce Bookings stores in wp_woocommerce_order_itemmeta.
+//   (3) woocommerce_get_cart_item_from_session filter preserves booking
+//       data between page navigations (the checkout page loads the cart
+//       from the Woo session; without this filter booking meta vanishes).
+// =========================================================================
+add_filter( 'woocommerce_add_cart_item_data', function ( $cart_item_data, $product_id, $variation_id, $quantity ) {
+    // If booking data was already set by the bridge (passed via 5th arg to
+    // add_to_cart below), keep it.  Also accept legacy _legacy_booking shape
+    // sent by the Flutter bridge_service.toJson() for older Bookings plugins.
+    $sources = [
+        &$cart_item_data,
+    ];
+    if ( isset( $cart_item_data['_legacy_booking'] ) && is_array( $cart_item_data['_legacy_booking'] ) ) {
+        $sources[] = &$cart_item_data['_legacy_booking'];
+    }
+
+    foreach ( $sources as &$src ) {
+        $start_date = $src['booking_start_date']  ?? $src['start_date']  ?? null;
+        $start_time = $src['booking_start_time']  ?? $src['start_time']  ?? null;
+        $end_date   = $src['booking_end_date']    ?? $src['end_date']    ?? null;
+        $end_time   = $src['booking_end_time']    ?? $src['end_time']    ?? null;
+        $resource   = isset( $src['booking_resource_id'] ) ? (int) $src['booking_resource_id']
+                                                           : ( isset( $src['resource_id'] ) ? (int) $src['resource_id'] : 0 );
+        $persons    = isset( $src['booking_persons'] ) ? (int) $src['booking_persons']
+                                                      : ( isset( $src['persons'] ) ? (int) $src['persons'] : 1 );
+        $bookingCfg = isset( $src['booking_configuration'] ) && is_array( $src['booking_configuration'] )
+            ? $src['booking_configuration']
+            : ( isset( $src['configuration'] ) && is_array( $src['configuration'] ) ? $src['configuration'] : null );
+
+        if ( $start_date !== null && $start_date !== '' ) {
+            // Normalize start timestamp
+            $start_str = is_string( $start_date ) ? trim( $start_date ) : '';
+            if ( $start_time !== null && $start_time !== '' && strpos( $start_str, ' ' ) === false ) {
+                $start_str .= ' ' . trim( $start_time );
+            }
+            // If configuration.date exists, prefer it (already contains full datetime)
+            if ( is_array( $bookingCfg ) && ! empty( $bookingCfg['date'] ) ) {
+                $start_str = $bookingCfg['date'];
+            }
+            $start_ts = strtotime( $start_str );
+            if ( $start_ts !== false && $start_ts > 0 ) {
+                $cart_item_data['_booking_start'] = $start_ts;
+                // Estimate end = start + 1 hour; if we have explicit end/date use it
+                $end_ts = null;
+                if ( ( $end_date !== null && $end_date !== '' ) || ( is_array( $bookingCfg ) && ! empty( $bookingCfg['end_date'] ) ) ) {
+                    $end_str = '';
+                    if ( is_array( $bookingCfg ) && ! empty( $bookingCfg['end_date'] ) ) {
+                        $end_str = $bookingCfg['end_date'];
+                    } else {
+                        $end_str = is_string( $end_date ) ? trim( $end_date ) : '';
+                        if ( $end_time !== null && $end_time !== '' && strpos( $end_str, ' ' ) === false ) {
+                            $end_str .= ' ' . trim( $end_time );
+                        }
+                    }
+                    $parsed = strtotime( $end_str );
+                    if ( $parsed !== false && $parsed > $start_ts ) $end_ts = $parsed;
+                }
+                if ( $end_ts === null ) {
+                    // Fallback: product booking_duration meta if present, else +1hr
+                    $dur = (int) get_post_meta( $product_id, '_wc_booking_duration', true );
+                    $dur_unit = get_post_meta( $product_id, '_wc_booking_duration_unit', true );
+                    if ( $dur <= 0 ) $dur = 1;
+                    $unit_seconds = [ 'minute' => 60, 'hour' => 3600, 'day' => 86400, 'night' => 86400, 'month' => 2592000 ];
+                    $mult = isset( $unit_seconds[ $dur_unit ] ) ? $unit_seconds[ $dur_unit ] : 3600;
+                    $end_ts = $start_ts + ( $dur * $mult );
+                }
+                $cart_item_data['_booking_end'] = $end_ts;
+            }
+        }
+        if ( $resource > 0 ) {
+            $cart_item_data['_booking_resource_id'] = $resource;
+        }
+        if ( $persons > 0 ) {
+            // WC Bookings expects _booking_persons as an array [person_type_id => count]
+            // If we only have a flat count, use key 0 (adults default).
+            $cart_item_data['_booking_persons'] = [ 0 => $persons ];
+        }
+        // Preserve raw configuration so third-party Bookings extensions see it
+        if ( is_array( $bookingCfg ) ) {
+            $cart_item_data['_booking_configuration'] = $bookingCfg;
+        }
+        if ( $start_date !== null || $persons > 0 || $resource > 0 ) break;
+    }
+    unset( $src );
+    return $cart_item_data;
+}, 5, 4 );
+
+add_filter( 'woocommerce_get_cart_item_from_session', function ( $cart_item, $values, $key ) {
+    // Persist booking fields through the Woo session so they survive the
+    // 302 redirect into the checkout page.
+    $booking_keys = [
+        '_booking_start',
+        '_booking_end',
+        '_booking_resource_id',
+        '_booking_persons',
+        '_booking_configuration',
+        'booking_start_date',
+        'booking_start_time',
+        'booking_end_date',
+        'booking_end_time',
+        'booking_resource_id',
+        'booking_persons',
+        'booking_configuration',
+        '_legacy_booking',
+    ];
+    foreach ( $booking_keys as $k ) {
+        if ( isset( $values[ $k ] ) ) {
+            $cart_item[ $k ] = $values[ $k ];
+        }
+    }
+    return $cart_item;
+}, 20, 3 );
+
+// =========================================================================
 // REST API Endpoints
 // =========================================================================
 add_action( 'rest_api_init', function () {
@@ -185,7 +306,46 @@ function wvb_enter( WP_REST_Request $request ) {
             $variation_id = isset( $item['variation_id'] ) ? (int) $item['variation_id'] : 0;
 
             if ( $product_id > 0 ) {
-                WC()->cart->add_to_cart( $product_id, $quantity, $variation_id );
+                // ── 5th arg: $cart_item_data — bridge booking_* keys ──
+                // Pull booking fields from the item and pass them directly
+                // to add_to_cart.  The woocommerce_add_cart_item_data filter
+                // (registered above) then normalizes them into the
+                // _booking_start/_booking_end format that WC Bookings uses.
+                $cart_item_data = [];
+                $booking_keys = [
+                    'booking_start_date',
+                    'booking_start_time',
+                    'booking_end_date',
+                    'booking_end_time',
+                    'booking_resource_id',
+                    'booking_persons',
+                    'booking_configuration',
+                    '_legacy_booking',
+                ];
+                foreach ( $booking_keys as $k ) {
+                    if ( isset( $item[ $k ] ) ) {
+                        $cart_item_data[ $k ] = $item[ $k ];
+                    }
+                }
+                // Also include legacy flat keys for very old Bookings plugins
+                // that read root-level start_date from the cart item data.
+                if ( isset( $item['_legacy_booking'] ) && is_array( $item['_legacy_booking'] ) ) {
+                    foreach ( $item['_legacy_booking'] as $lk => $lv ) {
+                        if ( ! isset( $cart_item_data[ $lk ] ) ) {
+                            $cart_item_data[ $lk ] = $lv;
+                        }
+                    }
+                }
+
+                // sold_individually clamp: if product says
+                // _sold_individually=yes, force qty to 1 so Woo doesn't
+                // reject with HTTP 400 at checkout.
+                $sold_individually = get_post_meta( $product_id, '_sold_individually', true );
+                if ( $sold_individually === 'yes' ) {
+                    $quantity = 1;
+                }
+
+                WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, [], $cart_item_data );
             }
         }
     }

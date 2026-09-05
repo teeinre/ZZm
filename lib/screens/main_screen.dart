@@ -82,11 +82,25 @@ class _MainScreenState extends State<MainScreen> {
         if (didPop) return;
         final innerNavigator = _navigatorKeys[_currentIndex].currentState;
         if (innerNavigator != null && innerNavigator.canPop()) {
+          // Normal behaviour: go back within current tab's stack.
           innerNavigator.pop();
-        } else {
-          // At root of all tabs – exit the app
-          SystemNavigator.pop();
+          return;
         }
+        // At root of the current tab: instead of closing the app, fall
+        // back to the Home tab (index 0) unless we are already there.
+        // This guarantees the user never loses their in-app session by
+        // accidentally triggering the back button.
+        if (_currentIndex != 0) {
+          _navigatorKeys[_currentIndex]
+              .currentState
+              ?.popUntil((route) => route.isFirst);
+          setState(() {
+            _currentIndex = 0;
+          });
+        }
+        // Otherwise (already on the Home tab root), do nothing and let
+        // the user continue browsing. The OS-level task switcher remains
+        // the only way to leave the app.
       },
       child: Scaffold(
         body: IndexedStack(
