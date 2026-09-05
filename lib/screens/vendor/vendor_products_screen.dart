@@ -1404,34 +1404,19 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                   return _buildAttributeEditor(idx, _attributes[idx]);
                 }),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => setState(() => _attributes.add(_ProductAttribute())),
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Add Attribute', style: TextStyle(fontSize: 12)),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.goldColor,
-                          side: const BorderSide(color: AppColors.goldColor),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                      ),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _loadingGlobalAttributes ? null : _pickGlobalAttribute,
+                    icon: const Icon(Icons.list_alt, size: 18),
+                    label: const Text('Use Existing Attribute', style: TextStyle(fontSize: 13)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.indigoColor,
+                      side: const BorderSide(color: AppColors.indigoColor),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _loadingGlobalAttributes ? null : _pickGlobalAttribute,
-                        icon: const Icon(Icons.list_alt, size: 18),
-                        label: const Text('Use Existing', style: TextStyle(fontSize: 12)),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.indigoColor,
-                          side: const BorderSide(color: AppColors.indigoColor),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
 
                 // Variations
@@ -1917,37 +1902,6 @@ class _VendorAddEditProductScreenState extends State<VendorAddEditProductScreen>
                       ),
                     ),
                   ),
-
-                // Add value button / inline form
-                if (!isActive)
-                  GestureDetector(
-                    onTap: () => setState(() {
-                      _optionValueCtrl.clear();
-                      _activeAttributeIndex = index;
-                    }),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: AppColors.goldColor.withOpacity(0.3),
-                          style: BorderStyle.solid,
-                        ),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.add_circle_outline, size: 14, color: AppColors.goldColor),
-                          SizedBox(width: 6),
-                          Text('Add values',
-                            style: TextStyle(fontSize: 11, color: AppColors.goldColor, fontWeight: FontWeight.w500),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  _buildAttributeInlineForm(index),
               ],
             ),
           ),
