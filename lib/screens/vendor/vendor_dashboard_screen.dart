@@ -35,102 +35,112 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
     final auth = context.read<AuthProvider>();
     final vendor = context.read<VendorProvider>();
 
-    // Wait for auth to finish restoring so vendor identity is available on the
-    // very first open (fixes "empty stats until refresh").
-    if (auth.user == null && auth.isLoading) {
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      if (auth.user == null) {
-        await auth.initialize();
-      }
-    }
-
-    if (auth.user != null) {
-      vendor.setWordPressUserId(auth.user!.id);
-    }
-
-    // ── STEP 0: Keep loading spinner visible until everything resolves ──
-    if (mounted) {
-      setState(() {
-        // No-op trigger: Consumer builder already shows spinner while
-        // isLoadingStats || isLoadingStore || isLoadingOrders || isLoadingProducts
-      });
-    }
-
-    int? resolvedStoreId;
-    if (auth.user != null && auth.user!.id > 0) {
-      resolvedStoreId = auth.user!.vendorStoreId;
-
-      if (resolvedStoreId == null || resolvedStoreId <= 0) {
-        try {
-          final store = await vendor.apiService.getVendorStoreByUserId(auth.user!.id);
-          if (store != null && store['id'] != null) {
-            resolvedStoreId = store['id'] is int
-                ? store['id'] as int
-                : int.tryParse(store['id']?.toString() ?? '');
-          }
-        } catch (_) {
-          try {
-            await vendor.loadStoreInfo(auth.user!.id);
-            resolvedStoreId = vendor.vendorId;
-          } catch (_) {}
-        }
-      }
-
-      if (resolvedStoreId != null && resolvedStoreId > 0) {
-        // 1) Restore cached dashboard FIRST -- this updates derived getters
-        //    and populates tiles instantly from Hive so user NEVER sees 0
-        //    on first login while fresh network load runs.
-        final hadCached = vendor.restoreFromCache(vendorId: resolvedStoreId);
-        if (hadCached && mounted) {
-          // Force consumer rebuild so restored stats paint immediately
-          // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
-          vendor.notifyListeners();
-          debugPrint('Vendor dashboard restored from Hive cache for vendor $resolvedStoreId');
-        }
-        // 2) Then load fresh store info (network)
-        try {
-          await vendor.loadStoreInfo(resolvedStoreId);
-        } catch (e) {
-          debugPrint('[Dashboard] loadStoreInfo failed for $resolvedStoreId: $e');
-        }
-      }
-    }
-
-    if (!mounted) return;
-
-    // ── STEP 1: Run data loads -- ONLY AFTER storeInfo resolved / cache applied ──
-    //    loadDashboard internally calls loadDashboardStats which already has
-    //    500ms retry-on-empty.  Separately, loadOrders populates the list
-    //    used by the order-total-aggregation fallback in totalSales getter.
-    final futures = <Future<void>>[
-      vendor.loadDashboard(),
-      vendor.loadOrders(),
-      vendor.loadCoupons(),
-      vendor.loadWithdrawals(),
-    ];
-    final vid = vendor.vendorId ?? resolvedStoreId;
-    if (vid != null && vid > 0) {
-      futures.add(vendor.loadVendorProducts(vendorId: vid));
-    }
-
     try {
-      await Future.wait(futures, eagerError: false);
-    } catch (e) {
-      debugPrint('[Dashboard] Future.wait batch finished with error(s): $e');
-    }
+      // Wait for auth to finish restoring so vendor identity is available on the
+      // very first open (fixes "empty stats until refresh").
+      if (auth.user == null && auth.isLoading) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        if (auth.user == null) {
+          await auth.initialize();
+        }
+      }
 
-    // ── STEP 2: Final refresh -- after loadOrders() finishes, the derived
-    //    totalSales/totalOrders/pendingOrders/completedOrders getters that
-    //    aggregate from the _orders list need another Consumer rebuild
-    //    because loadDashboard ran in parallel and may have already painted
-    //    its first (all-zero) result before orders were available.
-    if (mounted) {
-      // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
-      vendor.notifyListeners();
-    }
+      if (auth.user != null) {
+        vendor.setWordPressUserId(auth.user!.id);
+      }
 
-    if (mounted) {
-      setState(() => _initComplete = true);
+      int? resolvedStoreId;
+      if (auth.user != null && auth.user!.id > 0) {
+        resolvedStoreId = auth.user!.vendorStoreId;
+
+        if (resolvedStoreId == null || resolvedStoreId <= 0) {
+          try {
+            final store = await vendor.apiService
+                .getVendorStoreByUserId(auth.user!.id)
+                .timeout(const Duration(seconds: 10));
+            if (store != null && store['id'] != null) {
+              resolvedStoreId = store['id'] is int
+                  ? store['id'] as int
+                  : int.tryParse(store['id']?.toString() ?? '');
+            }
+          } catch (_) {
+            try {
+              await vendor
+                  .loadStoreInfo(auth.user!.id)
+                  .timeout(const Duration(seconds: 10));
+              resolvedStoreId = vendor.vendorId;
+            } catch (_) {}
+          }
+        }
+
+        if (resolvedStoreId != null && resolvedStoreId > 0) {
+          // 1) Restore cached dashboard FIRST -- this updates derived getters
+          //    and populates tiles instantly from Hive so user NEVER sees 0
+          //    on first login while fresh network load runs.
+          final hadCached = vendor.restoreFromCache(vendorId: resolvedStoreId);
+          if (hadCached && mounted) {
+            // Force consumer rebuild so restored stats paint immediately
+            // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
+            vendor.notifyListeners();
+            debugPrint('Vendor dashboard restored from Hive cache for vendor $resolvedStoreId');
+          }
+          // 2) Then load fresh store info (network)
+          try {
+            await vendor
+                .loadStoreInfo(resolvedStoreId)
+                .timeout(const Duration(seconds: 10));
+          } catch (e) {
+            debugPrint('[Dashboard] loadStoreInfo failed for $resolvedStoreId: $e');
+          }
+        }
+      }
+
+      if (!mounted) return;
+
+      // ── STEP 1: Run data loads -- each with a hard timeout so a single
+      //    stuck HTTP call can never hold the batch (and spinner) hostage. ──
+      final futures = <Future<void>>[
+        vendor.loadDashboard().timeout(const Duration(seconds: 12), onTimeout: () {
+          debugPrint('[Dashboard] loadDashboard TIMED OUT');
+        }),
+        vendor.loadOrders().timeout(const Duration(seconds: 12), onTimeout: () {
+          debugPrint('[Dashboard] loadOrders TIMED OUT');
+        }),
+        vendor.loadCoupons().timeout(const Duration(seconds: 12), onTimeout: () {
+          debugPrint('[Dashboard] loadCoupons TIMED OUT');
+        }),
+        vendor.loadWithdrawals().timeout(const Duration(seconds: 12), onTimeout: () {
+          debugPrint('[Dashboard] loadWithdrawals TIMED OUT');
+        }),
+      ];
+      final vid = vendor.vendorId ?? resolvedStoreId;
+      if (vid != null && vid > 0) {
+        futures.add(vendor.loadVendorProducts(vendorId: vid).timeout(const Duration(seconds: 12), onTimeout: () {
+          debugPrint('[Dashboard] loadVendorProducts TIMED OUT');
+        }));
+      }
+
+      try {
+        await Future.wait(futures, eagerError: false);
+      } catch (e) {
+        debugPrint('[Dashboard] Future.wait batch finished with error(s): $e');
+      }
+
+      // ── STEP 2: Final refresh -- after loadOrders() finishes, the derived
+      //    totalSales/totalOrders/pendingOrders/completedOrders getters that
+      //    aggregate from the _orders list need another Consumer rebuild
+      //    because loadDashboard ran in parallel and may have already painted
+      //    its first (all-zero) result before orders were available.
+      if (mounted) {
+        // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
+        vendor.notifyListeners();
+      }
+    } finally {
+      // GUARANTEED to flip even if a load throws or times out — otherwise the
+      // spinner would never disappear.
+      if (mounted) {
+        setState(() => _initComplete = true);
+      }
     }
 
     // ── STEP 3: Automatic 1-second delayed refresh so the latest stats show

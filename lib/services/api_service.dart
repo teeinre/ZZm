@@ -1804,6 +1804,18 @@ class ApiService {
     }
   }
 
+  /// Get product shipping classes (for the shipping tab in product creation).
+  Future<List<Map<String, dynamic>>> getProductShippingClasses() async {
+    try {
+      final url = '${ApiConstants.wcApiBase}/products/shipping_classes?per_page=100';
+      final response = await _get(url, useWcAuth: true);
+      final List<dynamic> data = jsonDecode(response.body);
+      return data.map((c) => Map<String, dynamic>.from(c)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
   /// Get global (admin-defined) product attributes for quick attribute setup.
   Future<List<Map<String, dynamic>>> getProductAttributes() async {
     try {
