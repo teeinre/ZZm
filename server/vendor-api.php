@@ -338,6 +338,11 @@ if ( $action === 'get_store_public' ) {
         $owner_id = (int) dokan_get_store_admin_id( $store_id );
     }
     $profile  = get_user_meta( $owner_id, 'dokan_profile_settings', true ) ?: [];
+    $wp_bio   = get_user_meta( $owner_id, 'description', true );
+    $shop_desc = is_array( $profile ) ? ( $profile['vendor_biography'] ?? $profile['shop_description'] ?? '' ) : '';
+    $biography = ( is_string( $shop_desc ) && trim( $shop_desc ) !== '' )
+        ? $shop_desc
+        : ( ( is_string( $wp_bio ) && trim( $wp_bio ) !== '' ) ? $wp_bio : $shop_desc );
 
     vendor_api_respond( [
         'id'               => (int) $vendor->get_id(),
@@ -349,9 +354,7 @@ if ( $action === 'get_store_public' ) {
         'gravatar'         => $vendor->get_avatar(),
         'address'          => method_exists( $vendor, 'get_address' ) ? $vendor->get_address() : [],
         'description'      => $vendor->get_shop_description(),
-        'biography'        => is_array( $profile )
-            ? ( $profile['vendor_biography'] ?? $profile['shop_description'] ?? '' )
-            : '',
+        'biography'        => $biography,
         'social'           => is_array( $profile['social'] ?? null ) ? $profile['social'] : [],
         'store_open_close' => is_array( $profile['store_open_close'] ?? null ) ? $profile['store_open_close'] : [],
         'rating'           => function_exists( 'dokan_get_seller_rating' ) ? dokan_get_seller_rating( $owner_id ) : 0,

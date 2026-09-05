@@ -425,18 +425,21 @@ class VendorProvider with ChangeNotifier {
     notifyListeners();
     try {
       // Primary: use the reliable vendor bridge (reads from Dokan's internal PHP objects)
-      _storeInfo = await _api.getVendorBridgeStore();
+      _storeInfo = await _api.getVendorBridgeStore()
+          .timeout(const Duration(seconds: 10));
 
       // Fallback: use legacy Dokan REST API if bridge is unavailable
       if (_storeInfo == null) {
         debugPrint('[VendorProvider] Bridge unavailable — falling back to legacy Dokan REST API.');
-        _storeInfo = await _api.getDokanStore(storeId);
+        _storeInfo = await _api.getDokanStore(storeId)
+            .timeout(const Duration(seconds: 10));
       }
 
       // Ultimate fallback: vendor-api.php bypass
       if (_storeInfo == null) {
         debugPrint('[VendorProvider] Dokan REST unavailable — falling back to vendor-api.php bypass.');
-        _storeInfo = await _api.getVendorApiStore();
+        _storeInfo = await _api.getVendorApiStore()
+            .timeout(const Duration(seconds: 10));
       }
 
       if (_storeInfo != null && _storeInfo!['id'] != null) {
@@ -465,13 +468,14 @@ class VendorProvider with ChangeNotifier {
     // and is immune to intermittent REST auth failures and security-plugin
     // blocks that make the REST chain unreliable.
     try {
-      final vendorApiData = await _api.getVendorApiReports();
+      final vendorApiData = await _api.getVendorApiReports()
+          .timeout(const Duration(seconds: 10));
       if (vendorApiData != null && vendorApiData.isNotEmpty) {
         _dashboardStats = Map<String, dynamic>.from(vendorApiData);
         debugPrint('[VendorProvider] Loaded dashboard from vendor-api.php bypass. Keys: ${_dashboardStats.keys.take(10)}');
       }
     } catch (e) {
-      debugPrint('[VendorProvider] vendor-api.php reports failed: $e');
+      debugPrint('[VendorProvider] vendor-api.php reports failed/timed out: $e');
       _dashboardStats = {};
     }
 
@@ -479,13 +483,14 @@ class VendorProvider with ChangeNotifier {
     if (_dashboardStats.isEmpty ||
         (_dashboardStats['sales'] == null && _dashboardStats['orders'] == null && _dashboardStats['total_sales'] == null)) {
       try {
-        final restData = await _api.getVendorReports(vendorId: _vendorId ?? vendorUserId);
+        final restData = await _api.getVendorReports(vendorId: _vendorId ?? vendorUserId)
+            .timeout(const Duration(seconds: 10));
         if (restData.isNotEmpty) {
           _dashboardStats = Map<String, dynamic>.from(restData);
           debugPrint('[VendorProvider] Loaded dashboard from Dokan/WC REST chain. Keys: ${_dashboardStats.keys.take(10)}');
         }
       } catch (e) {
-        debugPrint('[VendorProvider] Dokan/WC REST reports failed: $e');
+        debugPrint('[VendorProvider] Dokan/WC REST reports failed/timed out: $e');
       }
     }
 
@@ -493,7 +498,8 @@ class VendorProvider with ChangeNotifier {
     if (_dashboardStats.isEmpty ||
         (_dashboardStats['sales'] == null && _dashboardStats['orders'] == null && _dashboardStats['total_sales'] == null)) {
       try {
-        final wooData = await _api.getWooReportDashboard();
+        final wooData = await _api.getWooReportDashboard()
+            .timeout(const Duration(seconds: 10));
         if (wooData != null && wooData.isNotEmpty) {
           _dashboardStats = Map<String, dynamic>.from(wooData);
           debugPrint('[VendorProvider] Loaded dashboard from Woo Report plugin.');
@@ -504,7 +510,8 @@ class VendorProvider with ChangeNotifier {
     if (_dashboardStats.isEmpty ||
         (_dashboardStats['sales'] == null && _dashboardStats['orders'] == null && _dashboardStats['total_sales'] == null)) {
       try {
-        final wooStats = await _api.getWooReportVendorStats();
+        final wooStats = await _api.getWooReportVendorStats()
+            .timeout(const Duration(seconds: 10));
         if (wooStats != null && wooStats.isNotEmpty) {
           _dashboardStats = Map<String, dynamic>.from(wooStats);
           debugPrint('[VendorProvider] Loaded dashboard from Woo Report vendor stats.');
@@ -535,12 +542,14 @@ class VendorProvider with ChangeNotifier {
     _isLoadingBalance = true;
     notifyListeners();
     try {
-      _balance = await _api.getVendorBalance();
+      _balance = await _api.getVendorBalance()
+          .timeout(const Duration(seconds: 10));
     } catch (_) {}
     // Fallback to vendor-api.php
     if (_balance.isEmpty) {
       try {
-        final apiBalance = await _api.getVendorApiBalance();
+        final apiBalance = await _api.getVendorApiBalance()
+            .timeout(const Duration(seconds: 10));
         if (apiBalance != null && apiBalance.isNotEmpty) {
           _balance = apiBalance;
           debugPrint('[VendorProvider] Loaded balance from vendor-api.php bypass.');
@@ -569,13 +578,14 @@ class VendorProvider with ChangeNotifier {
       _orders = await _api.getVendorOrders(
         status: status,
         vendorId: _vendorId ?? vendorUserId,
-      );
+      ).timeout(const Duration(seconds: 12));
     } catch (_) {}
 
     // Fallback to vendor-api.php
     if (_orders.isEmpty) {
       try {
-        _orders = await _api.getVendorApiOrders(status: status);
+        _orders = await _api.getVendorApiOrders(status: status)
+            .timeout(const Duration(seconds: 12));
         debugPrint('[VendorProvider] Loaded orders from vendor-api.php bypass (${_orders.length}).');
       } catch (_) {}
     }
@@ -617,7 +627,7 @@ class VendorProvider with ChangeNotifier {
       final products = await _api.getVendorProducts(effectiveId,
         perPage: 100,
         authorUserId: vendorUserId, // reliable post_author filter
-      );
+      ).timeout(const Duration(seconds: 12));
       _vendorProducts = products.map((p) => {
         'id': p.id,
         'name': p.name,
@@ -638,7 +648,8 @@ class VendorProvider with ChangeNotifier {
     // Fallback to vendor-api.php
     if (_vendorProducts.isEmpty) {
       try {
-        final apiProducts = await _api.getVendorApiProducts(perPage: 100);
+        final apiProducts = await _api.getVendorApiProducts(perPage: 100)
+            .timeout(const Duration(seconds: 12));
         _vendorProducts = apiProducts.map((p) => {
           'id': int.tryParse(p['id']?.toString() ?? '') ?? 0,
           'name': p['name']?.toString() ?? '',
@@ -677,12 +688,14 @@ class VendorProvider with ChangeNotifier {
     _isLoadingWithdrawals = true;
     notifyListeners();
     try {
-      _withdrawals = await _api.getVendorWithdrawals();
+      _withdrawals = await _api.getVendorWithdrawals()
+          .timeout(const Duration(seconds: 10));
     } catch (_) {}
     // Fallback via vendor-api.php balance (returns withdrawals array)
     if (_withdrawals.isEmpty) {
       try {
-        final apiBalance = await _api.getVendorApiBalance();
+        final apiBalance = await _api.getVendorApiBalance()
+            .timeout(const Duration(seconds: 10));
         if (apiBalance != null && apiBalance.containsKey('withdrawals')) {
           final wList = apiBalance['withdrawals'];
           if (wList is List && wList.isNotEmpty) {
@@ -725,12 +738,14 @@ class VendorProvider with ChangeNotifier {
     _isLoadingCoupons = true;
     notifyListeners();
     try {
-      _coupons = await _api.getVendorCoupons();
+      _coupons = await _api.getVendorCoupons()
+          .timeout(const Duration(seconds: 10));
     } catch (_) {}
     // Fallback to vendor-api.php
     if (_coupons.isEmpty) {
       try {
-        _coupons = await _api.getVendorApiCoupons();
+        _coupons = await _api.getVendorApiCoupons()
+            .timeout(const Duration(seconds: 10));
         debugPrint('[VendorProvider] Loaded coupons from vendor-api.php bypass (${_coupons.length}).');
       } catch (_) {}
     }
