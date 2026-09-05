@@ -117,6 +117,14 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
       // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
       vendor.notifyListeners();
     }
+
+    // ── STEP 3: Automatic 1-second delayed refresh so the latest stats show
+    //    immediately after login without the user needing to pull-to-refresh.
+    Future<void>.delayed(const Duration(seconds: 1), () {
+      if (mounted) {
+        vendor.loadDashboard();
+      }
+    });
   }
 
   @override

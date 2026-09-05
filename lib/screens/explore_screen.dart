@@ -53,26 +53,11 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }
 
   /// Comma-separated category IDs for the WooCommerce `category` param,
-  /// or null for all. The Services option maps to the "services" category.
+  /// or null for all. Categories (including "Services") come from the
+  /// dynamically loaded product category list.
   String? get _categoryQuery {
-    if (_selectedFilter == 'services') {
-      final id = _servicesCategoryId;
-      if (id != null) return '$id';
-      return null;
-    }
     if (_selectedFilter.startsWith('cat:')) {
       return _selectedFilter.substring(4);
-    }
-    return null;
-  }
-
-  int? get _servicesCategoryId {
-    for (final c in _categories) {
-      final name = c.name.toLowerCase();
-      final slug = c.slug?.toLowerCase() ?? '';
-      if (name.contains('service') || slug.contains('service')) {
-        return c.id;
-      }
     }
     return null;
   }
@@ -290,10 +275,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
             const DropdownMenuItem(
               value: 'all',
               child: Text('All products'),
-            ),
-            const DropdownMenuItem(
-              value: 'services',
-              child: Text('Services'),
             ),
             ..._categories.map((c) {
               return DropdownMenuItem(
