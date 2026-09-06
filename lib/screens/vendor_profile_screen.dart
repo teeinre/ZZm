@@ -133,9 +133,30 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
 
       if (merged.isNotEmpty) {
         final uid = merged['user_id'];
+        final resolvedUserId = uid is int ? uid : int.tryParse(uid?.toString() ?? '');
+        final hasAbout = (merged['biography']?.toString() ?? '').trim().isNotEmpty ||
+            (merged['description']?.toString() ?? '').trim().isNotEmpty;
+
+        // If Dokan's public/store endpoints returned no about text, pull it from
+        // the custom vendor-bio REST route (returns raw HTML we strip later).
+        if (!hasAbout) {
+          final candidateIds = <int>{
+            if (resolvedUserId != null && resolvedUserId > 0) resolvedUserId,
+            widget.vendorId,
+          };
+          for (final id in candidateIds) {
+            final bio = await _apiService.getVendorBiography(id);
+            if (bio != null && bio.trim().isNotEmpty) {
+              merged['biography'] = bio;
+              debugPrint('[VendorProfile] Loaded biography from custom vendor-bio route (id=$id)');
+              break;
+            }
+          }
+        }
+
         setState(() {
           _vendorData = merged;
-          _vendorUserId = uid is int ? uid : int.tryParse(uid?.toString() ?? '');
+          _vendorUserId = resolvedUserId;
           _isLoadingVendor = false;
         });
         // CRITICAL: await _loadProducts() BEFORE calling _loadReviews() —

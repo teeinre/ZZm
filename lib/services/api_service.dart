@@ -2106,6 +2106,30 @@ class ApiService {
     return [];
   }
 
+  /// Fetch a vendor's biography via the custom REST route
+  /// /wp-json/custom/v1/vendor-bio/{id}. Returns the raw biography HTML string,
+  /// or null if unavailable. No auth required.
+  Future<String?> getVendorBiography(int id) async {
+    try {
+      final url = '${ApiConstants.baseUrl}/custom/v1/vendor-bio/$id';
+      debugPrint('[VendorAPI] GET vendor bio (id=$id): $url');
+      final response = await _get(url, useWcAuth: false, requireAuth: false)
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is Map) {
+          final bio = data['biography']?.toString();
+          if (bio != null && bio.trim().isNotEmpty) {
+            return bio;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[VendorAPI] vendor bio fetch failed: $e');
+    }
+    return null;
+  }
+
   /// Fetch a store's public profile info (description, rating, social, etc.)
   /// via vendor-api.php — no auth required. Used by the customer-facing
   /// vendor profile screen.
