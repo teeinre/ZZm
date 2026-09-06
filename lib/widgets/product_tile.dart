@@ -91,6 +91,25 @@ class _ProductTileState extends State<ProductTile> {
                               fontWeight: FontWeight.bold)),
                     ),
                   ),
+                // Bookable product badge
+                if (!isVariable && widget.product.isBookable)
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.coralColor,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text('Book',
+                          style: TextStyle(
+                              color: AppColors.whiteColor,
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
                 // Like button
                 Positioned(
                   top: 8,
@@ -179,8 +198,11 @@ class _ProductTileState extends State<ProductTile> {
                 ),
                 InkWell(
                   onTap: () {
-                    if (isVariable) {
-                      // Navigate to product detail for variable products
+                    final isBookable = widget.product.isBookable;
+                    if (isVariable || isBookable) {
+                      // Booking products MUST navigate to product detail page
+                      // so user can select date/time slots before adding to cart.
+                      // Variable products already need option selection.
                       Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -193,23 +215,23 @@ class _ProductTileState extends State<ProductTile> {
                     }
                   },
                   child: Container(
-                    padding: isVariable
+                    padding: (isVariable || widget.product.isBookable)
                         ? const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 4)
                         : null,
-                    width: isVariable ? null : 28,
-                    height: isVariable ? null : 28,
+                    width: (isVariable || widget.product.isBookable) ? null : 28,
+                    height: (isVariable || widget.product.isBookable) ? null : 28,
                     decoration: BoxDecoration(
                       color: AppColors.indigoColor,
-                      borderRadius: isVariable
+                      borderRadius: (isVariable || widget.product.isBookable)
                           ? BorderRadius.circular(12)
                           : null,
                       shape:
-                          isVariable ? BoxShape.rectangle : BoxShape.circle,
+                          (isVariable || widget.product.isBookable) ? BoxShape.rectangle : BoxShape.circle,
                     ),
-                    child: isVariable
-                        ? const Text('Choose',
-                            style: TextStyle(
+                    child: (isVariable || widget.product.isBookable)
+                        ? Text(widget.product.isBookable ? 'Book' : 'Choose',
+                            style: const TextStyle(
                                 color: AppColors.whiteColor,
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold))

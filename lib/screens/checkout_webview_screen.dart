@@ -77,12 +77,38 @@ class _CheckoutWebviewScreenState extends State<CheckoutWebviewScreen> {
     try {
       final cart = context.read<CartProvider>();
       final items = cart.cartItems.map((item) {
+        // ── Booking fields (if present) ────────────────────────────────
+        // For bookable products: convert stored bookingDate (DateTime) +
+        // bookingResourceId into the multi-shape booking payload expected
+        // by WooCommerce Bookings in the PHP bridge cart rebuild step.
+        String two(int n) => n.toString().padLeft(2, '0');
+        String? startDateStr;
+        String? startTimeStr;
+        Map<String, dynamic>? bookingCfg;
+        final bd = item.bookingDate;
+        if (bd != null) {
+          startDateStr = '${bd.year}-${two(bd.month)}-${two(bd.day)}';
+          startTimeStr = '${two(bd.hour)}:${two(bd.minute)}';
+          bookingCfg = <String, dynamic>{
+            'date':
+                '${bd.year}-${two(bd.month)}-${two(bd.day)} ${two(bd.hour)}:${two(bd.minute)}:00',
+            if (item.bookingResourceId != null)
+              'resource_id': item.bookingResourceId!,
+            if (item.bookingPersonsCount != null)
+              'persons': item.bookingPersonsCount!,
+          };
+        }
         return BridgeCartItem(
           productId: item.product.id,
           quantity: item.quantity,
           variationId: item.variationId != null
               ? int.tryParse(item.variationId!)
               : null,
+          bookingStartDate: startDateStr,
+          bookingStartTime: startTimeStr,
+          bookingResourceId: item.bookingResourceId,
+          bookingPersons: item.bookingPersonsCount,
+          bookingConfiguration: bookingCfg,
         );
       }).toList();
 

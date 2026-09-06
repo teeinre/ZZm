@@ -6,7 +6,7 @@ import '../providers/auth_provider.dart';
 import '../providers/cart_provider.dart';
 import '../providers/currency_provider.dart';
 import '../services/api_service.dart';
-import 'order_success_screen.dart';
+import 'checkout_webview_screen.dart';
 import 'profile_screen.dart';
 
 /// Native Store API checkout with auth gate, auto-login, and guest checkout.
@@ -156,54 +156,174 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       // Step 1: Establish session (auto-login: if authenticated, the JWT token
       // is already set on the ApiService, so Store API will see the user identity.)
       debugPrint('[Checkout] Step 1: fetch nonce (mode=${_mode.name})');
-      await _api.fetchStoreNonce();
+      try {
+        await _api.fetchStoreNonce();
+      } catch (e) {
+        debugPrint('[Checkout] Nonce fetch failed (continuing with add-to-cart anyway): $e');
+      }
 
-      debugPrint('[Checkout] Step 2: add ${localItems.length} items');
+      debugPrint('[Checkout] Step 2: add ${localItems.length} items (with 1 retry + qty-clamp fallback)');
       int added = 0;
       final failedItems = <String>[];
+      final failedErrors = <String, String>{}; // itemName -> errorMessage
+      final qtyReducedItems = <String>[]; // items whose qty was clamped to 1 for sold_individually
+
       for (final item in localItems) {
         final vid = item.variationId != null && item.variationId!.isNotEmpty
             ? int.tryParse(item.variationId!)
             : null;
-        try {
-          final result = await _api.addToStoreCart(
-            item.product.id,
-            quantity: item.quantity,
-            variationId: vid,
-          );
-          if (result != null) {
-            added++;
-          } else {
-            failedItems.add(item.product.name);
+        final hasBooking = item.bookingConfiguration != null;
+        debugPrint('[Checkout]   adding id=${item.product.id} qty=${item.quantity} vid=$vid booking=$hasBooking');
+
+        Exception? lastErr;
+        int effectiveQty = item.quantity;
+        bool triedClamp = false;
+
+        // Attempt loop: up to 3 passes
+        //   pass 0: normal qty
+        //   pass 1: retry normal qty (cold-cache / race-condition)
+        //   pass 2: if pass 1 was "inadequate amount" or sold_individually and qty>1, clamp to 1
+        const maxPasses = 3;
+        for (int attempt = 0; attempt < maxPasses; attempt++) {
+          try {
+            final result = await _api.addToStoreCart(
+              item.product.id,
+              quantity: effectiveQty,
+              variationId: vid,
+              bookingConfiguration: item.bookingConfiguration,
+            );
+            if (result != null) {
+              added++;
+              lastErr = null;
+              if (triedClamp) {
+                qtyReducedItems.add(item.product.name);
+                debugPrint('[Checkout]   ✓ ${item.product.name} added with qty reduced to $effectiveQty (sold individually)');
+              } else {
+                debugPrint('[Checkout]   ✓ ${item.product.name} added on pass ${attempt + 1} (qty=$effectiveQty)');
+              }
+              break;
+            } else {
+              lastErr = Exception('addToStoreCart returned null (no error detail)');
+              debugPrint('[Checkout]   ✗ ${item.product.name} pass ${attempt + 1}: returned null');
+            }
+          } catch (e) {
+            lastErr = e is Exception ? e : Exception(e.toString());
+            debugPrint('[Checkout]   ✗ ${item.product.name} pass ${attempt + 1}: $e');
+
+            // If this was pass 1 (the retry of normal qty) and error says inadequate amount
+            // or sold_individually / quantity limit, and qty > 1, try clamping to 1 on pass 2
+            final errStr = lastErr.toString().toLowerCase();
+            if (attempt == 1 &&
+                !triedClamp &&
+                item.quantity > 1 &&
+                (errStr.contains('inadequate amount') ||
+                    errStr.contains('quantity') ||
+                    errStr.contains('sold individually') ||
+                    errStr.contains('sold_individually') ||
+                    errStr.contains('maximum') ||
+                    (errStr.contains('http 400') && errStr.contains('amount')))) {
+              triedClamp = true;
+              effectiveQty = 1;
+              debugPrint('[Checkout]   ♻ ${item.product.name}: retrying pass 2 with qty clamped to 1');
+              await Future<void>.delayed(const Duration(milliseconds: 300));
+              continue;
+            }
           }
-        } catch (_) {
+          // Brief pause before normal retry (pass 0 -> pass 1)
+          if (attempt == 0) await Future<void>.delayed(const Duration(milliseconds: 400));
+        }
+        if (lastErr != null) {
           failedItems.add(item.product.name);
+          failedErrors[item.product.name] = lastErr.toString().replaceFirst('Exception: ', '');
         }
       }
 
       if (added == 0) {
-        final detail = failedItems.isNotEmpty
-            ? ' Failed items: ${failedItems.join(', ')}.'
+        final nameList = failedItems.take(3).join(', ');
+        final moreSuffix = failedItems.length > 3 ? ' (+${failedItems.length - 3} more)' : '';
+        final firstErr = failedErrors.isNotEmpty
+            ? '\n\nDetail: ${failedErrors.values.first}'
             : '';
         setState(() {
           _loading = false;
-          _error = 'Could not sync cart to server.$detail\n\n'
-              'This may happen if products are missing variation data or the store API is misconfigured.';
+          _error = 'Could not sync any items to the server.\n'
+              'Failed: $nameList$moreSuffix\n\n'
+              'This can happen if products were removed from the store, variation data is missing, '
+              'or there is a temporary server issue. Pull down on your cart and try again.'
+              '$firstErr';
         });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${failedItems.length} cart item${failedItems.length == 1 ? '' : 's'} could not be synced to the server.'),
+              backgroundColor: AppColors.coralColor,
+              duration: const Duration(seconds: 5),
+              action: SnackBarAction(
+                label: 'Retry',
+                textColor: AppColors.whiteColor,
+                onPressed: _initCheckout,
+              ),
+            ),
+          );
+        }
         return;
       }
 
+      // Partial success — warn user in SnackBar
       if (failedItems.isNotEmpty) {
-        debugPrint('[Checkout] Warning: ${failedItems.length} items failed: ${failedItems.join(', ')}');
+        debugPrint('[Checkout] Partial sync: $added added, ${failedItems.length} skipped: ${failedItems.join(', ')} — errors: $failedErrors');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$added of ${localItems.length} items synced. ${failedItems.length} item${failedItems.length == 1 ? '' : 's'} were unavailable and were skipped.'),
+              backgroundColor: AppColors.goldColor,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
       }
 
-      debugPrint('[Checkout] Step 3: fetch cart');
-      final cartData = await _api.getStoreCart();
+      // Quantity was reduced for some sold_individually products — notify user
+      if (qtyReducedItems.isNotEmpty) {
+        debugPrint('[Checkout] ${qtyReducedItems.length} items had qty reduced to 1 (sold individually): ${qtyReducedItems.join(', ')}');
+        if (mounted) {
+          final names = qtyReducedItems.take(2).join(', ');
+          final more = qtyReducedItems.length > 2 ? ' (+${qtyReducedItems.length - 2} more)' : '';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${qtyReducedItems.length} item${qtyReducedItems.length == 1 ? '' : 's'} limited to 1 per order (sold individually): $names$more'),
+              backgroundColor: AppColors.goldColor,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+      }
+
+      debugPrint('[Checkout] Step 3: fetch cart (added=$added');
+      Map<String, dynamic>? cartData;
+      for (int attempt = 0; attempt < 2; attempt++) {
+        try {
+          cartData = await _api.getStoreCart();
+          if (cartData != null) break;
+        } catch (e) {
+          debugPrint('[Checkout] Get store cart attempt ${attempt + 1} failed: $e');
+        }
+        if (attempt == 0) await Future<void>.delayed(const Duration(milliseconds: 600));
+      }
       if (cartData == null) {
         setState(() {
           _loading = false;
-          _error = 'Could not load checkout. Check your connection and try again.';
+          _error = 'Could not load cart data after syncing items. Please check your connection and retry.';
         });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Server did not return cart data.'),
+              backgroundColor: AppColors.coralColor,
+              action: SnackBarAction(label: 'Retry', textColor: AppColors.whiteColor, onPressed: _initCheckout),
+            ),
+          );
+        }
         return;
       }
 
@@ -213,9 +333,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       debugPrint('[Checkout] Init failed: $e');
       setState(() {
         _loading = false;
-        _error = 'Could not start checkout: ${e.toString()}\n\n'
+        _error = 'Could not start checkout: ${e.toString().replaceFirst('Exception: ', '')}\n\n'
             'Please check your internet connection and try again.';
       });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Checkout failed to start: $e'),
+            backgroundColor: AppColors.coralColor,
+            duration: const Duration(seconds: 6),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: AppColors.whiteColor,
+              onPressed: _initCheckout,
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -762,7 +896,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  // ── PLACE ORDER ──
+  // ── PLACE ORDER (redirects to WebView checkout — zzmore.store/checkout via bridge) ──
 
   Widget _buildPlaceOrderButton() {
     return SizedBox(
@@ -778,7 +912,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         ),
         child: _placingOrder
             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-            : const Text('Place Order', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            : const Text('Continue to Secure Checkout', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
       ),
     );
   }
@@ -786,7 +920,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _placeOrder() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // Validate shipping rates selected
+    // Shipping rate selection validation (optional for WebView; bridge rebuilds cart)
     for (final pkg in _shippingPackages) {
       final pkgId = pkg['package_id']?.toString() ?? '';
       final rates = (pkg['shipping_rates'] as List<dynamic>?) ?? [];
@@ -807,87 +941,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     setState(() => _placingOrder = true);
 
+    // ── Hand off to WebView checkout ──
+    // The PHP bridge handles cart rebuild, auth cookie injection, payment
+    // processing and order creation on the server. This 100% eliminates the
+    // "String is not a subtype of Map<String, dynamic>" type errors that
+    // occurred when trying to convert the native Store API response objects.
     try {
-      debugPrint('[Checkout] Selecting shipping rates...');
-      for (final pkg in _shippingPackages) {
-        final pkgId = pkg['package_id']?.toString() ?? '';
-        final rateId = _selectedRates[pkgId];
-        if (rateId != null) {
-          await _api.selectStoreShippingRate(pkgId, rateId);
-        }
-      }
-
-      debugPrint('[Checkout] Updating customer...');
-      final billing = {
-        'first_name': _firstNameCtrl.text.trim(),
-        'last_name': _lastNameCtrl.text.trim(),
-        'email': _emailCtrl.text.trim(),
-        'phone': _phoneCtrl.text.trim(),
-        'address_1': _addressCtrl.text.trim(),
-        'city': _cityCtrl.text.trim(),
-        'postcode': _postcodeCtrl.text.trim(),
-        'country': _countryCtrl.text.trim(),
-      };
-
-      // For authenticated users, pass customer_id to link the order to their account
-      if (_mode == _CheckoutMode.authenticated && _auth.user != null) {
-        billing['customer_id'] = _auth.user!.id.toString();
-      }
-
-      await _api.updateStoreCartCustomer(billing, billing);
-
-      debugPrint('[Checkout] Placing order...');
-      final result = await _api.storeCheckout(
-        paymentMethod: _selectedPayment ?? 'bacs',
+      await Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => const CheckoutWebviewScreen(),
+        ),
       );
-
-      if (result != null) {
-        final orderId = result['id']?.toString() ?? '';
-        final orderTotal = result['total']?.toString() ?? _totals['total_price']?.toString() ?? '0.00';
-        final orderEmail = _emailCtrl.text.trim();
-        final isGuest = _mode == _CheckoutMode.guest;
-
-        // Clear local cart
-        await context.read<CartProvider>().clearCart();
-
-        if (mounted) {
-          // Navigate to order success screen, removing checkout from stack
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => OrderSuccessScreen(
-                orderId: orderId,
-                total: orderTotal,
-                isGuest: isGuest,
-                email: orderEmail,
-              ),
-            ),
-          );
-        }
-      } else {
-        if (mounted) {
-          setState(() => _placingOrder = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Order could not be placed. Please check your details and try again.'),
-              backgroundColor: AppColors.coralColor,
-            ),
-          );
-        }
-      }
     } catch (e) {
-      debugPrint('[Checkout] Place order failed: $e');
+      debugPrint('[Checkout] WebView checkout push failed: $e');
       if (mounted) {
         setState(() => _placingOrder = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Payment failed: ${e.toString().replaceFirst('Exception: ', '')}'),
+            content: Text('Could not open checkout: $e'),
             backgroundColor: AppColors.coralColor,
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(
-              label: 'Retry',
-              textColor: AppColors.whiteColor,
-              onPressed: _placeOrder,
-            ),
           ),
         );
       }
