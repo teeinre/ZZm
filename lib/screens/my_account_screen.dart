@@ -973,10 +973,27 @@ class _MyAccountScreenState extends State<MyAccountScreen> with SingleTickerProv
 
   Widget _buildAccountDetailsTab() {
     final data = _wpUserData;
-    final displayName = data?['username']?.toString() ?? data?['display_name']?.toString() ?? '';
-    final email = data?['email']?.toString() ?? '';
-    final firstName = data?['first_name']?.toString() ?? '';
-    final lastName = data?['last_name']?.toString() ?? '';
+    final auth = context.read<AuthProvider>();
+
+    final dataUsername = data?['username']?.toString() ?? '';
+    final dataDisplay = data?['display_name']?.toString() ?? '';
+    final dataEmail = data?['email']?.toString() ?? '';
+    final dataFirstName = data?['first_name']?.toString() ?? '';
+    final dataLastName = data?['last_name']?.toString() ?? '';
+
+    // Robustly source account values (fall back to the authenticated user so
+    // the username/email never render empty).
+    final username = dataUsername.isNotEmpty
+        ? dataUsername
+        : (dataDisplay.isNotEmpty
+            ? dataDisplay
+            : (auth.user?.username?.isNotEmpty == true
+                ? auth.user!.username!
+                : (auth.user?.email ?? '')));
+    final displayName = username;
+    final email = dataEmail.isNotEmpty ? dataEmail : (auth.user?.email ?? '');
+    final firstName = dataFirstName.isNotEmpty ? dataFirstName : (auth.user?.firstName ?? '');
+    final lastName = dataLastName.isNotEmpty ? dataLastName : (auth.user?.lastName ?? '');
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),

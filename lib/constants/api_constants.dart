@@ -23,6 +23,10 @@ class ApiConstants {
   static const String dokanAnnouncementsEndpoint = '$dokanV1Base/announcement';
   static const String couponsEndpoint = '$wcApiBase/coupons';
 
+  // WooCommerce Bookings REST API (wc-bookings/v1)
+  static const String wcBookingsBase = '$baseUrl/wc-bookings/v1';
+  static const String wcBookingsSlotsEndpoint = '$wcBookingsBase/products/slots';
+
   // WooCommerce Store API (block-based checkout — enables Dokan multi-vendor shipping)
   static const String storeApiBase = '$baseUrl/wc/store/v1';
   static const String storeCartEndpoint = '$storeApiBase/cart';
@@ -65,6 +69,10 @@ class ApiConstants {
 
   // App Bridge (mu-plugin: zzmore-app-checkout.php)
   static const String appV1Base = '$baseUrl/app/v1';
+
+  // Vendor Bridge (mu-plugin: dokan-vendor-bridge.php + zzmore-payment-links.php)
+  static const String vendorBridgeBase = '$baseUrl/vendor-bridge/v1';
+  static const String paymentLinksEndpoint = '$vendorBridgeBase/payment-links';
 
   // ── Product / Vendor Exclusion ──
   /// Vendor store names/slugs whose products should be hidden from customer-facing views.
