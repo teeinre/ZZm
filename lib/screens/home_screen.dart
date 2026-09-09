@@ -17,6 +17,7 @@ import 'product_detail_screen.dart';
 import 'vendor_profile_screen.dart';
 import 'livestream_viewer_screen.dart';
 import 'all_livestreams_screen.dart';
+import 'vendor/vendor_livestream_screen.dart';
 
 typedef TabCallback = void Function(int index);
 
@@ -935,7 +936,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   );
 }
 
-Widget _buildGoLiveCTA() {
+void _handleGoLive() {
+    final auth = context.read<AuthProvider>();
+    final isAdmin = auth.user?.role?.toLowerCase() == 'administrator';
+    if (!auth.isVendor && !isAdmin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Live streaming is restricted to vendors only.'),
+          backgroundColor: AppColors.coralColor,
+        ),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const VendorLivestreamScreen()),
+    );
+  }
+
+  Widget _buildGoLiveCTA() {
     return Container(
       width: 170,
       margin: const EdgeInsets.only(right: 12),
@@ -945,7 +964,7 @@ Widget _buildGoLiveCTA() {
         border: Border.all(color: AppColors.goldColor.withOpacity(0.3), width: 1.5),
       ),
       child: InkWell(
-        onTap: () => widget.onTabSwitch?.call(3),
+        onTap: _handleGoLive,
         borderRadius: BorderRadius.circular(16),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
