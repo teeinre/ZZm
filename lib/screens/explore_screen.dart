@@ -85,14 +85,14 @@ class _ExploreScreenState extends State<ExploreScreen> {
     _page = 1;
     _hasMore = true;
     try {
-      var products = await _api.getProducts(page: _page, category: _categoryQuery);
+      var products = await _api.getProducts(page: _page, category: _categoryQuery, perPage: 20);
       final filtered = _filterExcluded(products);
       if (mounted) {
         setState(() {
           _products = filtered;
           _loading = false;
           _page++;
-          _hasMore = products.length >= ApiConstants.defaultPerPage;
+          _hasMore = products.length >= 20;
         });
       }
     } catch (e) {
@@ -100,14 +100,14 @@ class _ExploreScreenState extends State<ExploreScreen> {
       // If a category filter caused the failure, fall back to unfiltered.
       if (_categoryQuery != null) {
         try {
-          final products = await _api.getProducts(page: _page);
+          final products = await _api.getProducts(page: _page, perPage: 20);
           final filtered = _filterExcluded(products);
           if (mounted) {
             setState(() {
               _products = filtered;
               _loading = false;
               _page++;
-              _hasMore = products.length >= ApiConstants.defaultPerPage;
+              _hasMore = products.length >= 20;
             });
           }
           return;
@@ -126,13 +126,13 @@ class _ExploreScreenState extends State<ExploreScreen> {
     if (_loadingMore || _loading || !_hasMore) return;
     setState(() => _loadingMore = true);
     try {
-      final more = await _api.getProducts(page: _page, category: _categoryQuery);
+      final more = await _api.getProducts(page: _page, category: _categoryQuery, perPage: 20);
       final filtered = _filterExcluded(more);
       if (mounted) {
         setState(() {
           _products.addAll(filtered);
           _page++;
-          _hasMore = more.length >= ApiConstants.defaultPerPage;
+          _hasMore = more.length >= 20;
           _loadingMore = false;
         });
       }
