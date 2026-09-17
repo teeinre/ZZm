@@ -128,20 +128,40 @@ class _ExploreScreenState extends State<ExploreScreen> {
     return filtered;
   }
 
-  /// Loads WooCommerce product categories (non-empty, by product count).
+  /// Loads WooCommerce product categories.  Tries `orderby=count` (biggest
+  /// categories first) but some WC installs / WAFs reject non-default
+  /// orderby values, so it falls back to the default sort order on
+  /// failure.  We also trim to 100 max to avoid server timeouts.
   Future<void> _loadCategories() async {
+    List<Category> cats = [];
     try {
-      final cats = await _api.getCategories(perPage: 200, orderByCount: true);
-      if (mounted) setState(() => _categories = cats);
+      cats = await _api.getCategories(perPage: 100, orderByCount: true);
     } catch (e) {
-      debugPrint('[Explore] categories load failed: $e');
+      debugPrint('[Explore] categories orderByCount failed: $e');
     }
-    if (mounted) setState(() => _loadingCategories = false);
+    // Fallback: try the same categories endpoint without orderby=count
+    // if the first call returned empty or threw.
+    if (cats.isEmpty) {
+      try {
+        cats = await _api.getCategories(perPage: 100, orderByCount: false);
+      } catch (e2) {
+        debugPrint('[Explore] categories default load also failed: $e2');
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _categories = cats;
+        _loadingCategories = false;
+      });
+    }
   }
 
   /// Fetches the first page of products for the current filter.
-  /// Uses `orderby=popularity` on the server so we get top-selling items
-  /// first; then the local tiebreaker sort refines within the page.
+  ///
+  /// Primary sort is WooCommerce `orderby=popularity` (sales index) so
+  /// best-selling products surface first.  If that sort is rejected by
+  /// the server/WAF we fall back to a plain `orderby=date` fetch, which
+  /// is the most universally supported WC sort.
   Future<void> _loadProducts() async {
     setState(() {
       _loading = true;
@@ -149,57 +169,109 @@ class _ExploreScreenState extends State<ExploreScreen> {
     });
     _page = 1;
     _hasMore = true;
+
+    List<Product> raw = [];
     try {
-      final raw = await _api.getProducts(
+      raw = await _api.getProducts(
         page: _page,
         perPage: _perPage,
         category: _categoryQuery,
         orderby: 'popularity',
         order: 'desc',
       );
-      final processed = _postProcess(raw);
-      if (mounted) {
-        setState(() {
-          _products = processed;
-          _loading = false;
-          _page++;
-          _hasMore = raw.length >= _perPage;
-        });
-      }
     } catch (e) {
-      debugPrint('[Explore] load products failed: $e');
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = 'Could not load products. Please try again.';
-        });
+      debugPrint('[Explore] products popularity-sort failed: $e');
+    }
+    // Fallback if popularity failed / returned empty — date sort, then
+    // finally a parameterless (most server-compatible) call.
+    if (raw.isEmpty) {
+      try {
+        raw = await _api.getProducts(
+          page: _page,
+          perPage: _perPage,
+          category: _categoryQuery,
+          orderby: 'date',
+          order: 'desc',
+        );
+      } catch (e2) {
+        // Last-ditch: no orderby/order at all
+        try {
+          raw = await _api.getProducts(
+            page: _page,
+            perPage: _perPage,
+            category: _categoryQuery,
+          );
+        } catch (e3) {
+          if (mounted) {
+            setState(() {
+              _loading = false;
+              _error = 'Could not load products. Please try again.';
+            });
+          }
+          return;
+        }
       }
+    }
+
+    final processed = _postProcess(raw);
+    if (mounted) {
+      setState(() {
+        _products = processed;
+        _loading = false;
+        _page++;
+        _hasMore = raw.length >= _perPage;
+      });
     }
   }
 
-  /// Infinite scroll: fetches the next page using the same server sort.
+  /// Infinite scroll: fetches the next page.  Uses the same popularity →
+  /// date → default fallback chain so a sort rejected on page N doesn't
+  /// prevent further pages from loading.
   Future<void> _loadMore() async {
     if (_loadingMore || _loading || !_hasMore) return;
     setState(() => _loadingMore = true);
+
+    List<Product> raw = [];
     try {
-      final raw = await _api.getProducts(
+      raw = await _api.getProducts(
         page: _page,
         perPage: _perPage,
         category: _categoryQuery,
         orderby: 'popularity',
         order: 'desc',
       );
-      final processed = _postProcess(raw);
-      if (mounted) {
-        setState(() {
-          _products.addAll(processed);
-          _page++;
-          _hasMore = raw.length >= _perPage;
-          _loadingMore = false;
-        });
+    } catch (_) {}
+    if (raw.isEmpty) {
+      try {
+        raw = await _api.getProducts(
+          page: _page,
+          perPage: _perPage,
+          category: _categoryQuery,
+          orderby: 'date',
+          order: 'desc',
+        );
+      } catch (_) {
+        try {
+          raw = await _api.getProducts(
+            page: _page,
+            perPage: _perPage,
+            category: _categoryQuery,
+          );
+        } catch (_) {
+          if (mounted) setState(() => _loadingMore = false);
+          return;
+        }
       }
-    } catch (_) {
-      if (mounted) setState(() => _loadingMore = false);
+    }
+
+    final processed = _postProcess(raw);
+    if (mounted) {
+      setState(() {
+        _products.addAll(processed);
+        _page++;
+        _hasMore = raw.length >= _perPage;
+        _loadingMore = false;
+      });
     }
   }
 

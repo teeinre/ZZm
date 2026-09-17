@@ -439,6 +439,8 @@ class ApiService {
   Future<List<Product>> searchProducts(String query, {int perPage = 100}) async {
     final q = query.toLowerCase().trim();
     final merged = <int, Product>{};
+    bool strategy1Failed = false;
+    bool strategy3Failed = false;
 
     if (q.isEmpty) return [];
 
@@ -449,58 +451,59 @@ class ApiService {
         merged[p.id] = p;
       }
     } catch (e) {
-      // Primary search failed — surface the error to callers so they can
-      // show a retry indicator rather than a misleading "0 results".
-      rethrow;
+      // Fail open: if the server-side title search errors (timeout, WAF,
+      // 5xx), we still run Strategy 3 so "search failed" never appears
+      // when we could have found results in the description scan.
+      strategy1Failed = true;
+      debugPrint('[search] Strategy 1 (title search) failed: $e');
     }
 
-    // ── Strategy 2: Category-name match (best-effort) ───────────────────
+    // ── Strategy 3: Client-side title + description + short_desc scan ───
+    // WC's `search` parameter mostly touches post_title in most setups, so a
+    // service product whose description mentions "property" or "accounting"
+    // but title says "Monthly Retainer" would be invisible.  We fix this by
+    // fetching a DEEP pool (two sort orders × 200 each = 400-deduped pool)
+    // and running our own substring scan on exactly the fields the user
+    // asked for: title, long description, and short description — NOT
+    // category names (those are the Explore filter's job).
     try {
-      final cats = await getCategories(perPage: 100);
-      final matchedCatIds = cats
-          .where((c) =>
-              c.name.toLowerCase().contains(q) ||
-              (c.slug?.toLowerCase().contains(q) ?? false))
-          .map((c) => c.id.toString())
-          .toList();
-      if (matchedCatIds.isNotEmpty) {
-        final byCategory = await getProducts(
-            category: matchedCatIds.join(','), perPage: perPage);
-        for (final p in byCategory) {
-          merged[p.id] = p;
+      final pool = <int, Product>{};
+      // Sort #1: newest first — catches recently-added service products.
+      try {
+        final recent = await getProducts(perPage: 200, orderby: 'date', order: 'desc');
+        for (final p in recent) {
+          pool[p.id] = p;
+        }
+      } catch (_) {}
+      // Sort #2: most-sold first — catches popular services.
+      try {
+        final popular = await getProducts(perPage: 200, orderby: 'popularity', order: 'desc');
+        for (final p in popular) {
+          pool[p.id] = p;
+        }
+      } catch (_) {}
+      // If both specific-sort fetches are rejected (some WAFs block
+      // arbitrary orderby), fall back to one generic 200-item fetch so we
+      // at least scan something.
+      if (pool.isEmpty) {
+        final fallback = await getProducts(perPage: 200);
+        for (final p in fallback) {
+          pool[p.id] = p;
         }
       }
-    } catch (_) {}
 
-    // ── Strategy 3: Client-side broad text match (description / SKU / …) ─
-    // WC's `search` parameter only touches post_title in most setups, so a
-    // product whose description mentions "property" but title says "3-Bed
-    // Duplex in Lekki" would be invisible.  We fix this by fetching a wide
-    // pool and running our own substring scan over every text field we have
-    // access to inside the Product model.
-    try {
-      // Fetch up to 200 most-recent products (higher perPage than normal so
-      // we cast the net wide enough).  If this causes too much bandwidth on
-      // slow connections, dial it back to 150 in a future tweak.
-      final broadPool = await getProducts(perPage: 200);
       final terms = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
-
-      for (final p in broadPool) {
-        if (merged.containsKey(p.id)) continue; // already captured
+      for (final p in pool.values) {
+        if (merged.containsKey(p.id)) continue;
 
         final name = p.name.toLowerCase();
         final desc = (p.description ?? '').toLowerCase();
         final short = (p.shortDescription ?? '').toLowerCase();
-        final vendor = (p.vendorName ?? '').toLowerCase();
-        final sku = (p.sku ?? '').toLowerCase();
-        final catNames =
-            p.categories.map((c) => c.name.toLowerCase()).join(' ');
-        final allText = '$name $desc $short $vendor $sku $catNames';
+        // ONLY title + description + short description.  Category name
+        // lookup was requested to live in the Explore dropdown, not here.
+        final allText = '$name $desc $short';
 
         bool matches = allText.contains(q);
-        // Also require every individual word to appear somewhere when the
-        // query is multi-word — prevents false positives like "rent car"
-        // matching a product that only mentions "rent" in description.
         if (!matches && terms.length > 1) {
           matches = terms.every((t) => allText.contains(t));
         }
@@ -508,7 +511,18 @@ class ApiService {
           merged[p.id] = p;
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      strategy3Failed = true;
+      debugPrint('[search] Strategy 3 (description pool) failed: $e');
+    }
+
+    // Only surface an error if BOTH strategies failed AND we have zero
+    // results to show.  Any partial result is returned optimistically
+    // (e.g. Strategy 3 finds "property" in descriptions even after S1
+    // threw a WAF block).
+    if (merged.isEmpty && strategy1Failed && strategy3Failed) {
+      throw Exception('Search could not reach the server. Please try again.');
+    }
 
     return merged.values.toList();
   }
