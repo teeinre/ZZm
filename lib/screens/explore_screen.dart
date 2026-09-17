@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../constants/app_colors.dart';
 import '../constants/api_constants.dart';
@@ -7,18 +6,21 @@ import '../models/category.dart';
 import '../services/api_service.dart';
 import '../widgets/product_tile.dart';
 
-/// Explore tab: a fast, server-filtered catalog of products with
-/// WooCommerce PRODUCT CATEGORY filtering and relevance-ordered results.
+/// Explore tab: WooCommerce product_cat taxonomy-based catalog.
 ///
-/// Performance & relevance:
-///  * Server-side: `orderby=popularity` (WooCommerce indexed sales count
-///    sort) — so WC returns the best-selling products first before we
-///    even touch the list.
-///  * Client-side tiebreaker: a composite score over
-///    `popularity * rating * review_count` so products with strong sales
-///    AND strong reviews sit at the very top within each page.
-///  * Filtering via WC `category=<id>` (server-side) — no pulling a huge
-///    list and discarding items locally, so each request stays fast.
+/// Architecture (FIXED — Sept 2026):
+///  * Category source: vendor-api.php → `get_all_product_categories`
+///    (uses WP `get_terms('product_cat')` directly — never Dokan store_category,
+///    includes empty categories, sorted A-Z).
+///  * Product source (All filter): vendor-api.php → `get_products_by_category`
+///    fallback + WC REST `?category=` as alternate path — both use the
+///    post_type=product + product_cat term_relationship INNER JOIN, so every
+///    product type works: simple, variable, booking, subscription, bundle,
+///    downloadable, virtual, grouped, external.
+///  * Category listing sort: strict alphabetical A→Z, Uncategorized always
+///    last regardless of alphabetical position.
+///  * Product listing sort: strict alphabetical A→Z by product title
+///    (relevance/popularity removed per requirements).
 class ExploreScreen extends StatefulWidget {
   const ExploreScreen({super.key});
 
@@ -30,8 +32,8 @@ class _ExploreScreenState extends State<ExploreScreen> {
   final ApiService _api = ApiService();
   final ScrollController _scroll = ScrollController();
 
-  /// WooCommerce product categories (only non-empty, sorted by product
-  /// count descending so the biggest categories appear first).
+  /// WooCommerce PRODUCT categories (taxonomy=product_cat).  Sorted
+  /// alphabetically A→Z with Uncategorized forced to the END of the list.
   List<Category> _categories = [];
 
   List<Product> _products = [];
@@ -46,9 +48,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
   bool _hasMore = true;
   String? _error;
 
-  /// How many products per fetch page.  60 strikes a good balance between
-  /// (a) fewer round trips when the user scrolls and (b) not asking for
-  /// so many items that the server spends too long serialising JSON.
   static const int _perPage = 60;
 
   @override
@@ -72,7 +71,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
     }
   }
 
-  /// The currently-selected product category id, or `null` for "All".
   int? get _selectedCategoryId {
     if (_selectedFilter.startsWith('cat:')) {
       return int.tryParse(_selectedFilter.substring(4));
@@ -80,88 +78,128 @@ class _ExploreScreenState extends State<ExploreScreen> {
     return null;
   }
 
-  /// Comma-separated category ids to forward to the server, or `null`.
-  String? get _categoryQuery {
-    final cid = _selectedCategoryId;
-    return cid == null ? null : cid.toString();
+  /// Returns true if the category slug/name matches the WooCommerce
+  /// default "Uncategorized" term (case-insensitive match on both slug
+  /// and name so it works regardless of site language).
+  static bool _isUncategorized(Category c) {
+    final slug = (c.slug ?? '').toLowerCase().trim();
+    final name = c.name.toLowerCase().trim();
+    if (slug == 'uncategorized') return true;
+    if (name == 'uncategorized') return true;
+    // Fallback: the Uncategorized term is almost always ID=1 on a fresh
+    // WooCommerce install.  The match above already covers the canonical
+    // case so this shouldn't be needed, but we keep it for robustness.
+    if (c.id == 1 && slug.isEmpty) return true;
+    return false;
   }
 
-  /// Relevance composite score (higher = more relevant).
-  ///
-  /// Server already sorts by WooCommerce `popularity` (sales count) DESC,
-  /// which is the biggest and most accurate signal.  The local score is a
-  /// page-level tiebreaker that pushes products with HIGHER star ratings
-  /// and MORE reviews above similar products at the same server rank.
-  ///
-  /// In-stock products are also boosted vs. out-of-stock ones so users
-  /// see purchasable items first.
-  static double _relevanceScore(Product p) {
-    final rating = (p.rating != null && p.rating! > 0) ? p.rating! : 2.5;
-    final reviews = p.ratingCount.toDouble();
-    final stockBoost = p.inStock ? 1.25 : 0.6;
-    final onSaleBoost = p.onSale ? 1.05 : 1.0;
-    // rating factor ∈ (0.5 .. 1.5) → 5-star is 3× more weight than 0-star
-    final ratingFactor = 0.5 + rating / 5.0;
-    // log(1 + reviews) ∈ (0 .. ~3) — diminishes so 1000-review items
-    // don't completely dominate 20-review items but still win ties.
-    final reviewFactor = 1 + _log10(1 + reviews);
-    return ratingFactor * reviewFactor * stockBoost * onSaleBoost;
+  /// Applies strict A-Z sorting to a category list, with the
+  /// "Uncategorized" term forced to the END of the list no matter what.
+  static List<Category> _sortCategories(List<Category> input) {
+    final sorted = List<Category>.from(input);
+    sorted.sort((a, b) {
+      final aU = _isUncategorized(a);
+      final bU = _isUncategorized(b);
+      if (aU && !bU) return 1;
+      if (!aU && bU) return -1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return sorted;
   }
 
-  static double _log10(double x) {
-    const ln10 = 2.302585093;
-    return x > 0 ? math.log(x) / ln10 : 0;
-  }
-
-  /// Applies post-server filtering (vendor blocklist) and relevance
-  /// tiebreaker sorting within the page.  Server already returns items
-  /// by `popularity` DESC — the stable sort here only reorders items
-  /// that have the same popularity score so higher-rated items win.
+  /// Applies:
+  ///   1) vendor blocklist filter (unchanged from before),
+  ///   2) strict ALPHABETICAL A→Z sort by product title (relevance removed).
   List<Product> _postProcess(List<Product> list) {
     final filtered = list
         .where((p) => !ApiConstants.isVendorExcluded(
             id: p.vendorId, name: p.vendorName))
         .toList();
-    // Stable sort: preserve server order for equal scores but push
-    // higher-scoring items toward the top.  Sort descending by score.
-    filtered.sort((a, b) => _relevanceScore(b).compareTo(_relevanceScore(a)));
+    filtered.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return filtered;
   }
 
-  /// Loads WooCommerce product categories.  Tries `orderby=count` (biggest
-  /// categories first) but some WC installs / WAFs reject non-default
-  /// orderby values, so it falls back to the default sort order on
-  /// failure.  We also trim to 100 max to avoid server timeouts.
+  /// Loads the WooCommerce product_cat taxonomy terms.
+  ///
+  /// PRIMARY PATH (new, preferred): vendor-api.php get_all_product_categories
+  ///   — Bypasses WC REST entirely.  Uses WP get_terms('product_cat') directly.
+  ///   Returns: ALL terms (hide_empty=false on first call so categories with
+  ///   only non-physical products still appear).
+  ///
+  /// FALLBACK PATHS (if vendor-api not yet deployed or unreachable):
+  ///   1) WC REST /products/categories?hide_empty=true&orderby=count
+  ///   2) WC REST /products/categories?hide_empty=true default order
+  ///
+  /// After loading: categories are sorted A-Z with Uncategorized always last.
   Future<void> _loadCategories() async {
     List<Category> cats = [];
+
+    // ── Path 1: vendor-api.php (authoritative — includes all terms) ────
     try {
-      cats = await _api.getCategories(perPage: 100, orderByCount: true);
+      cats = await _api.getAllProductCategories(hideEmpty: false);
+      debugPrint(
+          '[Explore] categories vendor-api primary: returned ${cats.length}');
     } catch (e) {
-      debugPrint('[Explore] categories orderByCount failed: $e');
+      debugPrint('[Explore] categories vendor-api primary FAILED: $e');
     }
-    // Fallback: try the same categories endpoint without orderby=count
-    // if the first call returned empty or threw.
+
+    // ── Path 2: WC REST orderByCount (if vendor-api returned empty/threw) ─
+    if (cats.isEmpty) {
+      try {
+        cats = await _api.getCategories(perPage: 100, orderByCount: true);
+        debugPrint('[Explore] categories wc-rest count-sort: ${cats.length}');
+      } catch (e) {
+        debugPrint('[Explore] categories wc-rest count-sort FAILED: $e');
+      }
+    }
+
+    // ── Path 3: WC REST default order ──────────────────────────────────
     if (cats.isEmpty) {
       try {
         cats = await _api.getCategories(perPage: 100, orderByCount: false);
+        debugPrint('[Explore] categories wc-rest default: ${cats.length}');
       } catch (e2) {
-        debugPrint('[Explore] categories default load also failed: $e2');
+        debugPrint('[Explore] categories wc-rest default FAILED: $e2');
       }
     }
+
+    // ── Post-load: STRICT A-Z + Uncategorized at the END ──────────────
+    final sorted = _sortCategories(cats);
+
+    debugPrint('[Explore] final category list (total=${sorted.length}). '
+        'Uncategorized at index: '
+        '${sorted.indexWhere((c) => _isUncategorized(c))} '
+        '(should be = length-1 when present)');
+
     if (mounted) {
       setState(() {
-        _categories = cats;
+        _categories = sorted;
         _loadingCategories = false;
       });
     }
   }
 
-  /// Fetches the first page of products for the current filter.
+  /// Fetches one page of products for the current filter.
   ///
-  /// Primary sort is WooCommerce `orderby=popularity` (sales index) so
-  /// best-selling products surface first.  If that sort is rejected by
-  /// the server/WAF we fall back to a plain `orderby=date` fetch, which
-  /// is the most universally supported WC sort.
+  /// Product fetch path priority:
+  ///
+  ///   1) vendor-api.php get_products_by_category
+  ///      — DIRECT SQL (term_relationships INNER JOIN product_cat)
+  ///      — works for simple, variable, booking, subscription, all types
+  ///      — returns [] (HTTP 200) on "no matches" instead of 4xx/5xx
+  ///   2) vendor-api.php search_products (pool for All filter)
+  ///   3) WC REST /wc/v3/products?category=X (fallback, may miss booking types)
+  ///
+  /// If the user has "All products" selected we do a wider sweep by:
+  ///   a) calling getProducts() without category restriction
+  ///   b) using the same 3-attempt (popularity → date → default) structure,
+  ///      but now a 4th path: vendor-api search_products with a tiny
+  ///      pool-building query.
+  ///
+  /// ERROR POLICY: error banner is ONLY shown when ALL paths threw
+  /// exceptions (we literally got zero HTTP 200 responses).  Any path
+  /// that returned HTTP 200 (even with empty list) counts as success →
+  /// render the "no products yet" card.
   Future<void> _loadProducts() async {
     setState(() {
       _loading = true;
@@ -171,50 +209,121 @@ class _ExploreScreenState extends State<ExploreScreen> {
     _hasMore = true;
 
     List<Product> raw = [];
-    try {
-      raw = await _api.getProducts(
-        page: _page,
-        perPage: _perPage,
-        category: _categoryQuery,
-        orderby: 'popularity',
-        order: 'desc',
-      );
-    } catch (e) {
-      debugPrint('[Explore] products popularity-sort failed: $e');
+    int throwCount = 0;
+    int triedPaths = 0;
+
+    final cid = _selectedCategoryId;
+
+    // ── Path 1 (PREFERRED): vendor-api.php get_products_by_category ───
+    // Works for ALL product types: simple, booking, subscription, etc.
+    // If cid == null ("All products") we SKIP this path since it needs
+    // a specific category_id — we handle "All" via Paths 2..4.
+    if (cid != null) {
+      triedPaths++;
+      try {
+        raw = await _api.getProductsByCategory(cid,
+            page: _page, perPage: _perPage);
+        debugPrint(
+            '[Explore] p1 vendor-api cat=$cid: returned ${raw.length}');
+      } catch (e) {
+        throwCount++;
+        debugPrint('[Explore] p1 vendor-api cat=$cid THREW: $e');
+      }
     }
-    // Fallback if popularity failed / returned empty — date sort, then
-    // finally a parameterless (most server-compatible) call.
+
+    // ── Path 2: vendor-api.php search_products pool builder (for "All") ─
+    // Cheap way to get a cross-section of all product types when no
+    // category is filtered — useful for sites where WC REST skips
+    // booking/subscription types.
+    if (raw.isEmpty && cid == null) {
+      triedPaths++;
+      try {
+        raw = await _api.searchProducts(' ', perPage: _perPage);
+        debugPrint('[Explore] p2 vendor-api pool (All): ${raw.length}');
+      } catch (e) {
+        throwCount++;
+        debugPrint('[Explore] p2 vendor-api pool THREW: $e');
+      }
+    }
+
+    // ── Path 3: WC REST category filter (best-effort fallback) ────────
+    //   3 attempts: popularity → date → default sort (to beat WAF)
+    int wcThrowCount = 0;
+    const wcAttempts = 3;
     if (raw.isEmpty) {
+      triedPaths++;
       try {
         raw = await _api.getProducts(
           page: _page,
           perPage: _perPage,
-          category: _categoryQuery,
+          category: cid?.toString(),
+          orderby: 'popularity',
+          order: 'desc',
+        );
+        debugPrint('[Explore] p3 wc popularity: returned ${raw.length}');
+      } catch (e) {
+        wcThrowCount++;
+        debugPrint('[Explore] p3 wc popularity THREW: $e');
+      }
+    }
+    if (raw.isEmpty && wcThrowCount >= 1) {
+      try {
+        raw = await _api.getProducts(
+          page: _page,
+          perPage: _perPage,
+          category: cid?.toString(),
           orderby: 'date',
           order: 'desc',
         );
-      } catch (e2) {
-        // Last-ditch: no orderby/order at all
-        try {
-          raw = await _api.getProducts(
-            page: _page,
-            perPage: _perPage,
-            category: _categoryQuery,
-          );
-        } catch (e3) {
-          if (mounted) {
-            setState(() {
-              _loading = false;
-              _error = 'Could not load products. Please try again.';
-            });
-          }
-          return;
-        }
+        debugPrint('[Explore] p3 wc date: returned ${raw.length}');
+      } catch (e) {
+        wcThrowCount++;
+        debugPrint('[Explore] p3 wc date THREW: $e');
+      }
+    }
+    if (raw.isEmpty && wcThrowCount >= 2) {
+      try {
+        raw = await _api.getProducts(
+          page: _page,
+          perPage: _perPage,
+          category: cid?.toString(),
+        );
+        debugPrint('[Explore] p3 wc default: returned ${raw.length}');
+      } catch (e) {
+        wcThrowCount++;
+        debugPrint('[Explore] p3 wc default THREW: $e');
+      }
+    }
+    if (wcThrowCount == wcAttempts) throwCount++;
+
+    // ── Path 4: For "All" filter only: broader WC REST sweep ──────────
+    // (extra attempt without any restrictions)
+    if (cid == null && raw.isEmpty) {
+      triedPaths++;
+      try {
+        raw = await _api.getProducts(
+            page: _page, perPage: _perPage, orderby: 'title', order: 'asc');
+        debugPrint('[Explore] p4 wc all-title-sort: returned ${raw.length}');
+      } catch (e) {
+        throwCount++;
+        debugPrint('[Explore] p4 wc all-title-sort THREW: $e');
       }
     }
 
-    final processed = _postProcess(raw);
+    // ── Decision: error banner or (possibly empty) result ──────────────
+    final anyPathRan = triedPaths > 0;
+    final everyPathThrew = throwCount >= triedPaths && triedPaths > 0;
+
     if (mounted) {
+      if (everyPathThrew && raw.isEmpty && anyPathRan) {
+        setState(() {
+          _loading = false;
+          _error = 'Could not load products. Please try again.';
+        });
+        return;
+      }
+
+      final processed = _postProcess(raw);
       setState(() {
         _products = processed;
         _loading = false;
@@ -224,44 +333,53 @@ class _ExploreScreenState extends State<ExploreScreen> {
     }
   }
 
-  /// Infinite scroll: fetches the next page.  Uses the same popularity →
-  /// date → default fallback chain so a sort rejected on page N doesn't
-  /// prevent further pages from loading.
+  /// Infinite scroll.  Same multi-path priority as _loadProducts but
+  /// without the pool-builder search step (simpler because the user is
+  /// already seeing at least one page of products).
   Future<void> _loadMore() async {
     if (_loadingMore || _loading || !_hasMore) return;
     setState(() => _loadingMore = true);
 
     List<Product> raw = [];
-    try {
-      raw = await _api.getProducts(
-        page: _page,
-        perPage: _perPage,
-        category: _categoryQuery,
-        orderby: 'popularity',
-        order: 'desc',
-      );
-    } catch (_) {}
+    int throwCount = 0;
+    int triedPaths = 0;
+    final cid = _selectedCategoryId;
+
+    if (cid != null) {
+      triedPaths++;
+      try {
+        raw = await _api.getProductsByCategory(cid,
+            page: _page, perPage: _perPage);
+      } catch (_) {
+        throwCount++;
+      }
+    }
     if (raw.isEmpty) {
+      triedPaths++;
       try {
         raw = await _api.getProducts(
           page: _page,
           perPage: _perPage,
-          category: _categoryQuery,
-          orderby: 'date',
-          order: 'desc',
+          category: cid?.toString(),
         );
       } catch (_) {
-        try {
-          raw = await _api.getProducts(
-            page: _page,
-            perPage: _perPage,
-            category: _categoryQuery,
-          );
-        } catch (_) {
-          if (mounted) setState(() => _loadingMore = false);
-          return;
-        }
+        throwCount++;
       }
+    }
+    if (raw.isEmpty && cid == null) {
+      triedPaths++;
+      try {
+        raw = await _api.getProducts(
+            page: _page, perPage: _perPage, orderby: 'title', order: 'asc');
+      } catch (_) {
+        throwCount++;
+      }
+    }
+
+    final everyPathThrew = throwCount >= triedPaths && triedPaths > 0;
+    if (everyPathThrew && raw.isEmpty) {
+      if (mounted) setState(() => _loadingMore = false);
+      return;
     }
 
     final processed = _postProcess(raw);
@@ -357,7 +475,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Browse the full ZZmore catalog – top sellers first',
+            'Browse the full ZZmore catalog – sorted A–Z',
             style: TextStyle(color: AppColors.inkSoftColor, fontSize: 13),
           ),
           const SizedBox(height: 16),
@@ -414,8 +532,8 @@ class _ExploreScreenState extends State<ExploreScreen> {
               child: Text('All products'),
             ),
             ..._categories.map((c) {
-              final count = c.count ?? 0;
-              final label = count > 0 ? '${c.name} ($count)' : c.name;
+              final label =
+                  '${c.name}${c.count > 0 ? ' (${c.count})' : ''}';
               return DropdownMenuItem(
                 value: 'cat:${c.id}',
                 child: Text(label),

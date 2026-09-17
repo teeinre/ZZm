@@ -664,6 +664,432 @@ if ( $action === 'get_store_reviews' ) {
     ] );
 }
 
+// ── search_products (public — bypasses WAF / reserved-word issues) ───
+// GET /vendor-api.php?action=search_products&q=property&per_page=100
+//
+// Direct-SQL product search that scans post_title, post_content,
+// post_excerpt, and meta (_sku, _yoast_wpseo_metadesc, etc.).
+//
+// WHY THIS EXISTS:
+//   The WP REST /wc/store/v1/products?search= and WC REST ?search=
+//   endpoints pass the search term through WP_Query's `s` parameter
+//   which (a) only touches post_title+post_excerpt in most setups,
+//   AND (b) routes through WP's SQL comment parser, WAF rules, and
+//   3rd-party filters.  Certain common words ("property", "select",
+//   "union", "order" — anything that looks SQL-ish) can trigger
+//   false positives in a WAF / mod_security rule and get rejected
+//   with 403/500.  That is exactly the bug reported: gibberish like
+//   "dfbhfh" returns 200+empty → UI shows "No results", while
+//   legitimate words like "property" trip the WAF → 403/500 →
+//   searchProducts() throws → UI shows "Search failed".
+//
+//   This endpoint circumvents the problem by:
+//     1. Never using WP_Query's `s` parameter.
+//     2. Using wpdb->prepare + literal LIKE so the SQL is boring.
+//     3. Scanning MORE fields than WP's native search.
+//     4. NEVER throwing on empty — always returns 200 with [] if none.
+if ( $action === 'search_products' ) {
+    $q_raw    = trim( wp_unslash( $_GET['q'] ?? '' ) );
+    $per_page = max( 1, min( 200, (int) ( $_GET['per_page'] ?? 100 ) ) );
+    $page     = max( 1, (int) ( $_GET['page'] ?? 1 ) );
+    $offset   = ( $page - 1 ) * $per_page;
+
+    // Log the search attempt to a plain-text file so we can debug
+    // WAF / parser failures without the WP debug log.  Max 1 MB.
+    $log_file = __DIR__ . '/vendor-api-search.log';
+    if ( function_exists( 'ini_get' ) ) {
+        $log_max = 1048576; // 1 MB
+        if ( @is_file( $log_file ) && @filesize( $log_file ) > $log_max ) {
+            @unlink( $log_file );
+        }
+    }
+    $log_line = sprintf(
+        "[%s] ip=%s q=%s ua=%s\n",
+        date( 'Y-m-d H:i:s' ),
+        $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+        $q_raw !== '' ? $q_raw : '(empty)',
+        substr( preg_replace( '/\s+/', ' ', $_SERVER['HTTP_USER_AGENT'] ?? '' ), 0, 120 )
+    );
+    @file_put_contents( $log_file, $log_line, FILE_APPEND );
+
+    // Quick return for empty query (keep HTTP 200)
+    if ( $q_raw === '' ) {
+        vendor_api_respond( [ 'products' => [], 'total' => 0, 'note' => 'empty query' ] );
+    }
+
+    global $wpdb;
+    $q_like = '%' . $wpdb->esc_like( $q_raw ) . '%';
+
+    // Count matches first (cheaper than fetching rows if nothing matches)
+    $count_sql = "
+        SELECT COUNT(DISTINCT p.ID)
+        FROM {$wpdb->posts} p
+        LEFT JOIN {$wpdb->postmeta} pm
+               ON pm.post_id = p.ID
+              AND pm.meta_key IN ('_sku', 'total_sales', '_wc_average_rating', '_wc_review_count')
+        WHERE p.post_type = 'product'
+          AND p.post_status = 'publish'
+          AND (
+              p.post_title    LIKE %s
+           OR p.post_content  LIKE %s
+           OR p.post_excerpt  LIKE %s
+           OR (pm.meta_key = '_sku' AND pm.meta_value LIKE %s)
+          )
+    ";
+    $total = (int) $wpdb->get_var( $wpdb->prepare(
+        $count_sql,
+        $q_like, $q_like, $q_like, $q_like
+    ) );
+
+    if ( $total === 0 ) {
+        vendor_api_respond( [ 'products' => [], 'total' => 0, 'q' => $q_raw, 'note' => 'no matches' ] );
+    }
+
+    // Fetch matched products with basic meta (mirrors WC REST shape closely
+    // enough that Product.fromJson can ingest it after a light transform
+    // on the client — OR the client can use ids to call the regular
+    // products endpoint; we return both: raw row + product IDs list).
+    $rows_sql = "
+        SELECT
+            DISTINCT p.ID,
+            p.post_title        AS name,
+            p.post_name         AS slug,
+            p.post_content      AS description,
+            p.post_excerpt      AS short_description,
+            p.post_author       AS author,
+            pm_sku.meta_value   AS sku,
+            pm_price.meta_value AS price,
+            pm_reg.meta_value   AS regular_price,
+            pm_sale.meta_value  AS sale_price,
+            pm_stock.meta_value AS stock_status,
+            pm_rating.meta_value AS average_rating,
+            pm_reviews.meta_value AS rating_count,
+            pm_sales.meta_value AS total_sales
+        FROM {$wpdb->posts} p
+        LEFT JOIN {$wpdb->postmeta} pm_sku     ON pm_sku.post_id = p.ID     AND pm_sku.meta_key = '_sku'
+        LEFT JOIN {$wpdb->postmeta} pm_price   ON pm_price.post_id = p.ID   AND pm_price.meta_key = '_price'
+        LEFT JOIN {$wpdb->postmeta} pm_reg     ON pm_reg.post_id = p.ID     AND pm_reg.meta_key = '_regular_price'
+        LEFT JOIN {$wpdb->postmeta} pm_sale    ON pm_sale.post_id = p.ID    AND pm_sale.meta_key = '_sale_price'
+        LEFT JOIN {$wpdb->postmeta} pm_stock   ON pm_stock.post_id = p.ID   AND pm_stock.meta_key = '_stock_status'
+        LEFT JOIN {$wpdb->postmeta} pm_rating  ON pm_rating.post_id = p.ID  AND pm_rating.meta_key = '_wc_average_rating'
+        LEFT JOIN {$wpdb->postmeta} pm_reviews ON pm_reviews.post_id = p.ID AND pm_reviews.meta_key = '_wc_review_count'
+        LEFT JOIN {$wpdb->postmeta} pm_sales   ON pm_sales.post_id = p.ID   AND pm_sales.meta_key = 'total_sales'
+        WHERE p.post_type = 'product'
+          AND p.post_status = 'publish'
+          AND (
+              p.post_title    LIKE %s
+           OR p.post_content  LIKE %s
+           OR p.post_excerpt  LIKE %s
+           OR (pm_sku.meta_value IS NOT NULL AND pm_sku.meta_value LIKE %s)
+          )
+        ORDER BY
+            CASE WHEN p.post_title LIKE %s THEN 1 ELSE 2 END,
+            CASE WHEN p.post_title LIKE %s THEN 0 ELSE 1 END,
+            CAST(COALESCE(pm_sales.meta_value, '0') AS DECIMAL(18,4)) DESC,
+            p.ID DESC
+        LIMIT %d OFFSET %d
+    ";
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        $rows_sql,
+        $q_like, $q_like, $q_like, $q_like,      // WHERE LIKEs
+        $q_like,                                 // ORDER BY CASE 1 — exact-ish prefix
+        '%' . $wpdb->esc_like( preg_replace( '/\s+.*/', '', $q_raw ) ) . '%',  // ORDER BY CASE 2 — first-word prefix
+        $per_page, $offset
+    ) );
+
+    $products = [];
+    foreach ( (array) $rows as $r ) {
+        $pid = (int) $r->ID;
+
+        // Featured image src (woocommerce_thumbnail)
+        $thumb_id  = get_post_thumbnail_id( $pid );
+        $images    = [];
+        if ( $thumb_id ) {
+            $src = wp_get_attachment_image_src( $thumb_id, 'woocommerce_thumbnail' );
+            if ( $src ) {
+                $images[] = [ 'id' => (int) $thumb_id, 'src' => $src[0] ];
+            }
+        }
+        // Gallery
+        $gallery = get_post_meta( $pid, '_product_image_gallery', true );
+        if ( $gallery ) {
+            foreach ( explode( ',', $gallery ) as $gid ) {
+                $gid  = absint( trim( $gid ) );
+                if ( ! $gid ) continue;
+                if ( $thumb_id && $gid === $thumb_id ) continue;
+                $gimg = wp_get_attachment_image_src( $gid, 'woocommerce_thumbnail' );
+                if ( $gimg ) {
+                    $images[] = [ 'id' => $gid, 'src' => $gimg[0] ];
+                }
+            }
+        }
+
+        // Categories (product_cat taxonomy — simple list)
+        $terms = get_the_terms( $pid, 'product_cat' );
+        $cats  = [];
+        if ( $terms && ! is_wp_error( $terms ) ) {
+            foreach ( $terms as $t ) {
+                $cats[] = [
+                    'id'   => (int) $t->term_id,
+                    'name' => $t->name,
+                    'slug' => $t->slug,
+                ];
+            }
+        }
+
+        // Vendor / post_author → store_name if Dokan is available
+        $author_id = (int) $r->author;
+        $store_name = '';
+        if ( $author_id > 0 && function_exists( 'dokan' ) ) {
+            try {
+                $v = dokan()->vendor->get( $author_id );
+                if ( $v && $v->get_id() ) {
+                    $store_name = $v->get_shop_name();
+                }
+            } catch ( \Throwable $e ) {}
+        }
+
+        $products[] = [
+            'id'                 => $pid,
+            'name'               => $r->name,
+            'slug'               => $r->slug,
+            'permalink'          => get_permalink( $pid ),
+            'description'        => $r->description,
+            'short_description'  => $r->short_description,
+            'sku'                => $r->sku,
+            'price'              => $r->price,
+            'regular_price'      => $r->regular_price,
+            'sale_price'         => $r->sale_price,
+            'on_sale'            => ( $r->sale_price !== null && $r->sale_price !== '' ),
+            'stock_status'       => $r->stock_status ?: 'instock',
+            'average_rating'     => (string) ( $r->average_rating ?: '0' ),
+            'rating_count'       => (int) ( $r->rating_count ?: 0 ),
+            'total_sales'        => (int) ( $r->total_sales ?: 0 ),
+            'images'             => $images,
+            'categories'         => $cats,
+            'vendor_id'          => $author_id,
+            'vendor_name'        => $store_name,
+            'store'              => $store_name ? [ 'id' => $author_id, 'name' => $store_name ] : null,
+        ];
+    }
+
+    vendor_api_respond( [
+        'products' => $products,
+        'total'    => $total,
+        'page'     => $page,
+        'per_page' => $per_page,
+        'q'        => $q_raw,
+    ] );
+}
+
+// ── get_all_product_categories (no auth) ───────────────────────────────
+// GET /?action=get_all_product_categories
+//
+// Returns ALL WooCommerce product_cat taxonomy terms (including empty
+// ones, if hide_empty=false).  Sorted alphabetically A-Z by name.
+//
+// Purpose: the WC REST /products/categories endpoint sometimes:
+//   (a) excludes empty categories via hide_empty=true by default,
+//   (b) can be blocked by WAF when ordering by count,
+//   (c) occasionally filters out categories whose products are all
+//       non-physical (booking, subscription) due to REST type filters.
+//
+// This endpoint uses get_terms() directly against the product_cat
+// taxonomy and is therefore 100% accurate and type-agnostic.
+if ( $action === 'get_all_product_categories' ) {
+    $hide_empty = isset( $_GET['hide_empty'] )
+        ? ( filter_var( $_GET['hide_empty'], FILTER_VALIDATE_BOOLEAN ) )
+        : false;
+
+    $terms = get_terms( [
+        'taxonomy'   => 'product_cat',
+        'hide_empty' => $hide_empty,
+        'orderby'    => 'name',
+        'order'      => 'ASC',
+        'number'     => 500,
+    ] );
+
+    if ( is_wp_error( $terms ) ) {
+        vendor_api_respond( [
+            'error' => $terms->get_error_message(),
+            'code'  => 'terms_error',
+        ], 500 );
+    }
+
+    $cats = [];
+    foreach ( $terms as $t ) {
+        $thumb_id = get_term_meta( $t->term_id, 'thumbnail_id', true );
+        $thumb    = $thumb_id ? wp_get_attachment_image_url( (int) $thumb_id, 'woocommerce_thumbnail' ) : null;
+
+        $cats[] = [
+            'id'          => (int) $t->term_id,
+            'name'        => $t->name,
+            'slug'        => $t->slug,
+            'description' => $t->description ?: '',
+            'count'       => (int) $t->count,
+            'parent'      => (int) $t->parent,
+            'image'       => $thumb ? [ 'src' => $thumb ] : null,
+        ];
+    }
+
+    vendor_api_respond( [
+        'categories' => $cats,
+        'total'      => count( $cats ),
+        'hide_empty' => $hide_empty,
+    ] );
+}
+
+// ── get_products_by_category (no auth) ─────────────────────────────────
+// GET /?action=get_products_by_category&category_id=<ID>[&page=1&per_page=60]
+//
+// Returns products whose post is assigned to the given product_cat
+// term ID.  Works for EVERY product type: simple, variable, grouped,
+// external, booking, subscription, bundle, downloadable, virtual —
+// any registered post_type=product whose status='publish'.
+//
+// Root cause this was added: the WC REST /wc/v3/products?category=<id>
+// endpoint uses WC_REST_Products_Controller::get_items() which
+// applies TYPE FILTERS depending on what product types register
+// themselves with the REST API.  Non-physical types like "booking",
+// "subscription", and some Dokan premium types don't always do
+// this correctly → the category page shows "0 products" when the
+// category actually has products.  The user saw this as
+// "could not load products" for several non-physical categories.
+//
+// This endpoint uses DIRECT SQL via $wpdb against the
+// term_relationships + term_taxonomy + posts tables → it reads
+// EXACTLY what WordPress's own wp_get_object_terms() would read,
+// with zero plugin filters interfering.
+if ( $action === 'get_products_by_category' ) {
+    $category_id = (int) ( $_GET['category_id'] ?? 0 );
+    $page        = max( 1, (int) ( $_GET['page'] ?? 1 ) );
+    $per_page    = max( 1, min( 100, (int) ( $_GET['per_page'] ?? 60 ) ) );
+    $offset      = ( $page - 1 ) * $per_page;
+
+    global $wpdb;
+
+    // ── 1. Total matching posts ────────────────────────────────────────
+    $total_sql = "
+        SELECT COUNT(DISTINCT p.ID)
+        FROM {$wpdb->posts} p
+        INNER JOIN {$wpdb->term_relationships} tr
+            ON tr.object_id = p.ID
+        INNER JOIN {$wpdb->term_taxonomy} tt
+            ON tt.term_taxonomy_id = tr.term_taxonomy_id
+           AND tt.taxonomy = 'product_cat'
+        WHERE tt.term_id = %d
+          AND p.post_type = 'product'
+          AND p.post_status = 'publish'
+    ";
+    $total = (int) $wpdb->get_var( $wpdb->prepare( $total_sql, $category_id ) );
+
+    // ── 2. Fetch IDs for this page ─────────────────────────────────────
+    $ids_sql = "
+        SELECT DISTINCT p.ID
+        FROM {$wpdb->posts} p
+        INNER JOIN {$wpdb->term_relationships} tr
+            ON tr.object_id = p.ID
+        INNER JOIN {$wpdb->term_taxonomy} tt
+            ON tt.term_taxonomy_id = tr.term_taxonomy_id
+           AND tt.taxonomy = 'product_cat'
+        WHERE tt.term_id = %d
+          AND p.post_type = 'product'
+          AND p.post_status = 'publish'
+        ORDER BY p.post_title ASC
+        LIMIT %d OFFSET %d
+    ";
+    $ids = $wpdb->get_col( $wpdb->prepare( $ids_sql, $category_id, $per_page, $offset ) );
+
+    $products = [];
+    foreach ( $ids as $pid ) {
+        $pid       = (int) $pid;
+        $wc_product = wc_get_product( $pid );
+        if ( ! $wc_product ) continue;
+
+        $author_id   = (int) get_post_field( 'post_author', $pid );
+        $store_name  = null;
+        if ( function_exists( 'dokan' ) ) {
+            $vendor = dokan()->vendor->get( $author_id );
+            if ( $vendor && $vendor->get_id() ) {
+                $store_name = $vendor->get_shop_name();
+            }
+        }
+        $store_name = $store_name ?: get_the_author_meta( 'display_name', $author_id );
+
+        // Thumbnail + gallery
+        $thumb_id = get_post_thumbnail_id( $pid );
+        $thumb    = $thumb_id ? wp_get_attachment_image_url( $thumb_id, 'woocommerce_thumbnail' ) : null;
+        $gallery_ids = $wc_product->get_gallery_image_ids();
+        $gallery     = [];
+        foreach ( $gallery_ids as $gid ) {
+            $u = wp_get_attachment_image_url( $gid, 'woocommerce_thumbnail' );
+            if ( $u ) $gallery[] = [ 'src' => $u ];
+        }
+        $images = [];
+        if ( $thumb ) $images[] = [ 'src' => $thumb ];
+        foreach ( $gallery as $g ) $images[] = $g;
+
+        // Categories (product_cat only)
+        $cat_terms = wp_get_object_terms( $pid, 'product_cat', [ 'fields' => 'id=>name' ] );
+        $cats      = [];
+        foreach ( $cat_terms as $cid => $cname ) {
+            $cats[] = [ 'id' => (int) $cid, 'name' => $cname ];
+        }
+
+        $products[] = [
+            'id'                 => $pid,
+            'name'               => $wc_product->get_name(),
+            'slug'               => $wc_product->get_slug(),
+            'type'               => $wc_product->get_type(),
+            'status'             => 'publish',
+            'permalink'          => get_permalink( $pid ),
+            'description'        => $wc_product->get_description(),
+            'short_description'  => $wc_product->get_short_description(),
+            'sku'                => $wc_product->get_sku() ?: '',
+            'price'              => $wc_product->get_price(),
+            'regular_price'      => $wc_product->get_regular_price(),
+            'sale_price'         => $wc_product->get_sale_price(),
+            'on_sale'            => $wc_product->is_on_sale(),
+            'stock_status'       => $wc_product->is_in_stock() ? 'instock' : 'outofstock',
+            'in_stock'           => $wc_product->is_in_stock(),
+            'average_rating'     => (string) $wc_product->get_average_rating(),
+            'rating_count'       => (int) $wc_product->get_rating_count(),
+            'total_sales'        => (int) get_post_meta( $pid, 'total_sales', true ),
+            'images'             => $images,
+            'categories'         => $cats,
+            'vendor_id'          => $author_id,
+            'vendor_name'        => $store_name,
+            'store'              => $store_name ? [ 'id' => $author_id, 'name' => $store_name ] : null,
+        ];
+    }
+
+    // Also log to the same search log so we can correlate category loads
+    // with WAF blocks on alternate endpoints.
+    $log_line = sprintf(
+        "[%s] cat=%d page=%d total=%d returned=%d ip=%s ua=%s\n",
+        current_time( 'Y-m-d H:i:s' ),
+        $category_id,
+        $page,
+        $total,
+        count( $products ),
+        $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+        $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
+    );
+    $log_path = dirname( __FILE__ ) . '/vendor-api-search.log';
+    if ( @filesize( $log_path ) > 1048576 ) {
+        @rename( $log_path, $log_path . '.old' );
+    }
+    @file_put_contents( $log_path, $log_line, FILE_APPEND );
+
+    vendor_api_respond( [
+        'products'    => $products,
+        'total'       => $total,
+        'page'        => $page,
+        'per_page'    => $per_page,
+        'category_id' => $category_id,
+    ] );
+}
+
 // ── All other actions require auth ─────────────────────────────────────
 $user_id = vendor_api_authenticate();
 
@@ -2177,5 +2603,6 @@ vendor_api_respond( [
         'get_user', 'get_customer', 'update_customer', 'update_user', 'get_orders_user',
         'get_store_public', 'get_store_reviews', 'update_order_status', 'request_withdrawal',
         'get_store_categories', 'get_all_stores_with_categories',
+        'search_products', 'get_all_product_categories', 'get_products_by_category',
     ],
 ], 400 );
