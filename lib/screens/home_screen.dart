@@ -1677,6 +1677,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
   bool _hasSearched = false;
   String? _errorMessage;
   Timer? _debounce;
+  int _searchSeq = 0; // guards against out-of-order responses
 
   @override
   void initState() {
@@ -1731,6 +1732,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
 
   Future<void> _performSearch() async {
     final query = _searchController.text.trim();
+    final seq = ++_searchSeq;
     if (query.isEmpty) {
       setState(() {
         _hasSearched = false;
@@ -1748,6 +1750,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
 
     try {
       final results = await _api.searchProducts(query, perPage: 100);
+      if (!mounted || seq != _searchSeq) return; // stale response, ignore
       // Filter out excluded vendor products from search results
       final filtered = results.where((p) =>
           !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName)).toList();
@@ -1761,6 +1764,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
         });
       }
     } catch (e) {
+      if (!mounted || seq != _searchSeq) return;
       if (mounted) {
         setState(() {
           _isSearching = false;

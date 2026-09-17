@@ -402,15 +402,21 @@ class ApiService {
   /// in a matching category (e.g. searching "accountancy" returns products in
   /// the "Accountancy Services" category) are also surfaced. Results are
   /// de-duplicated by product id.
+  ///
+  /// The title/content search is treated as authoritative — if it fails (e.g.
+  /// rate-limited by a security plugin) the error propagates so the UI can
+  /// show a retry state instead of a misleading "no results" screen. Category
+  /// matching is best-effort and silently skipped on failure.
   Future<List<Product>> searchProducts(String query, {int perPage = 100}) async {
     final merged = <int, Product>{};
-    try {
-      final byText = await getProducts(search: query, perPage: perPage);
-      for (final p in byText) {
-        merged[p.id] = p;
-      }
-    } catch (_) {}
 
+    // Primary: title/content/excerpt search.
+    final byText = await getProducts(search: query, perPage: perPage);
+    for (final p in byText) {
+      merged[p.id] = p;
+    }
+
+    // Supplementary: category-name match (best-effort).
     try {
       final cats = await getCategories(perPage: 100);
       final q = query.toLowerCase().trim();
