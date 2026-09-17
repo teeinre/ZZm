@@ -69,7 +69,13 @@ class _ExploreScreenState extends State<ExploreScreen> {
   Future<void> _loadCategories() async {
     try {
       final cats = await _api.getCategories(perPage: 100);
-      final filtered = cats.where((c) => c.slug != 'uncategorized').toList();
+      // Only offer categories that actually contain products (skip empty and
+      // "Uncategorized"), sorted by product count so the most populated
+      // categories appear first.
+      final filtered = cats
+          .where((c) => c.slug != 'uncategorized' && c.count > 0)
+          .toList()
+        ..sort((a, b) => b.count.compareTo(a.count));
       if (mounted) setState(() => _categories = filtered);
     } catch (_) {
       // Non-fatal: products still load without category filters.
