@@ -247,6 +247,108 @@ if ( $action === 'ping' ) {
     ] );
 }
 
+// ── get_store_categories (no auth — public store category listing) ────
+// GET /vendor-api.php?action=get_store_categories
+// Returns all terms in the Dokan `store_category` taxonomy (vendor categories).
+if ( $action === 'get_store_categories' ) {
+    if ( ! function_exists( 'dokan' ) ) {
+        vendor_api_respond( [ 'error' => 'Dokan is not available.', 'code' => 'no_dokan' ], 500 );
+    }
+    $taxonomy = taxonomy_exists( 'store_category' ) ? 'store_category' : ( taxonomy_exists( 'dokan_store_category' ) ? 'dokan_store_category' : false );
+    if ( ! $taxonomy ) {
+        vendor_api_respond( [
+            'categories' => [],
+            'taxonomy'   => false,
+            'note'       => 'store_category taxonomy not registered.',
+        ] );
+    }
+    $terms = get_terms( [
+        'taxonomy'   => $taxonomy,
+        'hide_empty' => false,
+        'fields'     => 'all',
+        'get'        => 'all',
+    ] );
+    if ( is_wp_error( $terms ) || ! is_array( $terms ) ) {
+        vendor_api_respond( [ 'categories' => [], 'taxonomy' => $taxonomy, 'error' => is_wp_error( $terms ) ? $terms->get_error_message() : 'query_failed' ] );
+    }
+    $out = [];
+    foreach ( $terms as $t ) {
+        $out[] = [
+            'id'     => (int) $t->term_id,
+            'name'   => $t->name,
+            'slug'   => $t->slug,
+            'count'  => (int) $t->count,
+            'parent' => (int) $t->parent,
+        ];
+    }
+    usort( $out, function ( $a, $b ) { return $b['count'] - $a['count']; } );
+    vendor_api_respond( [
+        'categories' => $out,
+        'taxonomy'   => $taxonomy,
+    ] );
+}
+
+// ── get_all_stores_with_categories (no auth — stores + category mapping)
+// GET /vendor-api.php?action=get_all_stores_with_categories
+// Returns every Dokan store with its `store_category` assignments and
+// a convenience reverse-mapping `category_vendors` (cat_id => [wp_user_id]).
+if ( $action === 'get_all_stores_with_categories' ) {
+    if ( ! function_exists( 'dokan' ) ) {
+        vendor_api_respond( [ 'error' => 'Dokan is not available.', 'code' => 'no_dokan' ], 500 );
+    }
+    $taxonomy = taxonomy_exists( 'store_category' ) ? 'store_category' : ( taxonomy_exists( 'dokan_store_category' ) ? 'dokan_store_category' : false );
+
+    // Get all seller users (Dokan vendors)
+    $sellers = get_users( [
+        'role__in' => [ 'seller', 'administrator' ],
+        'fields'   => 'ID',
+        'number'   => 500,
+    ] );
+    if ( ! is_array( $sellers ) ) $sellers = [];
+
+    $stores = [];
+    $category_vendors = []; // category_id => [wp_user_id]
+
+    foreach ( $sellers as $uid ) {
+        $uid = (int) $uid;
+        if ( ! dokan_is_user_seller( $uid ) ) continue;
+        $vendor = dokan()->vendor->get( $uid );
+        if ( ! $vendor || ! $vendor->get_id() ) continue;
+
+        $store_id   = (int) $vendor->get_id();
+        $shop_name  = $vendor->get_shop_name();
+        $store_slug = $vendor->get_slug();
+
+        $cat_ids = [];
+        if ( $taxonomy ) {
+            $terms = wp_get_object_terms( $uid, $taxonomy, [ 'fields' => 'ids' ] );
+            if ( is_array( $terms ) && ! is_wp_error( $terms ) ) {
+                $cat_ids = array_map( 'intval', $terms );
+            }
+        }
+        foreach ( $cat_ids as $cid ) {
+            if ( ! isset( $category_vendors[ $cid ] ) ) $category_vendors[ $cid ] = [];
+            $category_vendors[ $cid ][] = $uid;
+        }
+
+        $stores[] = [
+            'store_id'       => $store_id,
+            'user_id'        => $uid,
+            'store_name'     => $shop_name,
+            'slug'           => $store_slug,
+            'category_ids'   => $cat_ids,
+            'rating'         => function_exists( 'dokan_get_seller_rating' ) ? dokan_get_seller_rating( $uid ) : 0,
+        ];
+    }
+
+    vendor_api_respond( [
+        'stores'            => $stores,
+        'category_vendors'  => $category_vendors,
+        'taxonomy'          => $taxonomy,
+        'total_stores'      => count( $stores ),
+    ] );
+}
+
 // ── test-auth (no pre-auth — tests the auth chain itself) ──────────────
 if ( $action === 'test-auth' ) {
     $debug = [
@@ -2074,5 +2176,6 @@ vendor_api_respond( [
         'get_announcements', 'update_store', 'get_store_products',
         'get_user', 'get_customer', 'update_customer', 'update_user', 'get_orders_user',
         'get_store_public', 'get_store_reviews', 'update_order_status', 'request_withdrawal',
+        'get_store_categories', 'get_all_stores_with_categories',
     ],
 ], 400 );

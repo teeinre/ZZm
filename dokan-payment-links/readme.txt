@@ -3,7 +3,7 @@ Contributors: temitayo
 Tags: dokan, woocommerce, payment, vendor, marketplace
 Requires at least: 6.0
 Tested up to: 6.7
-Stable tag: 1.1.4
+Stable tag: 1.1.6
 Requires PHP: 7.4
 License: GPL-2.0+
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -51,6 +51,7 @@ The settings page is accessible from:
 * Maximum payment amount (limits how much a customer can pay)
 * Rate limit per vendor (links per hour)
 * Tax class for payment link line items
+* Admin transaction fee (fixed, percentage, or both) — added to the customer's total or deducted from the vendor, set by the admin
 
 == Frequently Asked Questions ==
 
@@ -76,8 +77,26 @@ Created by Temitayo — [Midesigna.com](https://midesigna.com)
 
 == Changelog ==
 
+= 1.1.6 =
+* **Dokan Stripe payment methods (Klarna, iDEAL, SEPA etc.) fully enabled for payment-link checkout.** Root-cause fixes applied across the plugin so every Stripe payment method available for standard WooCommerce products now works on the payment-link `order-pay` page:
+  1. **Full billing address fields** (company, address, city, postcode, country, phone) now appear and are captured for both guest and signed-in customers — a valid `billing_country` is required by Stripe to offer Klarna, iDEAL, Bancontact, etc.
+  2. **Shipping fields** appear when the payment link requires shipping, with a "Ship to same address" toggle. Captured fields are persisted onto the WC_Order before the gateway runs so Stripe's JS initialises against a complete address.
+  3. **Signed-in user orders pre-fill** billing + shipping address from the customer's saved WooCommerce profile (including `billing_country`) so gateways render available PMs on the very first page load.
+  4. **Placeholder products now have a concrete `0.01` base price** (catalog only — customer still pays whatever amount they enter). This passes strict Klarna/UPE `product.price > 0` checks without affecting line-item totals.
+  5. **Dokan legacy Stripe 3DS `payment_method_types`** widened beyond the hardcoded `['card']` to include all 18 common Stripe PMs (card, klarna, ideal, sepa_debit, bancontact, eps, giropay, p24, sofort, alipay, wechat_pay, boleto, multibanco, oxxo, customer_balance, bank_transfer, konbini, paynow, pix) wrapped in a new filter `dokan_stripe_3ds_payment_intent_payment_method_types` for upgrade-safe future tweaks. Stripe auto-filters these against the actual billing country, order currency, and Stripe account capability.
+  6. Added ship-to-billing checkbox toggle JS (runs on every payment link page, not only when a custom-amount field exists) and corresponding CSS (toggle spacing, dashed shipping-section divider, SVG country-dropdown chevron, mobile flex-row→column).
+* **Backward compatibility:** Guest-capture handler still accepts the legacy `dpl_customer_*` POST field names so already-cached forms continue submitting without breakage.
+* Dokan vendor sync (`dokan_sync_insert_order`), admin transaction-fee logic, open-amount flow, and the existing `force_open_order_needs_payment` guard are all preserved and verified intact.
+* Version bump to 1.1.6 (cache-busts updated `payment-page.css` and `payment-page.js`).
+
+= 1.1.5 =
+* **Vendor order management:** Vendors can now mark payment-link orders Completed or Cancelled directly from their dashboard, mirroring WooCommerce's order workflow. The change updates the WooCommerce order, Dokan sync, and the on-screen status badge.
+* **Dashboard table usability:** Fixed the Payment Links table so the Copy / QR Page actions are always reachable. The card no longer overflows the content area to the right, and the table scrolls horizontally with a visible scrollbar on narrow screens.
+* Version bump to 1.1.5.
+
 = 1.1.4 =
-* **Mobile order-list layout fix:** Prevented customer/guest names and the "Customer" column label from splitting mid-word, and kept order numbers on a single line in the responsive card view. Version bump to 1.1.4.
+* **Admin transaction fee:** Admins can now charge a fee on every payment-link transaction, configured from the Payment Links settings page. Choose a fixed amount, a percentage, or both, and choose whether the fee is added to the customer's total or deducted from the vendor.
+* Version bump to 1.1.4.
 
 = 1.1.3 =
 * **Customer-defined amounts:** Vendors no longer enter an amount when creating a link. The customer enters any amount to pay on the checkout page, with live order-total updates and validation.

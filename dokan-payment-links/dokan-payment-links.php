@@ -3,7 +3,7 @@
  * Plugin Name: Dokan Payment Links
  * Plugin URI:  https://midesigna.com/dokan-payment-links
  * Description: Let Dokan vendors generate shareable payment links where customers choose the amount to pay. Customers pay directly on WooCommerce's native pay-for-order page — no cart, no product page.
- * Version:     1.1.4
+ * Version:     1.1.3
  * Author:      Temitayo
  * Author URI:  https://midesigna.com
  * License:     GPL-2.0+
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'DPL_VERSION', '1.1.4' );
+define( 'DPL_VERSION', '1.1.7' );
 define( 'DPL_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'DPL_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'DPL_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -212,6 +212,9 @@ class Dokan_Payment_Links {
 		// Inject bank transfer details before the form.
 		add_action( 'before_woocommerce_pay_form', array( $this, 'render_bank_details' ), 7 );
 
+		// Inject payment description (what are you paying for) textarea.
+		add_action( 'before_woocommerce_pay_form', array( $this, 'render_payment_description' ), 8 );
+
 		// Inject trust badge after the pay button.
 		add_action( 'woocommerce_pay_order_after_submit', array( $this, 'render_trust_row' ) );
 
@@ -287,6 +290,8 @@ class Dokan_Payment_Links {
 					'qr_download_text' => __( 'Download QR (PNG)', 'dokan-payment-links' ),
 					'qr_print_text' => __( 'Print QR', 'dokan-payment-links' ),
 					'cancel_confirm'   => __( 'Cancel this payment link?', 'dokan-payment-links' ),
+					'complete_confirm'     => __( 'Mark this order as completed?', 'dokan-payment-links' ),
+					'cancel_order_confirm' => __( 'Cancel this order?', 'dokan-payment-links' ),
 					'error_generic'    => __( 'Something went wrong. Please try again.', 'dokan-payment-links' ),
 					'vendor_phone'     => $vendor_phone,
 					'vendor_store'     => $vendor_store,
@@ -331,6 +336,12 @@ class Dokan_Payment_Links {
 					'thousand_separator' => wc_get_price_thousand_separator(),
 					'decimals'           => wc_get_price_decimals(),
 					'min_amount_error'   => __( 'Please enter an amount greater than zero.', 'dokan-payment-links' ),
+					'fee_type'           => dpl_get_setting( 'fee_type', 'none' ),
+					'fee_amount'         => floatval( dpl_get_setting( 'fee_amount', 0 ) ),
+					'fee_percentage'     => floatval( dpl_get_setting( 'fee_percentage', 0 ) ),
+					'fee_bearer'         => dpl_get_setting( 'fee_bearer', 'customer' ),
+					'amount_text'        => __( 'Amount', 'dokan-payment-links' ),
+					'fee_text'           => __( 'Fee', 'dokan-payment-links' ),
 				)
 			);
 		}
@@ -464,6 +475,11 @@ class Dokan_Payment_Links {
 					aria-label="<?php esc_attr_e( 'Amount to pay', 'dokan-payment-links' ); ?>">
 			</div>
 			<span class="dpl-amount-hint"><?php esc_html_e( 'Pay any amount you choose', 'dokan-payment-links' ); ?></span>
+			<?php $fee_label = dpl_get_fee_label(); ?>
+			<?php if ( $fee_label ) : ?>
+				<span class="dpl-fee-hint"><?php echo esc_html( $fee_label ); ?></span>
+			<?php endif; ?>
+			<span class="dpl-fee-breakdown" id="dpl-fee-breakdown"></span>
 		</div>
 		<?php
 	}
@@ -499,10 +515,19 @@ class Dokan_Payment_Links {
 			return;
 		}
 
+		$needs_shipping = false;
+		foreach ( $order->get_items() as $item ) {
+			$product = $item->get_product();
+			if ( $product && ! $product->get_virtual() ) {
+				$needs_shipping = true;
+				break;
+			}
+		}
+
 		if ( is_user_logged_in() || $order->get_user_id() ) {
-			$this->render_signed_in_summary( $order );
+			$this->render_signed_in_summary( $order, $needs_shipping );
 		} else {
-			$this->render_guest_fields( $order );
+			$this->render_guest_fields( $order, $needs_shipping );
 		}
 	}
 
@@ -541,54 +566,312 @@ class Dokan_Payment_Links {
 	}
 
 	/**
-	 * Render the required first-name / last-name / email inputs for guests.
+	 * Render a "What are you paying for?" textarea on the payment form.
 	 *
-	 * @param WC_Order $order
+	 * Lets the customer describe the purpose of the payment so the vendor
+	 * knows what the payment is for. Saved to order meta as
+	 * `_payment_link_customer_description`.
 	 */
-	private function render_guest_fields( $order ) {
+	public function render_payment_description() {
+		if ( ! $this->is_payment_link_order_pay() ) {
+			return;
+		}
+
+		global $wp;
+		$order_id = absint( $wp->query_vars['order-pay'] );
+		$order    = wc_get_order( $order_id );
+
+		if ( ! $order ) {
+			return;
+		}
+
+		$existing = $order->get_meta( '_payment_link_customer_description', true );
 		?>
-		<div class="dpl-customer-fields">
-			<div class="dpl-customer-fields__heading"><?php esc_html_e( 'Your details', 'dokan-payment-links' ); ?></div>
-			<div class="dpl-customer-fields__row">
-				<p class="form-row dpl-form-field">
-					<label for="dpl-customer-first-name"><?php esc_html_e( 'First name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
-					<input type="text" id="dpl-customer-first-name" name="dpl_customer_first_name" form="order_review"
-						value="<?php echo esc_attr( $order->get_billing_first_name() ); ?>" required autocomplete="given-name"
-						placeholder="<?php esc_attr_e( 'First name', 'dokan-payment-links' ); ?>">
-				</p>
-				<p class="form-row dpl-form-field">
-					<label for="dpl-customer-last-name"><?php esc_html_e( 'Last name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
-					<input type="text" id="dpl-customer-last-name" name="dpl_customer_last_name" form="order_review"
-						value="<?php echo esc_attr( $order->get_billing_last_name() ); ?>" required autocomplete="family-name"
-						placeholder="<?php esc_attr_e( 'Last name', 'dokan-payment-links' ); ?>">
-				</p>
+		<div class="dpl-payment-description">
+			<div class="dpl-payment-description__heading">
+				<?php esc_html_e( 'What is this payment for?', 'dokan-payment-links' ); ?>
+				<span class="dpl-payment-description__optional">(<?php esc_html_e( 'optional', 'dokan-payment-links' ); ?>)</span>
 			</div>
-			<p class="form-row dpl-form-field dpl-form-field--email">
-				<label for="dpl-customer-email"><?php esc_html_e( 'Email address', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
-				<input type="email" id="dpl-customer-email" name="dpl_customer_email" form="order_review"
-					value="<?php echo esc_attr( $order->get_billing_email() ); ?>" required autocomplete="email"
-					placeholder="<?php esc_attr_e( 'you@example.com', 'dokan-payment-links' ); ?>">
+			<p class="form-row dpl-form-field dpl-form-field--description">
+				<label for="dpl-payment-description" class="screen-reader-text">
+					<?php esc_html_e( 'Payment description', 'dokan-payment-links' ); ?>
+				</label>
+				<textarea id="dpl-payment-description" name="dpl_payment_description" form="order_review"
+					rows="3" maxlength="500"
+					placeholder="<?php esc_attr_e( 'e.g. July invoice, Custom wedding cake for 20 guests, Balance for order #1234', 'dokan-payment-links' ); ?>"
+					aria-label="<?php esc_attr_e( 'What is this payment for?', 'dokan-payment-links' ); ?>"><?php echo esc_textarea( $existing ); ?></textarea>
+				<span class="dpl-payment-description__counter" id="dpl-payment-description-counter">0 / 500</span>
 			</p>
 		</div>
 		<?php
 	}
 
 	/**
-	 * Render a prominent pre-filled summary for signed-in customers.
+	 * Render the required customer + billing + shipping inputs for guests.
 	 *
 	 * @param WC_Order $order
+	 * @param bool     $needs_shipping
 	 */
-	private function render_signed_in_summary( $order ) {
+	private function render_guest_fields( $order, $needs_shipping = false ) {
+		$countries = WC()->countries->get_allowed_countries();
+		$default_cc = WC()->countries->get_base_country();
+
+		$billing = array(
+			'first_name' => $order->get_billing_first_name(),
+			'last_name'  => $order->get_billing_last_name(),
+			'company'    => $order->get_billing_company(),
+			'email'      => $order->get_billing_email(),
+			'phone'      => $order->get_billing_phone(),
+			'address_1'  => $order->get_billing_address_1(),
+			'address_2'  => $order->get_billing_address_2(),
+			'city'       => $order->get_billing_city(),
+			'state'      => $order->get_billing_state(),
+			'postcode'   => $order->get_billing_postcode(),
+			'country'    => $order->get_billing_country() ? $order->get_billing_country() : $default_cc,
+		);
+
+		$shipping = array(
+			'first_name' => $order->get_shipping_first_name(),
+			'last_name'  => $order->get_shipping_last_name(),
+			'company'    => $order->get_shipping_company(),
+			'address_1'  => $order->get_shipping_address_1(),
+			'address_2'  => $order->get_shipping_address_2(),
+			'city'       => $order->get_shipping_city(),
+			'state'      => $order->get_shipping_state(),
+			'postcode'   => $order->get_shipping_postcode(),
+			'country'    => $order->get_shipping_country() ? $order->get_shipping_country() : $default_cc,
+		);
+
+		$ship_to_billing = ( $order->get_shipping_address_1() === '' && $order->get_billing_address_1() !== '' )
+			|| ( $order->get_billing_first_name() === $order->get_shipping_first_name()
+				&& $order->get_billing_last_name() === $order->get_shipping_last_name()
+				&& $order->get_billing_address_1() === $order->get_shipping_address_1()
+				&& $order->get_billing_city() === $order->get_shipping_city() );
+		?>
+		<div class="dpl-customer-fields">
+			<div class="dpl-customer-fields__heading"><?php esc_html_e( 'Billing details', 'dokan-payment-links' ); ?></div>
+
+			<div class="dpl-customer-fields__row">
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-first-name"><?php esc_html_e( 'First name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="text" id="dpl-billing-first-name" name="dpl_billing_first_name" form="order_review"
+						value="<?php echo esc_attr( $billing['first_name'] ); ?>" required autocomplete="given-name"
+						placeholder="<?php esc_attr_e( 'First name', 'dokan-payment-links' ); ?>">
+				</p>
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-last-name"><?php esc_html_e( 'Last name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="text" id="dpl-billing-last-name" name="dpl_billing_last_name" form="order_review"
+						value="<?php echo esc_attr( $billing['last_name'] ); ?>" required autocomplete="family-name"
+						placeholder="<?php esc_attr_e( 'Last name', 'dokan-payment-links' ); ?>">
+				</p>
+			</div>
+
+			<p class="form-row dpl-form-field">
+				<label for="dpl-billing-company"><?php esc_html_e( 'Company', 'dokan-payment-links' ); ?></label>
+				<input type="text" id="dpl-billing-company" name="dpl_billing_company" form="order_review"
+					value="<?php echo esc_attr( $billing['company'] ); ?>" autocomplete="organization"
+					placeholder="<?php esc_attr_e( 'Company (optional)', 'dokan-payment-links' ); ?>">
+			</p>
+
+			<div class="dpl-customer-fields__row">
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-email"><?php esc_html_e( 'Email address', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="email" id="dpl-billing-email" name="dpl_billing_email" form="order_review"
+						value="<?php echo esc_attr( $billing['email'] ); ?>" required autocomplete="email"
+						placeholder="<?php esc_attr_e( 'you@example.com', 'dokan-payment-links' ); ?>">
+				</p>
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-phone"><?php esc_html_e( 'Phone', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="tel" id="dpl-billing-phone" name="dpl_billing_phone" form="order_review"
+						value="<?php echo esc_attr( $billing['phone'] ); ?>" required autocomplete="tel"
+						placeholder="<?php esc_attr_e( 'Phone number', 'dokan-payment-links' ); ?>">
+				</p>
+			</div>
+
+			<p class="form-row dpl-form-field">
+				<label for="dpl-billing-address-1"><?php esc_html_e( 'Street address', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+				<input type="text" id="dpl-billing-address-1" name="dpl_billing_address_1" form="order_review"
+					value="<?php echo esc_attr( $billing['address_1'] ); ?>" required autocomplete="address-line1"
+					placeholder="<?php esc_attr_e( 'House number and street name', 'dokan-payment-links' ); ?>">
+			</p>
+
+			<p class="form-row dpl-form-field">
+				<label for="dpl-billing-address-2"><?php esc_html_e( 'Apartment, suite, unit, etc.', 'dokan-payment-links' ); ?></label>
+				<input type="text" id="dpl-billing-address-2" name="dpl_billing_address_2" form="order_review"
+					value="<?php echo esc_attr( $billing['address_2'] ); ?>" autocomplete="address-line2"
+					placeholder="<?php esc_attr_e( 'Apartment, suite, unit, etc. (optional)', 'dokan-payment-links' ); ?>">
+			</p>
+
+			<div class="dpl-customer-fields__row">
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-city"><?php esc_html_e( 'Town / City', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="text" id="dpl-billing-city" name="dpl_billing_city" form="order_review"
+						value="<?php echo esc_attr( $billing['city'] ); ?>" required autocomplete="address-level2"
+						placeholder="<?php esc_attr_e( 'Town / City', 'dokan-payment-links' ); ?>">
+				</p>
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-postcode"><?php esc_html_e( 'Postcode / ZIP', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="text" id="dpl-billing-postcode" name="dpl_billing_postcode" form="order_review"
+						value="<?php echo esc_attr( $billing['postcode'] ); ?>" required autocomplete="postal-code"
+						placeholder="<?php esc_attr_e( 'Postcode / ZIP', 'dokan-payment-links' ); ?>">
+				</p>
+			</div>
+
+			<div class="dpl-customer-fields__row">
+				<p class="form-row dpl-form-field dpl-form-field--country">
+					<label for="dpl-billing-country"><?php esc_html_e( 'Country / Region', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<select id="dpl-billing-country" name="dpl_billing_country" form="order_review" required autocomplete="country">
+						<?php foreach ( $countries as $cc => $name ) : ?>
+							<option value="<?php echo esc_attr( $cc ); ?>" <?php selected( $billing['country'], $cc ); ?>><?php echo esc_html( $name ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</p>
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-state"><?php esc_html_e( 'State / County', 'dokan-payment-links' ); ?></label>
+					<input type="text" id="dpl-billing-state" name="dpl_billing_state" form="order_review"
+						value="<?php echo esc_attr( $billing['state'] ); ?>" autocomplete="address-level1"
+						placeholder="<?php esc_attr_e( 'State / County', 'dokan-payment-links' ); ?>">
+				</p>
+			</div>
+
+			<?php if ( $needs_shipping ) : ?>
+				<div class="dpl-customer-fields__ship-toggle">
+					<label class="dpl-ship-to-billing">
+						<input type="checkbox" id="dpl-ship-to-billing" name="dpl_ship_to_billing" form="order_review"
+							<?php checked( $ship_to_billing ); ?> value="1">
+						<span><?php esc_html_e( 'Ship to the same address', 'dokan-payment-links' ); ?></span>
+					</label>
+				</div>
+
+				<div class="dpl-shipping-fields" id="dpl-shipping-fields" style="<?php echo $ship_to_billing ? 'display:none;' : ''; ?>">
+					<div class="dpl-customer-fields__heading dpl-customer-fields__heading--shipping"><?php esc_html_e( 'Shipping details', 'dokan-payment-links' ); ?></div>
+
+					<div class="dpl-customer-fields__row">
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-first-name"><?php esc_html_e( 'First name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<input type="text" id="dpl-shipping-first-name" name="dpl_shipping_first_name" form="order_review"
+								value="<?php echo esc_attr( $shipping['first_name'] ); ?>" autocomplete="shipping given-name"
+								placeholder="<?php esc_attr_e( 'First name', 'dokan-payment-links' ); ?>">
+						</p>
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-last-name"><?php esc_html_e( 'Last name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<input type="text" id="dpl-shipping-last-name" name="dpl_shipping_last_name" form="order_review"
+								value="<?php echo esc_attr( $shipping['last_name'] ); ?>" autocomplete="shipping family-name"
+								placeholder="<?php esc_attr_e( 'Last name', 'dokan-payment-links' ); ?>">
+						</p>
+					</div>
+
+					<p class="form-row dpl-form-field">
+						<label for="dpl-shipping-company"><?php esc_html_e( 'Company', 'dokan-payment-links' ); ?></label>
+						<input type="text" id="dpl-shipping-company" name="dpl_shipping_company" form="order_review"
+							value="<?php echo esc_attr( $shipping['company'] ); ?>" autocomplete="shipping organization"
+							placeholder="<?php esc_attr_e( 'Company (optional)', 'dokan-payment-links' ); ?>">
+					</p>
+
+					<p class="form-row dpl-form-field">
+						<label for="dpl-shipping-address-1"><?php esc_html_e( 'Street address', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+						<input type="text" id="dpl-shipping-address-1" name="dpl_shipping_address_1" form="order_review"
+							value="<?php echo esc_attr( $shipping['address_1'] ); ?>" autocomplete="shipping address-line1"
+							placeholder="<?php esc_attr_e( 'House number and street name', 'dokan-payment-links' ); ?>">
+					</p>
+
+					<p class="form-row dpl-form-field">
+						<label for="dpl-shipping-address-2"><?php esc_html_e( 'Apartment, suite, unit, etc.', 'dokan-payment-links' ); ?></label>
+						<input type="text" id="dpl-shipping-address-2" name="dpl_shipping_address_2" form="order_review"
+							value="<?php echo esc_attr( $shipping['address_2'] ); ?>" autocomplete="shipping address-line2"
+							placeholder="<?php esc_attr_e( 'Apartment, suite, unit, etc. (optional)', 'dokan-payment-links' ); ?>">
+					</p>
+
+					<div class="dpl-customer-fields__row">
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-city"><?php esc_html_e( 'Town / City', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<input type="text" id="dpl-shipping-city" name="dpl_shipping_city" form="order_review"
+								value="<?php echo esc_attr( $shipping['city'] ); ?>" autocomplete="shipping address-level2"
+								placeholder="<?php esc_attr_e( 'Town / City', 'dokan-payment-links' ); ?>">
+						</p>
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-postcode"><?php esc_html_e( 'Postcode / ZIP', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<input type="text" id="dpl-shipping-postcode" name="dpl_shipping_postcode" form="order_review"
+								value="<?php echo esc_attr( $shipping['postcode'] ); ?>" autocomplete="shipping postal-code"
+								placeholder="<?php esc_attr_e( 'Postcode / ZIP', 'dokan-payment-links' ); ?>">
+						</p>
+					</div>
+
+					<div class="dpl-customer-fields__row">
+						<p class="form-row dpl-form-field dpl-form-field--country">
+							<label for="dpl-shipping-country"><?php esc_html_e( 'Country / Region', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<select id="dpl-shipping-country" name="dpl_shipping_country" form="order_review" autocomplete="shipping country">
+								<?php foreach ( $countries as $cc => $name ) : ?>
+									<option value="<?php echo esc_attr( $cc ); ?>" <?php selected( $shipping['country'], $cc ); ?>><?php echo esc_html( $name ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</p>
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-state"><?php esc_html_e( 'State / County', 'dokan-payment-links' ); ?></label>
+							<input type="text" id="dpl-shipping-state" name="dpl_shipping_state" form="order_review"
+								value="<?php echo esc_attr( $shipping['state'] ); ?>" autocomplete="shipping address-level1"
+								placeholder="<?php esc_attr_e( 'State / County', 'dokan-payment-links' ); ?>">
+						</p>
+					</div>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render a prominent pre-filled summary for signed-in customers, plus
+	 * editable billing + (conditional) shipping fields.
+	 *
+	 * @param WC_Order $order
+	 * @param bool     $needs_shipping
+	 */
+	private function render_signed_in_summary( $order, $needs_shipping = false ) {
 		$customer_id = $order->get_user_id();
 		$user        = $customer_id ? get_userdata( $customer_id ) : wp_get_current_user();
 
 		if ( ! $user || ! $user->ID ) {
-			$this->render_guest_fields( $order );
+			$this->render_guest_fields( $order, $needs_shipping );
 			return;
 		}
 
 		$name     = dpl_get_user_full_name( $user );
 		$username = $user->user_login;
+
+		$countries = WC()->countries->get_allowed_countries();
+		$default_cc = WC()->countries->get_base_country();
+
+		$billing = array(
+			'first_name' => $order->get_billing_first_name() ? $order->get_billing_first_name() : get_user_meta( $user->ID, 'billing_first_name', true ),
+			'last_name'  => $order->get_billing_last_name() ? $order->get_billing_last_name() : get_user_meta( $user->ID, 'billing_last_name', true ),
+			'company'    => $order->get_billing_company() ? $order->get_billing_company() : get_user_meta( $user->ID, 'billing_company', true ),
+			'email'      => $order->get_billing_email() ? $order->get_billing_email() : $user->user_email,
+			'phone'      => $order->get_billing_phone() ? $order->get_billing_phone() : get_user_meta( $user->ID, 'billing_phone', true ),
+			'address_1'  => $order->get_billing_address_1() ? $order->get_billing_address_1() : get_user_meta( $user->ID, 'billing_address_1', true ),
+			'address_2'  => $order->get_billing_address_2() ? $order->get_billing_address_2() : get_user_meta( $user->ID, 'billing_address_2', true ),
+			'city'       => $order->get_billing_city() ? $order->get_billing_city() : get_user_meta( $user->ID, 'billing_city', true ),
+			'state'      => $order->get_billing_state() ? $order->get_billing_state() : get_user_meta( $user->ID, 'billing_state', true ),
+			'postcode'   => $order->get_billing_postcode() ? $order->get_billing_postcode() : get_user_meta( $user->ID, 'billing_postcode', true ),
+			'country'    => $order->get_billing_country() ? $order->get_billing_country() : ( get_user_meta( $user->ID, 'billing_country', true ) ? get_user_meta( $user->ID, 'billing_country', true ) : $default_cc ),
+		);
+
+		$shipping = array(
+			'first_name' => $order->get_shipping_first_name() ? $order->get_shipping_first_name() : get_user_meta( $user->ID, 'shipping_first_name', true ),
+			'last_name'  => $order->get_shipping_last_name() ? $order->get_shipping_last_name() : get_user_meta( $user->ID, 'shipping_last_name', true ),
+			'company'    => $order->get_shipping_company() ? $order->get_shipping_company() : get_user_meta( $user->ID, 'shipping_company', true ),
+			'address_1'  => $order->get_shipping_address_1() ? $order->get_shipping_address_1() : get_user_meta( $user->ID, 'shipping_address_1', true ),
+			'address_2'  => $order->get_shipping_address_2() ? $order->get_shipping_address_2() : get_user_meta( $user->ID, 'shipping_address_2', true ),
+			'city'       => $order->get_shipping_city() ? $order->get_shipping_city() : get_user_meta( $user->ID, 'shipping_city', true ),
+			'state'      => $order->get_shipping_state() ? $order->get_shipping_state() : get_user_meta( $user->ID, 'shipping_state', true ),
+			'postcode'   => $order->get_shipping_postcode() ? $order->get_shipping_postcode() : get_user_meta( $user->ID, 'shipping_postcode', true ),
+			'country'    => $order->get_shipping_country() ? $order->get_shipping_country() : ( get_user_meta( $user->ID, 'shipping_country', true ) ? get_user_meta( $user->ID, 'shipping_country', true ) : $default_cc ),
+		);
+
+		$ship_to_billing = ( ! $shipping['address_1'] && $billing['address_1'] )
+			|| ( $billing['first_name'] === $shipping['first_name']
+				&& $billing['last_name'] === $shipping['last_name']
+				&& $billing['address_1'] === $shipping['address_1']
+				&& $billing['city'] === $shipping['city'] );
 		?>
 		<div class="dpl-customer-summary">
 			<div class="dpl-customer-summary__heading"><?php esc_html_e( 'Purchasing as', 'dokan-payment-links' ); ?></div>
@@ -599,6 +882,175 @@ class Dokan_Payment_Links {
 					<div class="dpl-customer-summary__username">@<?php echo esc_html( $username ); ?></div>
 				</div>
 			</div>
+		</div>
+
+		<div class="dpl-customer-fields">
+			<div class="dpl-customer-fields__heading"><?php esc_html_e( 'Billing details', 'dokan-payment-links' ); ?></div>
+
+			<div class="dpl-customer-fields__row">
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-first-name"><?php esc_html_e( 'First name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="text" id="dpl-billing-first-name" name="dpl_billing_first_name" form="order_review"
+						value="<?php echo esc_attr( $billing['first_name'] ); ?>" required autocomplete="given-name"
+						placeholder="<?php esc_attr_e( 'First name', 'dokan-payment-links' ); ?>">
+				</p>
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-last-name"><?php esc_html_e( 'Last name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="text" id="dpl-billing-last-name" name="dpl_billing_last_name" form="order_review"
+						value="<?php echo esc_attr( $billing['last_name'] ); ?>" required autocomplete="family-name"
+						placeholder="<?php esc_attr_e( 'Last name', 'dokan-payment-links' ); ?>">
+				</p>
+			</div>
+
+			<p class="form-row dpl-form-field">
+				<label for="dpl-billing-company"><?php esc_html_e( 'Company', 'dokan-payment-links' ); ?></label>
+				<input type="text" id="dpl-billing-company" name="dpl_billing_company" form="order_review"
+					value="<?php echo esc_attr( $billing['company'] ); ?>" autocomplete="organization"
+					placeholder="<?php esc_attr_e( 'Company (optional)', 'dokan-payment-links' ); ?>">
+			</p>
+
+			<div class="dpl-customer-fields__row">
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-email"><?php esc_html_e( 'Email address', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="email" id="dpl-billing-email" name="dpl_billing_email" form="order_review"
+						value="<?php echo esc_attr( $billing['email'] ); ?>" required autocomplete="email"
+						placeholder="<?php esc_attr_e( 'you@example.com', 'dokan-payment-links' ); ?>">
+				</p>
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-phone"><?php esc_html_e( 'Phone', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="tel" id="dpl-billing-phone" name="dpl_billing_phone" form="order_review"
+						value="<?php echo esc_attr( $billing['phone'] ); ?>" required autocomplete="tel"
+						placeholder="<?php esc_attr_e( 'Phone number', 'dokan-payment-links' ); ?>">
+				</p>
+			</div>
+
+			<p class="form-row dpl-form-field">
+				<label for="dpl-billing-address-1"><?php esc_html_e( 'Street address', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+				<input type="text" id="dpl-billing-address-1" name="dpl_billing_address_1" form="order_review"
+					value="<?php echo esc_attr( $billing['address_1'] ); ?>" required autocomplete="address-line1"
+					placeholder="<?php esc_attr_e( 'House number and street name', 'dokan-payment-links' ); ?>">
+			</p>
+
+			<p class="form-row dpl-form-field">
+				<label for="dpl-billing-address-2"><?php esc_html_e( 'Apartment, suite, unit, etc.', 'dokan-payment-links' ); ?></label>
+				<input type="text" id="dpl-billing-address-2" name="dpl_billing_address_2" form="order_review"
+					value="<?php echo esc_attr( $billing['address_2'] ); ?>" autocomplete="address-line2"
+					placeholder="<?php esc_attr_e( 'Apartment, suite, unit, etc. (optional)', 'dokan-payment-links' ); ?>">
+			</p>
+
+			<div class="dpl-customer-fields__row">
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-city"><?php esc_html_e( 'Town / City', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="text" id="dpl-billing-city" name="dpl_billing_city" form="order_review"
+						value="<?php echo esc_attr( $billing['city'] ); ?>" required autocomplete="address-level2"
+						placeholder="<?php esc_attr_e( 'Town / City', 'dokan-payment-links' ); ?>">
+				</p>
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-postcode"><?php esc_html_e( 'Postcode / ZIP', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<input type="text" id="dpl-billing-postcode" name="dpl_billing_postcode" form="order_review"
+						value="<?php echo esc_attr( $billing['postcode'] ); ?>" required autocomplete="postal-code"
+						placeholder="<?php esc_attr_e( 'Postcode / ZIP', 'dokan-payment-links' ); ?>">
+				</p>
+			</div>
+
+			<div class="dpl-customer-fields__row">
+				<p class="form-row dpl-form-field dpl-form-field--country">
+					<label for="dpl-billing-country"><?php esc_html_e( 'Country / Region', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+					<select id="dpl-billing-country" name="dpl_billing_country" form="order_review" required autocomplete="country">
+						<?php foreach ( $countries as $cc => $name ) : ?>
+							<option value="<?php echo esc_attr( $cc ); ?>" <?php selected( $billing['country'], $cc ); ?>><?php echo esc_html( $name ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</p>
+				<p class="form-row dpl-form-field">
+					<label for="dpl-billing-state"><?php esc_html_e( 'State / County', 'dokan-payment-links' ); ?></label>
+					<input type="text" id="dpl-billing-state" name="dpl_billing_state" form="order_review"
+						value="<?php echo esc_attr( $billing['state'] ); ?>" autocomplete="address-level1"
+						placeholder="<?php esc_attr_e( 'State / County', 'dokan-payment-links' ); ?>">
+				</p>
+			</div>
+
+			<?php if ( $needs_shipping ) : ?>
+				<div class="dpl-customer-fields__ship-toggle">
+					<label class="dpl-ship-to-billing">
+						<input type="checkbox" id="dpl-ship-to-billing" name="dpl_ship_to_billing" form="order_review"
+							<?php checked( $ship_to_billing ); ?> value="1">
+						<span><?php esc_html_e( 'Ship to the same address', 'dokan-payment-links' ); ?></span>
+					</label>
+				</div>
+
+				<div class="dpl-shipping-fields" id="dpl-shipping-fields" style="<?php echo $ship_to_billing ? 'display:none;' : ''; ?>">
+					<div class="dpl-customer-fields__heading dpl-customer-fields__heading--shipping"><?php esc_html_e( 'Shipping details', 'dokan-payment-links' ); ?></div>
+
+					<div class="dpl-customer-fields__row">
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-first-name"><?php esc_html_e( 'First name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<input type="text" id="dpl-shipping-first-name" name="dpl_shipping_first_name" form="order_review"
+								value="<?php echo esc_attr( $shipping['first_name'] ); ?>" autocomplete="shipping given-name"
+								placeholder="<?php esc_attr_e( 'First name', 'dokan-payment-links' ); ?>">
+						</p>
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-last-name"><?php esc_html_e( 'Last name', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<input type="text" id="dpl-shipping-last-name" name="dpl_shipping_last_name" form="order_review"
+								value="<?php echo esc_attr( $shipping['last_name'] ); ?>" autocomplete="shipping family-name"
+								placeholder="<?php esc_attr_e( 'Last name', 'dokan-payment-links' ); ?>">
+						</p>
+					</div>
+
+					<p class="form-row dpl-form-field">
+						<label for="dpl-shipping-company"><?php esc_html_e( 'Company', 'dokan-payment-links' ); ?></label>
+						<input type="text" id="dpl-shipping-company" name="dpl_shipping_company" form="order_review"
+							value="<?php echo esc_attr( $shipping['company'] ); ?>" autocomplete="shipping organization"
+							placeholder="<?php esc_attr_e( 'Company (optional)', 'dokan-payment-links' ); ?>">
+					</p>
+
+					<p class="form-row dpl-form-field">
+						<label for="dpl-shipping-address-1"><?php esc_html_e( 'Street address', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+						<input type="text" id="dpl-shipping-address-1" name="dpl_shipping_address_1" form="order_review"
+							value="<?php echo esc_attr( $shipping['address_1'] ); ?>" autocomplete="shipping address-line1"
+							placeholder="<?php esc_attr_e( 'House number and street name', 'dokan-payment-links' ); ?>">
+					</p>
+
+					<p class="form-row dpl-form-field">
+						<label for="dpl-shipping-address-2"><?php esc_html_e( 'Apartment, suite, unit, etc.', 'dokan-payment-links' ); ?></label>
+						<input type="text" id="dpl-shipping-address-2" name="dpl_shipping_address_2" form="order_review"
+							value="<?php echo esc_attr( $shipping['address_2'] ); ?>" autocomplete="shipping address-line2"
+							placeholder="<?php esc_attr_e( 'Apartment, suite, unit, etc. (optional)', 'dokan-payment-links' ); ?>">
+					</p>
+
+					<div class="dpl-customer-fields__row">
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-city"><?php esc_html_e( 'Town / City', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<input type="text" id="dpl-shipping-city" name="dpl_shipping_city" form="order_review"
+								value="<?php echo esc_attr( $shipping['city'] ); ?>" autocomplete="shipping address-level2"
+								placeholder="<?php esc_attr_e( 'Town / City', 'dokan-payment-links' ); ?>">
+						</p>
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-postcode"><?php esc_html_e( 'Postcode / ZIP', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<input type="text" id="dpl-shipping-postcode" name="dpl_shipping_postcode" form="order_review"
+								value="<?php echo esc_attr( $shipping['postcode'] ); ?>" autocomplete="shipping postal-code"
+								placeholder="<?php esc_attr_e( 'Postcode / ZIP', 'dokan-payment-links' ); ?>">
+						</p>
+					</div>
+
+					<div class="dpl-customer-fields__row">
+						<p class="form-row dpl-form-field dpl-form-field--country">
+							<label for="dpl-shipping-country"><?php esc_html_e( 'Country / Region', 'dokan-payment-links' ); ?> <span class="required">*</span></label>
+							<select id="dpl-shipping-country" name="dpl_shipping_country" form="order_review" autocomplete="shipping country">
+								<?php foreach ( $countries as $cc => $name ) : ?>
+									<option value="<?php echo esc_attr( $cc ); ?>" <?php selected( $shipping['country'], $cc ); ?>><?php echo esc_html( $name ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</p>
+						<p class="form-row dpl-form-field">
+							<label for="dpl-shipping-state"><?php esc_html_e( 'State / County', 'dokan-payment-links' ); ?></label>
+							<input type="text" id="dpl-shipping-state" name="dpl_shipping_state" form="order_review"
+								value="<?php echo esc_attr( $shipping['state'] ); ?>" autocomplete="shipping address-level1"
+								placeholder="<?php esc_attr_e( 'State / County', 'dokan-payment-links' ); ?>">
+						</p>
+					</div>
+				</div>
+			<?php endif; ?>
 		</div>
 		<?php
 	}
@@ -615,11 +1067,12 @@ class Dokan_Payment_Links {
 			return;
 		}
 
-		$name     = trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() );
-		$email    = $order->get_billing_email();
-		$username = $order->get_meta( '_payment_link_customer_username' );
+		$name        = trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() );
+		$email       = $order->get_billing_email();
+		$username    = $order->get_meta( '_payment_link_customer_username' );
+		$description = $order->get_meta( '_payment_link_customer_description', true );
 
-		if ( ! $name && ! $email && ! $username ) {
+		if ( ! $name && ! $email && ! $username && ! $description ) {
 			return;
 		}
 		?>
@@ -634,6 +1087,12 @@ class Dokan_Payment_Links {
 				<?php endif; ?>
 				<?php if ( $email ) : ?>
 					<div class="dpl-thankyou-customer__email"><?php echo esc_html( $email ); ?></div>
+				<?php endif; ?>
+				<?php if ( $description ) : ?>
+					<div class="dpl-thankyou-customer__description-wrap">
+						<div class="dpl-thankyou-customer__description-label"><?php esc_html_e( 'Payment for:', 'dokan-payment-links' ); ?></div>
+						<div class="dpl-thankyou-customer__description-text"><?php echo esc_html( $description ); ?></div>
+					</div>
 				<?php endif; ?>
 			</div>
 		</div>
@@ -924,10 +1383,14 @@ function dpl_get_setting_all() {
 		$raw = get_option( 'dpl_settings', array() );
 
 		$settings = wp_parse_args( $raw, array(
-			'enabled'    => 'yes',
-			'max_amount' => 0,
-			'rate_limit' => 20,
-			'tax_class'  => '',
+			'enabled'        => 'yes',
+			'max_amount'     => 0,
+			'rate_limit'     => 20,
+			'tax_class'      => '',
+			'fee_type'       => 'none',
+			'fee_amount'     => 0,
+			'fee_percentage' => 0,
+			'fee_bearer'     => 'customer',
 		) );
 	}
 
@@ -944,6 +1407,46 @@ function dpl_get_setting_all() {
 function dpl_get_setting( $key, $default = '' ) {
 	$settings = dpl_get_setting_all();
 	return isset( $settings[ $key ] ) ? $settings[ $key ] : $default;
+}
+
+/**
+ * Helper: human-readable description of the configured transaction fee.
+ *
+ * @return string Empty string when no fee is configured.
+ */
+function dpl_get_fee_label() {
+	$type = dpl_get_setting( 'fee_type', 'none' );
+
+	if ( 'none' === $type ) {
+		return '';
+	}
+
+	$fixed      = floatval( dpl_get_setting( 'fee_amount', 0 ) );
+	$percentage = floatval( dpl_get_setting( 'fee_percentage', 0 ) );
+
+	$parts = array();
+
+	if ( in_array( $type, array( 'fixed', 'both' ), true ) && $fixed > 0 ) {
+		$parts[] = wp_strip_all_tags( wc_price( $fixed ) );
+	}
+
+	if ( in_array( $type, array( 'percentage', 'both' ), true ) && $percentage > 0 ) {
+		$parts[] = rtrim( rtrim( number_format( $percentage, 2 ), '0' ), '.' ) . '%';
+	}
+
+	if ( empty( $parts ) ) {
+		return '';
+	}
+
+	$fee_desc = implode( ' + ', $parts );
+
+	if ( 'vendor' === dpl_get_setting( 'fee_bearer', 'customer' ) ) {
+		/* translators: %s: fee description (e.g. ₦100 or 2.5%) */
+		return sprintf( __( 'A %s processing fee is deducted from the seller.', 'dokan-payment-links' ), $fee_desc );
+	}
+
+	/* translators: %s: fee description (e.g. ₦100 or 2.5%) */
+	return sprintf( __( 'A %s processing fee will be added to your payment.', 'dokan-payment-links' ), $fee_desc );
 }
 
 /**

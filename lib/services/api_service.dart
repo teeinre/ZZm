@@ -371,6 +371,7 @@ class ApiService {
     String? category,
     String? search,
     String? type,
+    String? author,
   }) async {
     var url = '${ApiConstants.productsEndpoint}?page=$page&per_page=$perPage&status=publish';
     if (category != null) {
@@ -381,6 +382,9 @@ class ApiService {
     }
     if (type != null) {
       url += '&type=$type';
+    }
+    if (author != null && author.isNotEmpty) {
+      url += '&author=$author';
     }
     final response = await _get(url, useWcAuth: true);
     final List<dynamic> data = jsonDecode(response.body);
@@ -397,39 +401,98 @@ class ApiService {
     return data.map((json) => Category.fromJson(Map<String, dynamic>.from(json))).toList();
   }
 
-  /// Comprehensive product search: combines WooCommerce's built-in `search`
-  /// (title/content/excerpt) with a category-name match so products that live
-  /// in a matching category (e.g. searching "accountancy" returns products in
-  /// the "Accountancy Services" category) are also surfaced. Results are
-  /// de-duplicated by product id.
+  /// Comprehensive product search: combines THREE strategies so no matching
+  /// product falls through the cracks. Results are de-duplicated by product id.
   ///
-  /// The title/content search is treated as authoritative — if it fails (e.g.
-  /// rate-limited by a security plugin) the error propagates so the UI can
-  /// show a retry state instead of a misleading "no results" screen. Category
-  /// matching is best-effort and silently skipped on failure.
+  /// Strategy 1 — WooCommerce built-in `search` param (title / excerpt).  This
+  /// is the fastest / indexed primary pass — errors propagate so the UI can
+  /// show a retry state.
+  ///
+  /// Strategy 2 — Category-name match (best-effort, silent skip on failure).
+  /// When the user searches "accountancy" we want products that live inside a
+  /// category called "Accountancy Services" even if the product title never
+  /// mentions the keyword.
+  ///
+  /// Strategy 3 — Broad client-side text match against a large product pool.
+  /// The WC REST `search` param is notoriously restrictive (it only searches
+  /// `post_title` in most configurations, skipping `post_content`,
+  /// `post_excerpt`, and every custom field like `short_description`).  We
+  /// therefore fetch a generous page of products WITHOUT a search filter and
+  /// perform our own substring match on: name, description, shortDescription,
+  /// category names, vendor/store name, and SKU.  This is the "property in
+  /// description but not in title" fix.
+  ///
+  /// Results from all three passes are merged into a single map keyed by
+  /// product id so duplicates are automatically collapsed.
   Future<List<Product>> searchProducts(String query, {int perPage = 100}) async {
+    final q = query.toLowerCase().trim();
     final merged = <int, Product>{};
 
-    // Primary: title/content/excerpt search.
-    final byText = await getProducts(search: query, perPage: perPage);
-    for (final p in byText) {
-      merged[p.id] = p;
+    if (q.isEmpty) return [];
+
+    // ── Strategy 1: Title / excerpt via WC REST `search` ────────────────
+    try {
+      final byText = await getProducts(search: query, perPage: perPage);
+      for (final p in byText) {
+        merged[p.id] = p;
+      }
+    } catch (e) {
+      // Primary search failed — surface the error to callers so they can
+      // show a retry indicator rather than a misleading "0 results".
+      rethrow;
     }
 
-    // Supplementary: category-name match (best-effort).
+    // ── Strategy 2: Category-name match (best-effort) ───────────────────
     try {
       final cats = await getCategories(perPage: 100);
-      final q = query.toLowerCase().trim();
-      final matchedIds = cats
+      final matchedCatIds = cats
           .where((c) =>
               c.name.toLowerCase().contains(q) ||
               (c.slug?.toLowerCase().contains(q) ?? false))
           .map((c) => c.id.toString())
           .toList();
-      if (matchedIds.isNotEmpty) {
-        final byCategory =
-            await getProducts(category: matchedIds.join(','), perPage: perPage);
+      if (matchedCatIds.isNotEmpty) {
+        final byCategory = await getProducts(
+            category: matchedCatIds.join(','), perPage: perPage);
         for (final p in byCategory) {
+          merged[p.id] = p;
+        }
+      }
+    } catch (_) {}
+
+    // ── Strategy 3: Client-side broad text match (description / SKU / …) ─
+    // WC's `search` parameter only touches post_title in most setups, so a
+    // product whose description mentions "property" but title says "3-Bed
+    // Duplex in Lekki" would be invisible.  We fix this by fetching a wide
+    // pool and running our own substring scan over every text field we have
+    // access to inside the Product model.
+    try {
+      // Fetch up to 200 most-recent products (higher perPage than normal so
+      // we cast the net wide enough).  If this causes too much bandwidth on
+      // slow connections, dial it back to 150 in a future tweak.
+      final broadPool = await getProducts(perPage: 200);
+      final terms = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+
+      for (final p in broadPool) {
+        if (merged.containsKey(p.id)) continue; // already captured
+
+        final name = p.name.toLowerCase();
+        final desc = (p.description ?? '').toLowerCase();
+        final short = (p.shortDescription ?? '').toLowerCase();
+        final vendor = (p.vendorName ?? '').toLowerCase();
+        final sku = (p.sku ?? '').toLowerCase();
+        final catNames =
+            p.categories.map((c) => c.name.toLowerCase()).join(' ');
+        final allText = '$name $desc $short $vendor $sku $catNames';
+
+        bool matches = allText.contains(q);
+        // Also require every individual word to appear somewhere when the
+        // query is multi-word — prevents false positives like "rent car"
+        // matching a product that only mentions "rent" in description.
+        if (!matches && terms.length > 1) {
+          matches = terms.every((t) => allText.contains(t));
+        }
+        if (matches) {
           merged[p.id] = p;
         }
       }
@@ -715,6 +778,143 @@ class ApiService {
     } catch (e) {
       return [];
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // DOKAN STORE CATEGORIES (vendor-level categories, NOT product categories)
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // Dokan stores are organised into a custom taxonomy (`store_category`)
+  // which lives on VENDOR / USER objects, NOT on products.  To "filter
+  // products by store category" we first find which vendors belong to a
+  // store category, then return only products whose `post_author` (vendor
+  // user ID) is in that set.
+  //
+  // The primary data source is vendor-api.php (`get_store_categories` +
+  // `get_all_stores_with_categories`) because it reads directly from
+  // wp_get_object_terms with no REST permission/serialisation surprises.
+  // As a fallback we query the WordPress taxonomy REST endpoint.
+
+  /// Returns the list of Dokan store-category terms (id, name, slug, count).
+  /// Primary path: vendor-api.php?action=get_store_categories.
+  /// Fallback: /wp/v2/store_category.
+  Future<List<Map<String, dynamic>>> getStoreCategories() async {
+    // ── 1. vendor-api.php (authoritative) ──────────────────────────────
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_store_categories';
+      final response = await _get(url, useWcAuth: false);
+      final body = jsonDecode(response.body);
+      if (body is Map && body['categories'] is List) {
+        final list = (body['categories'] as List<dynamic>)
+            .map((c) => Map<String, dynamic>.from(c))
+            .toList();
+        if (list.isNotEmpty) return list;
+      }
+    } catch (_) {}
+
+    // ── 2. WP REST taxonomy endpoint (fallback) ───────────────────────
+    try {
+      final candidates = ['store_category', 'dokan_store_category'];
+      for (final tax in candidates) {
+        final url =
+            '${ApiConstants.wpApiBase}/$tax?per_page=100&hide_empty=false';
+        try {
+          final response = await _get(url, useWcAuth: false);
+          final List<dynamic> data = jsonDecode(response.body);
+          if (data.isNotEmpty) {
+            return data.map((t) {
+              final m = Map<String, dynamic>.from(t);
+              return {
+                'id': m['id'] as int? ?? 0,
+                'name': m['name']?.toString() ?? '',
+                'slug': m['slug']?.toString() ?? '',
+                'count': m['count'] is int
+                    ? m['count'] as int
+                    : int.tryParse(m['count']?.toString() ?? '0') ?? 0,
+                'parent': m['parent'] is int
+                    ? m['parent'] as int
+                    : int.tryParse(m['parent']?.toString() ?? '0') ?? 0,
+              };
+            }).toList();
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    return [];
+  }
+
+  /// Fetches every Dokan store together with its `store_category` ids and
+  /// a reverse-mapping `category_vendors` (category id → list of WP user
+  /// ids whose vendor account is in that category).
+  ///
+  /// Primary: vendor-api.php?action=get_all_stores_with_categories.
+  /// Fallback: combines getDokanStores with per-store lookups.
+  Future<Map<String, dynamic>> getAllStoresWithCategories() async {
+    // ── 1. vendor-api.php (authoritative, single HTTP call) ────────────
+    try {
+      final url =
+          '${ApiConstants.vendorApiBase}?action=get_all_stores_with_categories';
+      final response = await _get(url, useWcAuth: false);
+      final body = jsonDecode(response.body);
+      if (body is Map && body['stores'] is List) {
+        return Map<String, dynamic>.from(body);
+      }
+    } catch (_) {}
+
+    // ── 2. Fallback: assemble from individual endpoints ────────────────
+    final stores = <Map<String, dynamic>>[];
+    final categoryVendors = <String, List<int>>{};
+    try {
+      final dokanStores = await getDokanStores(perPage: 200);
+      for (final s in dokanStores) {
+        final uid = s['user_id'] is int
+            ? s['user_id'] as int
+            : int.tryParse(s['user_id']?.toString() ??
+                    s['owner_id']?.toString() ??
+                    s['id']?.toString() ??
+                    '') ??
+                0;
+        final storeId = s['id'] is int
+            ? s['id'] as int
+            : int.tryParse(s['id']?.toString() ?? '') ?? 0;
+        final catIdsRaw = s['store_categories'] ?? s['categories'];
+        final catIds = <int>[];
+        if (catIdsRaw is List) {
+          for (final c in catIdsRaw) {
+            if (c is int) {
+              catIds.add(c);
+            } else if (c is Map && c['id'] != null) {
+              final id = int.tryParse(c['id'].toString());
+              if (id != null) catIds.add(id);
+            }
+          }
+        }
+        for (final cid in catIds) {
+          final key = cid.toString();
+          categoryVendors[key] ??= <int>[];
+          categoryVendors[key]!.add(uid);
+        }
+        stores.add({
+          'store_id': storeId,
+          'user_id': uid,
+          'store_name': s['store_name']?.toString() ??
+              s['shop_name']?.toString() ??
+              s['name']?.toString() ??
+              '',
+          'slug': s['slug']?.toString() ?? '',
+          'category_ids': catIds,
+          'rating': s['rating'] ?? 0,
+        });
+      }
+    } catch (_) {}
+
+    return {
+      'stores': stores,
+      'category_vendors': categoryVendors,
+      'taxonomy': null,
+      'total_stores': stores.length,
+    };
   }
 
   /// Register a new user via WordPress REST API.
