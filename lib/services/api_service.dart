@@ -397,6 +397,41 @@ class ApiService {
     return data.map((json) => Category.fromJson(Map<String, dynamic>.from(json))).toList();
   }
 
+  /// Comprehensive product search: combines WooCommerce's built-in `search`
+  /// (title/content/excerpt) with a category-name match so products that live
+  /// in a matching category (e.g. searching "accountancy" returns products in
+  /// the "Accountancy Services" category) are also surfaced. Results are
+  /// de-duplicated by product id.
+  Future<List<Product>> searchProducts(String query, {int perPage = 100}) async {
+    final merged = <int, Product>{};
+    try {
+      final byText = await getProducts(search: query, perPage: perPage);
+      for (final p in byText) {
+        merged[p.id] = p;
+      }
+    } catch (_) {}
+
+    try {
+      final cats = await getCategories(perPage: 100);
+      final q = query.toLowerCase().trim();
+      final matchedIds = cats
+          .where((c) =>
+              c.name.toLowerCase().contains(q) ||
+              (c.slug?.toLowerCase().contains(q) ?? false))
+          .map((c) => c.id.toString())
+          .toList();
+      if (matchedIds.isNotEmpty) {
+        final byCategory =
+            await getProducts(category: matchedIds.join(','), perPage: perPage);
+        for (final p in byCategory) {
+          merged[p.id] = p;
+        }
+      }
+    } catch (_) {}
+
+    return merged.values.toList();
+  }
+
   Future<Product?> getProduct(int id) async {
     final url = '${ApiConstants.productsEndpoint}/$id';
     final response = await _get(url, useWcAuth: true);
