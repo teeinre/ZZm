@@ -383,27 +383,47 @@ class DPL_Dashboard {
 								<th><?php esc_html_e( 'Date', 'dokan-payment-links' ); ?></th>
 								<th><?php esc_html_e( 'Total', 'dokan-payment-links' ); ?></th>
 								<th><?php esc_html_e( 'Status', 'dokan-payment-links' ); ?></th>
+								<th><?php esc_html_e( 'Actions', 'dokan-payment-links' ); ?></th>
 							</tr>
 						</thead>
 						<tbody>
 							<?php foreach ( $result['orders'] as $order ) : ?>
-								<tr>
-									<td class="dpl-order-id" data-label="<?php esc_attr_e( 'Order', 'dokan-payment-links' ); ?>">#<?php echo absint( $order['id'] ); ?></td>
+								<?php
+								$order_status = $order['status'];
+								$completable  = ! in_array( $order_status, array( 'completed', 'cancelled', 'refunded', 'failed' ), true );
+								$cancellable = ! in_array( $order_status, array( 'completed', 'cancelled', 'refunded' ), true );
+								?>
+								<tr class="dpl-order-row" data-order-id="<?php echo absint( $order['id'] ); ?>">
+									<td data-label="<?php esc_attr_e( 'Order', 'dokan-payment-links' ); ?>">#<?php echo absint( $order['id'] ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Customer', 'dokan-payment-links' ); ?>">
-									<div class="dpl-order-customer">
-										<strong class="dpl-order-customer__name"><?php echo esc_html( $order['customer_name'] ? $order['customer_name'] : $order['customer'] ); ?></strong>
-										<?php if ( ! empty( $order['customer_username'] ) ) : ?>
-											<span class="dpl-order-customer__username">@<?php echo esc_html( $order['customer_username'] ); ?></span>
-										<?php endif; ?>
-										<?php if ( ! empty( $order['customer_email'] ) ) : ?>
-											<span class="dpl-order-customer__email"><?php echo esc_html( $order['customer_email'] ); ?></span>
-										<?php endif; ?>
-									</div>
-								</td>
+										<div class="dpl-order-customer">
+											<strong class="dpl-order-customer__name"><?php echo esc_html( $order['customer_name'] ? $order['customer_name'] : $order['customer'] ); ?></strong>
+											<?php if ( ! empty( $order['customer_username'] ) ) : ?>
+												<span class="dpl-order-customer__username">@<?php echo esc_html( $order['customer_username'] ); ?></span>
+											<?php endif; ?>
+											<?php if ( ! empty( $order['customer_email'] ) ) : ?>
+												<span class="dpl-order-customer__email"><?php echo esc_html( $order['customer_email'] ); ?></span>
+											<?php endif; ?>
+											<?php if ( ! empty( $order['description'] ) ) : ?>
+												<div class="dpl-order-customer__description">
+													<span class="dpl-order-customer__description-label"><?php esc_html_e( 'Purpose:', 'dokan-payment-links' ); ?></span>
+													<span class="dpl-order-customer__description-text"><?php echo esc_html( $order['description'] ); ?></span>
+												</div>
+											<?php endif; ?>
+										</div>
+									</td>
 									<td data-label="<?php esc_attr_e( 'Date', 'dokan-payment-links' ); ?>"><?php echo esc_html( $order['date'] ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Total', 'dokan-payment-links' ); ?>"><?php echo wp_kses_post( wc_price( $order['total'], array( 'currency' => $order['currency'] ) ) ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Status', 'dokan-payment-links' ); ?>">
-										<span class="dpl-status dpl-status-<?php echo esc_attr( $order['status'] ); ?>"><?php echo esc_html( $this->get_order_status_label( $order['status'] ) ); ?></span>
+										<span class="dpl-status dpl-status-<?php echo esc_attr( $order_status ); ?>" data-order-status><?php echo esc_html( $this->get_order_status_label( $order_status ) ); ?></span>
+									</td>
+									<td class="dpl-order-actions" data-label="<?php esc_attr_e( 'Actions', 'dokan-payment-links' ); ?>">
+										<?php if ( $completable ) : ?>
+											<button type="button" class="dpl-btn-sm dpl-order-complete" data-order-id="<?php echo absint( $order['id'] ); ?>"><?php esc_html_e( 'Complete', 'dokan-payment-links' ); ?></button>
+										<?php endif; ?>
+										<?php if ( $cancellable ) : ?>
+											<button type="button" class="dpl-btn-sm dpl-order-cancel" data-order-id="<?php echo absint( $order['id'] ); ?>"><?php esc_html_e( 'Cancel', 'dokan-payment-links' ); ?></button>
+										<?php endif; ?>
 									</td>
 								</tr>
 							<?php endforeach; ?>

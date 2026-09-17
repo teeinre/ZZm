@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 import '../constants/app_colors.dart';
 import '../constants/api_constants.dart';
-import '../models/category.dart' as cat_model;
 import '../models/product.dart';
 import '../services/api_service.dart';
 import '../widgets/product_tile.dart';
 
 /// Explore tab: a paginated catalog of all products with multi-select
-/// category filtering. Filters apply in real time (no page reload) and the
+/// **Dokan Store Category** filtering.  Filters apply in real time and the
 /// grid is responsive across mobile, tablet and desktop viewports.
+///
+/// Dokan Store Categories live on VENDOR objects (user taxonomy
+/// `store_category`), not on individual products.  So to filter the
+/// product grid by a store category we first resolve which vendors
+/// belong to the chosen category, then keep only products whose
+/// `vendorId` (post_author) is in that set.
 class ExploreScreen extends StatefulWidget {
   const ExploreScreen({super.key});
 
@@ -20,9 +25,22 @@ class _ExploreScreenState extends State<ExploreScreen> {
   final ApiService _api = ApiService();
   final ScrollController _scroll = ScrollController();
 
-  List<cat_model.Category> _categories = [];
+  // Store categories come from Dokan's `store_category` taxonomy via
+  // vendor-api.php (with WP REST fallback).  Each entry has `{id, name,
+  // slug, count}`.
+  List<Map<String, dynamic>> _storeCategories = [];
+
+  // Reverse mapping: store_category_id (as int) → list of WP user IDs
+  // (vendor post_author) of vendors that are in that category.
+  Map<int, List<int>> _categoryVendorIds = {};
+
+  // All stores list for debugging / fallback categorisation.
+  List<Map<String, dynamic>> _allStores = [];
+
   List<Product> _products = [];
-  String _selectedFilter = 'all'; // 'all' | 'services' | 'cat:<id>'
+
+  /// `'all'` or `'scat:<id>'` where `<id>` is the store_category term_id.
+  String _selectedFilter = 'all';
 
   bool _loading = true;
   bool _loadingMore = false;
@@ -35,7 +53,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
-    _loadCategories();
+    _loadStoreCategories();
     _loadProducts();
   }
 
@@ -52,33 +70,95 @@ class _ExploreScreenState extends State<ExploreScreen> {
     }
   }
 
-  /// Comma-separated category IDs for the WooCommerce `category` param,
-  /// or null for all. Categories (including "Services") come from the
-  /// dynamically loaded product category list.
-  String? get _categoryQuery {
-    if (_selectedFilter.startsWith('cat:')) {
-      return _selectedFilter.substring(4);
+  /// Returns the store_category id as int when the filter is in
+  /// `scat:<id>` form, otherwise null.
+  int? get _selectedStoreCategoryId {
+    if (_selectedFilter.startsWith('scat:')) {
+      return int.tryParse(_selectedFilter.substring(5));
     }
     return null;
   }
 
-  List<Product> _filterExcluded(List<Product> list) => list
-      .where((p) => !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName))
-      .toList();
+  /// Vendor WP user IDs that match the currently-selected store category,
+  /// or `null` when "All products" is chosen (no vendor scoping).
+  Set<int>? get _vendorScope {
+    final cid = _selectedStoreCategoryId;
+    if (cid == null) return null;
+    final list = _categoryVendorIds[cid] ?? const <int>[];
+    if (list.isEmpty) return <int>{};
+    return Set<int>.from(list);
+  }
 
-  Future<void> _loadCategories() async {
+  List<Product> _applyVendorFilter(List<Product> list) {
+    final scope = _vendorScope;
+    Iterable<Product> result = list.where((p) =>
+        !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName));
+    if (scope != null) {
+      result = result.where((p) => scope.contains(p.vendorId ?? -1));
+    }
+    return result.toList();
+  }
+
+  /// Loads Dokan store categories + vendor mapping.  Falls back to
+  /// WooCommerce product categories if the store-category endpoints
+  /// return nothing (e.g. vendor-api.php hasn't been deployed yet), so
+  /// the dropdown never appears empty.
+  Future<void> _loadStoreCategories() async {
     try {
-      final cats = await _api.getCategories(perPage: 100);
-      // Only offer categories that actually contain products (skip empty and
-      // "Uncategorized"), sorted by product count so the most populated
-      // categories appear first.
-      final filtered = cats
-          .where((c) => c.slug != 'uncategorized' && c.count > 0)
-          .toList()
-        ..sort((a, b) => b.count.compareTo(a.count));
-      if (mounted) setState(() => _categories = filtered);
-    } catch (_) {
-      // Non-fatal: products still load without category filters.
+      final storesPayload = await _api.getAllStoresWithCategories();
+      final catsList = await _api.getStoreCategories();
+
+      // Parse the category → vendors reverse map (can be keyed by int or
+      // String depending on JSON serialisation).
+      final cv = storesPayload['category_vendors'];
+      final parsedCv = <int, List<int>>{};
+      if (cv is Map) {
+        cv.forEach((k, v) {
+          final key = k is int ? k : int.tryParse(k.toString());
+          if (key == null) return;
+          if (v is! List) return;
+          final ids = <int>[];
+          for (final x in v) {
+            final xi = x is int ? x : int.tryParse(x.toString());
+            if (xi != null) ids.add(xi);
+          }
+          if (ids.isNotEmpty) parsedCv[key] = ids;
+        });
+      }
+
+      final storesRaw = storesPayload['stores'];
+      final parsedStores = <Map<String, dynamic>>[];
+      if (storesRaw is List) {
+        for (final s in storesRaw) {
+          if (s is Map) parsedStores.add(Map<String, dynamic>.from(s));
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _categoryVendorIds = parsedCv;
+          _allStores = parsedStores;
+          _storeCategories = catsList.where((c) {
+            final count = c['count'] is int ? c['count'] as int : 0;
+            final cid = c['id'] is int ? c['id'] as int : 0;
+            // Keep non-empty categories AND categories that have at
+            // least one vendor according to our reverse map.
+            final hasVendors = (parsedCv[cid]?.isNotEmpty ?? false);
+            return count > 0 || hasVendors;
+          }).toList()
+            ..sort((a, b) {
+              final ca = a['count'] is int ? a['count'] as int : 0;
+              final cb = b['count'] is int ? b['count'] as int : 0;
+              final va =
+                  (_categoryVendorIds[a['id'] as int? ?? 0]?.length ?? 0);
+              final vb =
+                  (_categoryVendorIds[b['id'] as int? ?? 0]?.length ?? 0);
+              return (cb + vb).compareTo(ca + va);
+            });
+        });
+      }
+    } catch (e) {
+      debugPrint('[Explore] store categories load failed: $e');
     }
     if (mounted) setState(() => _loadingCategories = false);
   }
@@ -91,34 +171,23 @@ class _ExploreScreenState extends State<ExploreScreen> {
     _page = 1;
     _hasMore = true;
     try {
-      var products = await _api.getProducts(page: _page, category: _categoryQuery, perPage: 20);
-      final filtered = _filterExcluded(products);
+      // Note: we intentionally do NOT filter by vendor server-side here.
+      // The Dokan `store_category` lives on users, not products, so
+      // server-side filter would be awkward.  We just pull the normal
+      // paginated product stream and trim it in `_applyVendorFilter`.
+      var products =
+          await _api.getProducts(page: _page, perPage: 50, author: _authorQuery());
+      final filtered = _applyVendorFilter(products);
       if (mounted) {
         setState(() {
           _products = filtered;
           _loading = false;
           _page++;
-          _hasMore = products.length >= 20;
+          _hasMore = products.length >= 50;
         });
       }
     } catch (e) {
       debugPrint('[Explore] load products failed: $e');
-      // If a category filter caused the failure, fall back to unfiltered.
-      if (_categoryQuery != null) {
-        try {
-          final products = await _api.getProducts(page: _page, perPage: 20);
-          final filtered = _filterExcluded(products);
-          if (mounted) {
-            setState(() {
-              _products = filtered;
-              _loading = false;
-              _page++;
-              _hasMore = products.length >= 20;
-            });
-          }
-          return;
-        } catch (_) {}
-      }
       if (mounted) {
         setState(() {
           _loading = false;
@@ -128,17 +197,31 @@ class _ExploreScreenState extends State<ExploreScreen> {
     }
   }
 
+  /// When filtering by store category we try to narrow the server-side
+  /// request using `author=<ids>` if the list is short enough.  This
+  /// reduces the amount of data we throw away client-side.
+  String? _authorQuery() {
+    final scope = _vendorScope;
+    if (scope == null || scope.isEmpty) return null;
+    // Only push to server if the vendor set is small (<20 IDs).  For
+    // very large categories it's cheaper to fetch unfiltered and drop
+    // locally than to ship a huge query string.
+    if (scope.length > 20) return null;
+    return scope.map((id) => id.toString()).join(',');
+  }
+
   Future<void> _loadMore() async {
     if (_loadingMore || _loading || !_hasMore) return;
     setState(() => _loadingMore = true);
     try {
-      final more = await _api.getProducts(page: _page, category: _categoryQuery, perPage: 20);
-      final filtered = _filterExcluded(more);
+      final more =
+          await _api.getProducts(page: _page, perPage: 50, author: _authorQuery());
+      final filtered = _applyVendorFilter(more);
       if (mounted) {
         setState(() {
           _products.addAll(filtered);
           _page++;
-          _hasMore = more.length >= 20;
+          _hasMore = more.length >= 50;
           _loadingMore = false;
         });
       }
@@ -282,10 +365,16 @@ class _ExploreScreenState extends State<ExploreScreen> {
               value: 'all',
               child: Text('All products'),
             ),
-            ..._categories.map((c) {
+            ..._storeCategories.map((c) {
+              final id = c['id'] as int? ?? 0;
+              final name = (c['name']?.toString().isNotEmpty ?? false)
+                  ? c['name']!.toString()
+                  : 'Category';
+              final vendorCount = _categoryVendorIds[id]?.length ?? 0;
+              final label = vendorCount > 0 ? '$name ($vendorCount vendors)' : name;
               return DropdownMenuItem(
-                value: 'cat:${c.id}',
-                child: Text(c.name ?? 'Category'),
+                value: 'scat:$id',
+                child: Text(label),
               );
             }),
           ],

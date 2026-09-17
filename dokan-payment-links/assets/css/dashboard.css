@@ -78,7 +78,9 @@
 .dpl-dashboard-wrap {
     max-width: 820px;
     /* Push content significantly right so the sidebar never overlaps it.
-       Dokan sidebars are typically 200-280px wide. 280px + 30px gap = 310px. */
+       Dokan sidebars are typically 200-280px wide. 280px + 30px gap = 310px.
+       The width is reduced by the same 310px so the card never overflows the
+       content area to the right (which previously hid the Actions column). */
     margin-left: 310px;
     margin-right: auto;
     background: #fff;
@@ -89,7 +91,7 @@
     z-index: 10;
     display: block;
     box-sizing: border-box;
-    width: 100%;
+    width: calc(100% - 310px);
     clear: both;
 }
 
@@ -213,10 +215,29 @@
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     width: 100%;
+    max-width: 100%;
+    padding-bottom: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: #e67e14 #f0ebe4;
+}
+
+.dpl-table-wrapper::-webkit-scrollbar {
+    height: 8px;
+}
+
+.dpl-table-wrapper::-webkit-scrollbar-track {
+    background: #f0ebe4;
+    border-radius: 99px;
+}
+
+.dpl-table-wrapper::-webkit-scrollbar-thumb {
+    background: #e67e14;
+    border-radius: 99px;
 }
 
 .dpl-table {
     width: 100%;
+    min-width: 760px;
     border-collapse: collapse;
     font-size: 13.5px;
     table-layout: auto;
@@ -294,9 +315,40 @@
 
 .dpl-actions {
     white-space: nowrap;
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
+}
+
+.dpl-actions .dpl-btn-sm + .dpl-btn-sm {
+    margin-left: 6px;
+}
+
+.dpl-order-actions {
+    white-space: nowrap;
+}
+
+.dpl-order-actions .dpl-btn-sm + .dpl-btn-sm {
+    margin-left: 6px;
+}
+
+.dpl-btn-sm.dpl-order-complete {
+    color: #1e7a34;
+    border-color: #c9e7d1;
+    background: #f2faf4;
+}
+
+.dpl-btn-sm.dpl-order-complete:hover {
+    background: #e2f5e8;
+    border-color: #2e9e4c;
+}
+
+.dpl-btn-sm.dpl-order-cancel {
+    color: #c0392b;
+    border-color: #f5d0d0;
+    background: #fef9f9;
+}
+
+.dpl-btn-sm.dpl-order-cancel:hover {
+    background: #fbeaea;
+    border-color: #e74c3c;
 }
 
 /* ==================================================================
@@ -308,8 +360,6 @@
     flex-direction: column;
     gap: 2px;
     line-height: 1.4;
-    overflow-wrap: break-word;
-    word-break: normal;
 }
 
 .dpl-order-customer__name {
@@ -329,6 +379,33 @@
     color: #7a6151;
 }
 
+.dpl-order-customer__description {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 6px;
+    padding: 8px 10px;
+    border-left: 3px solid #e67e14;
+    background: #fff6ec;
+    border-radius: 0 8px 8px 0;
+}
+
+.dpl-order-customer__description-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #b35410;
+}
+
+.dpl-order-customer__description-text {
+    font-size: 12.5px;
+    color: #2d1f10;
+    line-height: 1.45;
+    white-space: normal;
+    word-break: break-word;
+}
+
 /* ==================================================================
    Status Badges
    ================================================================== */
@@ -341,7 +418,6 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    white-space: nowrap;
 }
 
 .dpl-status-pending {
@@ -852,6 +928,7 @@
         max-width: 100%;
         margin-left: 0;
         margin-right: 0;
+        width: 100%;
     }
 
     .dpl-header {
@@ -873,6 +950,10 @@
         display: none;
     }
 
+    .dpl-table {
+        min-width: 0;
+    }
+
     .dpl-table tbody tr {
         display: block;
         margin-bottom: 14px;
@@ -884,36 +965,24 @@
 
     .dpl-table tbody td {
         display: flex;
-        align-items: flex-start;
-        gap: 12px;
+        justify-content: space-between;
         padding: 6px 0;
         border: none;
         font-size: 13px;
-        text-align: left;
-        overflow-wrap: break-word;
-        word-break: normal;
     }
 
     .dpl-table tbody td::before {
         content: attr(data-label);
         font-weight: 700;
         color: #7a6151;
-        flex: 0 0 auto;
-        white-space: nowrap;
-        padding-top: 1px;
+        margin-right: 10px;
+        flex-shrink: 0;
     }
 
-    .dpl-order-id {
-        white-space: nowrap;
-    }
-
-    .dpl-order-customer {
-        flex: 1 1 auto;
-        min-width: 0;
-    }
-
-    .dpl-actions {
+    .dpl-actions,
+    .dpl-order-actions {
         justify-content: flex-end;
+        flex-wrap: wrap;
         margin-top: 8px;
     }
 
