@@ -127,6 +127,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _initCheckout();
   }
 
+  /// Clears the expired auth state and bounces the user back to the auth gate
+  /// (login) instead of surfacing a cryptic "could not checkout (403)" error.
+  Future<void> _handleSessionExpired() async {
+    await _auth.handleSessionExpired();
+    if (!mounted) return;
+    setState(() {
+      _mode = _CheckoutMode.authGate;
+      _loading = false;
+      _error = null;
+      _placingOrder = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Your session has expired. Please log in again to continue.'),
+        backgroundColor: AppColors.coralColor,
+        duration: Duration(seconds: 5),
+      ),
+    );
+  }
+
   // ── INIT ──
 
   Future<void> _initCheckout() async {
@@ -137,6 +157,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     if (localItems.isEmpty) {
       setState(() { _loading = false; _error = 'Your cart is empty.'; });
+      return;
+    }
+
+    // Proactive session check: bail to login BEFORE firing any authenticated
+    // Store API call if the JWT is already (or nearly) expired.
+    if (_mode == _CheckoutMode.authenticated && _api.isTokenExpiredOrNearExpiry) {
+      await _handleSessionExpired();
       return;
     }
 
@@ -158,6 +185,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       debugPrint('[Checkout] Step 1: fetch nonce (mode=${_mode.name})');
       try {
         await _api.fetchStoreNonce();
+      } on TokenExpiredException {
+        rethrow;
       } catch (e) {
         debugPrint('[Checkout] Nonce fetch failed (continuing with add-to-cart anyway): $e');
       }
@@ -206,6 +235,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               lastErr = Exception('addToStoreCart returned null (no error detail)');
               debugPrint('[Checkout]   ✗ ${item.product.name} pass ${attempt + 1}: returned null');
             }
+          } on TokenExpiredException {
+            rethrow;
           } catch (e) {
             lastErr = e is Exception ? e : Exception(e.toString());
             debugPrint('[Checkout]   ✗ ${item.product.name} pass ${attempt + 1}: $e');
@@ -305,6 +336,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         try {
           cartData = await _api.getStoreCart();
           if (cartData != null) break;
+        } on TokenExpiredException {
+          rethrow;
         } catch (e) {
           debugPrint('[Checkout] Get store cart attempt ${attempt + 1} failed: $e');
         }
@@ -329,6 +362,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
       _parseCart(cartData);
       setState(() { _loading = false; });
+    } on TokenExpiredException catch (e) {
+      debugPrint('[Checkout] Session expired during init: $e');
+      await _handleSessionExpired();
     } catch (e) {
       debugPrint('[Checkout] Init failed: $e');
       setState(() {
@@ -936,6 +972,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a payment method.')),
       );
+      return;
+    }
+
+    // ── Proactive session check before the critical WebView handoff ──
+    // The WebView bridge then makes a JWT-authenticated generate-token call;
+    // if the JWT is already (or nearly) expired, bail to login NOW instead of
+    // letting the WebView hit a 403.
+    if (_mode == _CheckoutMode.authenticated && _api.isTokenExpiredOrNearExpiry) {
+      await _handleSessionExpired();
       return;
     }
 

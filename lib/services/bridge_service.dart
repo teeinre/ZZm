@@ -29,12 +29,18 @@ class BridgeService {
   Future<String> generateBridgeToken(List<BridgeCartItem> items) async {
     final auth = await authHeaderProvider();
 
+    // Guests have no JWT — omit Authorization entirely instead of sending a
+    // malformed "Bearer " header that the JWT plugin rejects with 403.
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+    };
+    if (auth.trim().isNotEmpty) {
+      headers['Authorization'] = auth;
+    }
+
     final response = await http.post(
       Uri.parse('$baseUrl/wp-json/bridge/v1/generate-token'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': auth,
-      },
+      headers: headers,
       body: jsonEncode({
         'items': items.map((e) => e.toJson()).toList(),
       }),
@@ -59,13 +65,20 @@ class BridgeService {
 
   /// Called once the WebView reaches the order-received page, to pull full
   /// order details back into native Flutter UI.
-  Future<BridgeOrderDetails> fetchOrder(int orderId) async {
+  Future<BridgeOrderDetails> fetchOrder(int orderId, {String? orderKey}) async {
     final auth = await authHeaderProvider();
 
-    final response = await http.get(
-      Uri.parse('$baseUrl/wp-json/bridge/v1/order/$orderId'),
-      headers: {'Authorization': auth},
-    );
+    final headers = <String, String>{};
+    if (auth.trim().isNotEmpty) {
+      headers['Authorization'] = auth;
+    }
+
+    var url = '$baseUrl/wp-json/bridge/v1/order/$orderId';
+    if (orderKey != null && orderKey.isNotEmpty) {
+      url = '$url?key=${Uri.encodeQueryComponent(orderKey)}';
+    }
+
+    final response = await http.get(Uri.parse(url), headers: headers);
 
     if (response.statusCode != 200) {
       throw Exception(

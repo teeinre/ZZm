@@ -25,15 +25,37 @@ class ProductsProvider with ChangeNotifier {
   });
 
   List<Product> get products => _filterExcluded(_products);
-  List<cat_model.Category> get categories => _filterUncategorized(_categories);
+  List<cat_model.Category> get categories =>
+      _sortCategories(_categories);
 
   // ── Helpers ──
 
-  /// Remove the WooCommerce default "Uncategorized" category (slug=uncategorized)
-  /// from any category list.
-  List<cat_model.Category> _filterUncategorized(List<cat_model.Category> cats) {
-    return cats.where((c) => c.slug != 'uncategorized').toList();
+  /// True if the given term matches WooCommerce's default "Uncategorized"
+  /// term (matches slug AND name, case-insensitive, to work on both
+  /// English and localized installs).
+  static bool _isUncategorized(cat_model.Category c) {
+    final slug = (c.slug ?? '').toLowerCase().trim();
+    final name = c.name.toLowerCase().trim();
+    if (slug == 'uncategorized') return true;
+    if (name == 'uncategorized') return true;
+    if (c.id == 1 && slug.isEmpty) return true;
+    return false;
   }
+
+  /// Strict alphabetical A→Z sort with "Uncategorized" ALWAYS at the END.
+  static List<cat_model.Category> _sortCategories(
+      List<cat_model.Category> cats) {
+    final sorted = List<cat_model.Category>.from(cats);
+    sorted.sort((a, b) {
+      final aU = _isUncategorized(a);
+      final bU = _isUncategorized(b);
+      if (aU && !bU) return 1;
+      if (!aU && bU) return -1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return sorted;
+  }
+
   bool get isLoading => _isLoading;
   bool get isLoadingMore => _isLoadingMore;
   String? get errorMessage => _errorMessage;
@@ -65,20 +87,21 @@ class ProductsProvider with ChangeNotifier {
     if (_categories.isNotEmpty && !force) return;
     _isLoading = true;
     notifyListeners();
+    List<cat_model.Category> cats = [];
     try {
-      final cachedCategories = hiveService.getCachedCategories();
-      if (cachedCategories.isNotEmpty) {
-        _categories = _filterUncategorized(cachedCategories);
-        notifyListeners();
+      // ── 1. vendor-api (primary — includes empty, all product types) ─
+      cats = await apiService.getAllProductCategories(hideEmpty: false);
+      if (cats.isEmpty) {
+        cats = await apiService.getCategories(perPage: 100);
       }
-      final categories = await apiService.getCategories(perPage: 100);
-      _categories = _filterUncategorized(categories);
+      _categories = _sortCategories(cats);
       await hiveService.cacheCategories(_categories);
       _errorMessage = null;
     } catch (e) {
       _errorMessage = e.toString();
       if (_categories.isEmpty) {
-        _categories = _filterUncategorized(hiveService.getCachedCategories());
+        final cached = hiveService.getCachedCategories();
+        _categories = _sortCategories(cached);
       }
     }
     _isLoading = false;
@@ -91,22 +114,52 @@ class ProductsProvider with ChangeNotifier {
     if (refresh) {
       _currentPage = 1;
       _hasMore = true;
-      // Keep existing products during refresh to avoid flicker
     }
     _isLoading = true;
     if (_products.isEmpty) {
       notifyListeners();
     }
+    List<Product> freshProducts = [];
     try {
-      final freshProducts = await apiService.getProducts(
-        page: _currentPage,
-        category: _selectedCategory,
-        search: _searchQuery,
-      );
-      // Filter out excluded vendor products before storing
+      final catId = _selectedCategory != null
+          ? int.tryParse(_selectedCategory!)
+          : null;
+      final String? search = _searchQuery;
+      final bool needsSearch = search != null && search.trim().isNotEmpty;
+
+      // ── Primary path 1: vendor-api.php (works for booking, sub, etc) ──
+      if (catId != null && !needsSearch) {
+        try {
+          freshProducts = await apiService.getProductsByCategory(
+            catId,
+            page: _currentPage,
+            perPage: ApiConstants.defaultPerPage,
+          );
+        } catch (_) {
+          // fall through to wc-rest
+        }
+      }
+
+      // ── Primary path 2: vendor-api.php searchProducts ─────────────
+      if (freshProducts.isEmpty && needsSearch) {
+        try {
+          freshProducts = await apiService.searchProducts(search,
+              perPage: ApiConstants.defaultPerPage);
+        } catch (_) {
+          // fall through
+        }
+      }
+
+      // ── Fallback path: WC REST /wc/v3/products ─────────────────────
+      if (freshProducts.isEmpty) {
+        freshProducts = await apiService.getProducts(
+          page: _currentPage,
+          category: _selectedCategory,
+          search: search,
+        );
+      }
+
       final filtered = _filterExcluded(freshProducts);
-      // Check pagination on original count to avoid premature `hasMore = false`
-      // when an entire page gets filtered out
       if (_currentPage == 1) {
         _products = filtered;
         await hiveService.cacheProducts(filtered);
@@ -119,7 +172,6 @@ class ProductsProvider with ChangeNotifier {
       _errorMessage = null;
     } catch (e) {
       _errorMessage = e.toString();
-      // Only fall back to cache if we haven't loaded anything yet
       if (_products.isEmpty) {
         _products = _filterExcluded(hiveService.getCachedProducts());
         _initialized = true;
@@ -144,11 +196,30 @@ class ProductsProvider with ChangeNotifier {
     _isLoadingMore = true;
     notifyListeners();
     try {
-      final moreProducts = await apiService.getProducts(
-        page: _currentPage,
-        category: _selectedCategory,
-        search: _searchQuery,
-      );
+      final catId = _selectedCategory != null
+          ? int.tryParse(_selectedCategory!)
+          : null;
+      final String? search = _searchQuery;
+      final bool needsSearch = search != null && search.trim().isNotEmpty;
+
+      List<Product> moreProducts = [];
+      if (catId != null && !needsSearch) {
+        try {
+          moreProducts = await apiService.getProductsByCategory(
+            catId,
+            page: _currentPage,
+            perPage: ApiConstants.defaultPerPage,
+          );
+        } catch (_) {}
+      }
+      if (moreProducts.isEmpty) {
+        moreProducts = await apiService.getProducts(
+          page: _currentPage,
+          category: _selectedCategory,
+          search: search,
+        );
+      }
+
       _products.addAll(_filterExcluded(moreProducts));
       _currentPage++;
       _hasMore = moreProducts.length >= ApiConstants.defaultPerPage;
