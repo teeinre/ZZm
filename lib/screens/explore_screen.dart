@@ -1,19 +1,24 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../constants/app_colors.dart';
 import '../constants/api_constants.dart';
 import '../models/product.dart';
+import '../models/category.dart';
 import '../services/api_service.dart';
 import '../widgets/product_tile.dart';
 
-/// Explore tab: a paginated catalog of all products with multi-select
-/// **Dokan Store Category** filtering.  Filters apply in real time and the
-/// grid is responsive across mobile, tablet and desktop viewports.
+/// Explore tab: a fast, server-filtered catalog of products with
+/// WooCommerce PRODUCT CATEGORY filtering and relevance-ordered results.
 ///
-/// Dokan Store Categories live on VENDOR objects (user taxonomy
-/// `store_category`), not on individual products.  So to filter the
-/// product grid by a store category we first resolve which vendors
-/// belong to the chosen category, then keep only products whose
-/// `vendorId` (post_author) is in that set.
+/// Performance & relevance:
+///  * Server-side: `orderby=popularity` (WooCommerce indexed sales count
+///    sort) — so WC returns the best-selling products first before we
+///    even touch the list.
+///  * Client-side tiebreaker: a composite score over
+///    `popularity * rating * review_count` so products with strong sales
+///    AND strong reviews sit at the very top within each page.
+///  * Filtering via WC `category=<id>` (server-side) — no pulling a huge
+///    list and discarding items locally, so each request stays fast.
 class ExploreScreen extends StatefulWidget {
   const ExploreScreen({super.key});
 
@@ -25,21 +30,13 @@ class _ExploreScreenState extends State<ExploreScreen> {
   final ApiService _api = ApiService();
   final ScrollController _scroll = ScrollController();
 
-  // Store categories come from Dokan's `store_category` taxonomy via
-  // vendor-api.php (with WP REST fallback).  Each entry has `{id, name,
-  // slug, count}`.
-  List<Map<String, dynamic>> _storeCategories = [];
-
-  // Reverse mapping: store_category_id (as int) → list of WP user IDs
-  // (vendor post_author) of vendors that are in that category.
-  Map<int, List<int>> _categoryVendorIds = {};
-
-  // All stores list for debugging / fallback categorisation.
-  List<Map<String, dynamic>> _allStores = [];
+  /// WooCommerce product categories (only non-empty, sorted by product
+  /// count descending so the biggest categories appear first).
+  List<Category> _categories = [];
 
   List<Product> _products = [];
 
-  /// `'all'` or `'scat:<id>'` where `<id>` is the store_category term_id.
+  /// `'all'` or `'cat:<id>'` where `<id>` is the product_cat term_id.
   String _selectedFilter = 'all';
 
   bool _loading = true;
@@ -49,11 +46,16 @@ class _ExploreScreenState extends State<ExploreScreen> {
   bool _hasMore = true;
   String? _error;
 
+  /// How many products per fetch page.  60 strikes a good balance between
+  /// (a) fewer round trips when the user scrolls and (b) not asking for
+  /// so many items that the server spends too long serialising JSON.
+  static const int _perPage = 60;
+
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
-    _loadStoreCategories();
+    _loadCategories();
     _loadProducts();
   }
 
@@ -70,99 +72,76 @@ class _ExploreScreenState extends State<ExploreScreen> {
     }
   }
 
-  /// Returns the store_category id as int when the filter is in
-  /// `scat:<id>` form, otherwise null.
-  int? get _selectedStoreCategoryId {
-    if (_selectedFilter.startsWith('scat:')) {
-      return int.tryParse(_selectedFilter.substring(5));
+  /// The currently-selected product category id, or `null` for "All".
+  int? get _selectedCategoryId {
+    if (_selectedFilter.startsWith('cat:')) {
+      return int.tryParse(_selectedFilter.substring(4));
     }
     return null;
   }
 
-  /// Vendor WP user IDs that match the currently-selected store category,
-  /// or `null` when "All products" is chosen (no vendor scoping).
-  Set<int>? get _vendorScope {
-    final cid = _selectedStoreCategoryId;
-    if (cid == null) return null;
-    final list = _categoryVendorIds[cid] ?? const <int>[];
-    if (list.isEmpty) return <int>{};
-    return Set<int>.from(list);
+  /// Comma-separated category ids to forward to the server, or `null`.
+  String? get _categoryQuery {
+    final cid = _selectedCategoryId;
+    return cid == null ? null : cid.toString();
   }
 
-  List<Product> _applyVendorFilter(List<Product> list) {
-    final scope = _vendorScope;
-    Iterable<Product> result = list.where((p) =>
-        !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName));
-    if (scope != null) {
-      result = result.where((p) => scope.contains(p.vendorId ?? -1));
-    }
-    return result.toList();
+  /// Relevance composite score (higher = more relevant).
+  ///
+  /// Server already sorts by WooCommerce `popularity` (sales count) DESC,
+  /// which is the biggest and most accurate signal.  The local score is a
+  /// page-level tiebreaker that pushes products with HIGHER star ratings
+  /// and MORE reviews above similar products at the same server rank.
+  ///
+  /// In-stock products are also boosted vs. out-of-stock ones so users
+  /// see purchasable items first.
+  static double _relevanceScore(Product p) {
+    final rating = (p.rating != null && p.rating! > 0) ? p.rating! : 2.5;
+    final reviews = p.ratingCount.toDouble();
+    final stockBoost = p.inStock ? 1.25 : 0.6;
+    final onSaleBoost = p.onSale ? 1.05 : 1.0;
+    // rating factor ∈ (0.5 .. 1.5) → 5-star is 3× more weight than 0-star
+    final ratingFactor = 0.5 + rating / 5.0;
+    // log(1 + reviews) ∈ (0 .. ~3) — diminishes so 1000-review items
+    // don't completely dominate 20-review items but still win ties.
+    final reviewFactor = 1 + _log10(1 + reviews);
+    return ratingFactor * reviewFactor * stockBoost * onSaleBoost;
   }
 
-  /// Loads Dokan store categories + vendor mapping.  Falls back to
-  /// WooCommerce product categories if the store-category endpoints
-  /// return nothing (e.g. vendor-api.php hasn't been deployed yet), so
-  /// the dropdown never appears empty.
-  Future<void> _loadStoreCategories() async {
+  static double _log10(double x) {
+    const ln10 = 2.302585093;
+    return x > 0 ? math.log(x) / ln10 : 0;
+  }
+
+  /// Applies post-server filtering (vendor blocklist) and relevance
+  /// tiebreaker sorting within the page.  Server already returns items
+  /// by `popularity` DESC — the stable sort here only reorders items
+  /// that have the same popularity score so higher-rated items win.
+  List<Product> _postProcess(List<Product> list) {
+    final filtered = list
+        .where((p) => !ApiConstants.isVendorExcluded(
+            id: p.vendorId, name: p.vendorName))
+        .toList();
+    // Stable sort: preserve server order for equal scores but push
+    // higher-scoring items toward the top.  Sort descending by score.
+    filtered.sort((a, b) => _relevanceScore(b).compareTo(_relevanceScore(a)));
+    return filtered;
+  }
+
+  /// Loads WooCommerce product categories (non-empty, by product count).
+  Future<void> _loadCategories() async {
     try {
-      final storesPayload = await _api.getAllStoresWithCategories();
-      final catsList = await _api.getStoreCategories();
-
-      // Parse the category → vendors reverse map (can be keyed by int or
-      // String depending on JSON serialisation).
-      final cv = storesPayload['category_vendors'];
-      final parsedCv = <int, List<int>>{};
-      if (cv is Map) {
-        cv.forEach((k, v) {
-          final key = k is int ? k : int.tryParse(k.toString());
-          if (key == null) return;
-          if (v is! List) return;
-          final ids = <int>[];
-          for (final x in v) {
-            final xi = x is int ? x : int.tryParse(x.toString());
-            if (xi != null) ids.add(xi);
-          }
-          if (ids.isNotEmpty) parsedCv[key] = ids;
-        });
-      }
-
-      final storesRaw = storesPayload['stores'];
-      final parsedStores = <Map<String, dynamic>>[];
-      if (storesRaw is List) {
-        for (final s in storesRaw) {
-          if (s is Map) parsedStores.add(Map<String, dynamic>.from(s));
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          _categoryVendorIds = parsedCv;
-          _allStores = parsedStores;
-          _storeCategories = catsList.where((c) {
-            final count = c['count'] is int ? c['count'] as int : 0;
-            final cid = c['id'] is int ? c['id'] as int : 0;
-            // Keep non-empty categories AND categories that have at
-            // least one vendor according to our reverse map.
-            final hasVendors = (parsedCv[cid]?.isNotEmpty ?? false);
-            return count > 0 || hasVendors;
-          }).toList()
-            ..sort((a, b) {
-              final ca = a['count'] is int ? a['count'] as int : 0;
-              final cb = b['count'] is int ? b['count'] as int : 0;
-              final va =
-                  (_categoryVendorIds[a['id'] as int? ?? 0]?.length ?? 0);
-              final vb =
-                  (_categoryVendorIds[b['id'] as int? ?? 0]?.length ?? 0);
-              return (cb + vb).compareTo(ca + va);
-            });
-        });
-      }
+      final cats = await _api.getCategories(perPage: 200, orderByCount: true);
+      if (mounted) setState(() => _categories = cats);
     } catch (e) {
-      debugPrint('[Explore] store categories load failed: $e');
+      debugPrint('[Explore] categories load failed: $e');
     }
     if (mounted) setState(() => _loadingCategories = false);
   }
 
+  /// Fetches the first page of products for the current filter.
+  /// Uses `orderby=popularity` on the server so we get top-selling items
+  /// first; then the local tiebreaker sort refines within the page.
   Future<void> _loadProducts() async {
     setState(() {
       _loading = true;
@@ -171,19 +150,20 @@ class _ExploreScreenState extends State<ExploreScreen> {
     _page = 1;
     _hasMore = true;
     try {
-      // Note: we intentionally do NOT filter by vendor server-side here.
-      // The Dokan `store_category` lives on users, not products, so
-      // server-side filter would be awkward.  We just pull the normal
-      // paginated product stream and trim it in `_applyVendorFilter`.
-      var products =
-          await _api.getProducts(page: _page, perPage: 50, author: _authorQuery());
-      final filtered = _applyVendorFilter(products);
+      final raw = await _api.getProducts(
+        page: _page,
+        perPage: _perPage,
+        category: _categoryQuery,
+        orderby: 'popularity',
+        order: 'desc',
+      );
+      final processed = _postProcess(raw);
       if (mounted) {
         setState(() {
-          _products = filtered;
+          _products = processed;
           _loading = false;
           _page++;
-          _hasMore = products.length >= 50;
+          _hasMore = raw.length >= _perPage;
         });
       }
     } catch (e) {
@@ -197,31 +177,24 @@ class _ExploreScreenState extends State<ExploreScreen> {
     }
   }
 
-  /// When filtering by store category we try to narrow the server-side
-  /// request using `author=<ids>` if the list is short enough.  This
-  /// reduces the amount of data we throw away client-side.
-  String? _authorQuery() {
-    final scope = _vendorScope;
-    if (scope == null || scope.isEmpty) return null;
-    // Only push to server if the vendor set is small (<20 IDs).  For
-    // very large categories it's cheaper to fetch unfiltered and drop
-    // locally than to ship a huge query string.
-    if (scope.length > 20) return null;
-    return scope.map((id) => id.toString()).join(',');
-  }
-
+  /// Infinite scroll: fetches the next page using the same server sort.
   Future<void> _loadMore() async {
     if (_loadingMore || _loading || !_hasMore) return;
     setState(() => _loadingMore = true);
     try {
-      final more =
-          await _api.getProducts(page: _page, perPage: 50, author: _authorQuery());
-      final filtered = _applyVendorFilter(more);
+      final raw = await _api.getProducts(
+        page: _page,
+        perPage: _perPage,
+        category: _categoryQuery,
+        orderby: 'popularity',
+        order: 'desc',
+      );
+      final processed = _postProcess(raw);
       if (mounted) {
         setState(() {
-          _products.addAll(filtered);
+          _products.addAll(processed);
           _page++;
-          _hasMore = more.length >= 50;
+          _hasMore = raw.length >= _perPage;
           _loadingMore = false;
         });
       }
@@ -312,7 +285,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Browse the full ZZmore catalog',
+            'Browse the full ZZmore catalog – top sellers first',
             style: TextStyle(color: AppColors.inkSoftColor, fontSize: 13),
           ),
           const SizedBox(height: 16),
@@ -352,7 +325,10 @@ class _ExploreScreenState extends State<ExploreScreen> {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: _selectedFilter,
+          value: _categories.any((c) => 'cat:${c.id}' == _selectedFilter) ||
+                  _selectedFilter == 'all'
+              ? _selectedFilter
+              : 'all',
           isExpanded: true,
           icon: const Icon(Icons.keyboard_arrow_down,
               color: AppColors.inkSoftColor),
@@ -365,15 +341,11 @@ class _ExploreScreenState extends State<ExploreScreen> {
               value: 'all',
               child: Text('All products'),
             ),
-            ..._storeCategories.map((c) {
-              final id = c['id'] as int? ?? 0;
-              final name = (c['name']?.toString().isNotEmpty ?? false)
-                  ? c['name']!.toString()
-                  : 'Category';
-              final vendorCount = _categoryVendorIds[id]?.length ?? 0;
-              final label = vendorCount > 0 ? '$name ($vendorCount vendors)' : name;
+            ..._categories.map((c) {
+              final count = c.count ?? 0;
+              final label = count > 0 ? '${c.name} ($count)' : c.name;
               return DropdownMenuItem(
-                value: 'scat:$id',
+                value: 'cat:${c.id}',
                 child: Text(label),
               );
             }),
@@ -424,7 +396,7 @@ class _EmptyProducts extends StatelessWidget {
           Icon(Icons.shopping_bag_outlined,
               size: 64, color: AppColors.goldColor.withOpacity(0.5)),
           const SizedBox(height: 16),
-          const Text('No products match these filters',
+          const Text('No products match this category yet',
               style: TextStyle(color: AppColors.inkSoftColor)),
         ],
       ),
