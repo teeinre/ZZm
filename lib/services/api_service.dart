@@ -372,6 +372,8 @@ class ApiService {
     String? search,
     String? type,
     String? author,
+    String? orderby,
+    String? order,
   }) async {
     var url = '${ApiConstants.productsEndpoint}?page=$page&per_page=$perPage&status=publish';
     if (category != null) {
@@ -386,6 +388,12 @@ class ApiService {
     if (author != null && author.isNotEmpty) {
       url += '&author=$author';
     }
+    if (orderby != null && orderby.isNotEmpty) {
+      url += '&orderby=$orderby';
+    }
+    if (order != null && order.isNotEmpty) {
+      url += '&order=$order';
+    }
     final response = await _get(url, useWcAuth: true);
     final List<dynamic> data = jsonDecode(response.body);
     return data.map((json) => Product.fromJson(Map<String, dynamic>.from(json))).toList();
@@ -394,8 +402,12 @@ class ApiService {
   Future<List<Category>> getCategories({
     int page = 1,
     int perPage = ApiConstants.defaultPerPage,
+    bool orderByCount = false,
   }) async {
-    final url = '${ApiConstants.categoriesEndpoint}?page=$page&per_page=$perPage';
+    var url = '${ApiConstants.categoriesEndpoint}?page=$page&per_page=$perPage&hide_empty=true';
+    if (orderByCount) {
+      url += '&orderby=count&order=desc';
+    }
     final response = await _get(url, useWcAuth: true);
     final List<dynamic> data = jsonDecode(response.body);
     return data.map((json) => Category.fromJson(Map<String, dynamic>.from(json))).toList();
