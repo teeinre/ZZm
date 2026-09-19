@@ -42,9 +42,9 @@ class _CheckoutWebviewScreenState extends State<CheckoutWebviewScreen> {
       authHeaderProvider: () async {
         final token = auth.user?.token ?? '';
         if (token.isEmpty) {
-          // Fall back to storage service if user token not in memory
+          // Fall back to storage service if user token not in memory.
           final stored = await auth.storageService.getAuthToken();
-          return 'Bearer ${stored ?? ''}';
+          return (stored == null || stored.isEmpty) ? '' : 'Bearer $stored';
         }
         return 'Bearer $token';
       },
@@ -152,7 +152,8 @@ class _CheckoutWebviewScreenState extends State<CheckoutWebviewScreen> {
       if (orderId != null) {
         _handledCompletion = true;
         debugPrint('[CheckoutWebView] Order completed: #$orderId');
-        _onOrderComplete(orderId);
+        final orderKey = uri.queryParameters['key'];
+        _onOrderComplete(orderId, orderKey: orderKey);
       }
     }
 
@@ -163,10 +164,10 @@ class _CheckoutWebviewScreenState extends State<CheckoutWebviewScreen> {
     }
   }
 
-  Future<void> _onOrderComplete(int orderId) async {
+  Future<void> _onOrderComplete(int orderId, {String? orderKey}) async {
     try {
       debugPrint('[CheckoutWebView] Fetching order details for #$orderId');
-      final order = await _bridgeService.fetchOrder(orderId);
+      final order = await _bridgeService.fetchOrder(orderId, orderKey: orderKey);
       if (!mounted) return;
 
       // Clear local cart since order was placed

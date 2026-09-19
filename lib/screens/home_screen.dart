@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
@@ -1674,6 +1676,8 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
   bool _isSearching = false;
   bool _hasSearched = false;
   String? _errorMessage;
+  Timer? _debounce;
+  int _searchSeq = 0; // guards against out-of-order responses
 
   @override
   void initState() {
@@ -1686,12 +1690,49 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
+  /// Debounced search-as-you-type: fires ~350ms after the user stops typing,
+  /// giving faster perceived results without hammering the API per keystroke.
+  void _onQueryChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), _performSearch);
+  }
+
+  /// Scores a product for relevance. Higher = better match for [query].
+  int _searchScore(Product p, String query) {
+    final q = query.toLowerCase().trim();
+    if (q.isEmpty) return 0;
+    final name = p.name.toLowerCase();
+    final catNames = p.categories.map((c) => c.name.toLowerCase()).toList();
+    final desc = (p.description ?? p.shortDescription ?? '').toLowerCase();
+
+    var score = 0;
+    if (name == q) {
+      score += 100;
+    } else if (name.startsWith(q)) {
+      score += 80;
+    } else if (name.contains(q)) {
+      score += 50;
+    }
+
+    final terms = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+    final nameWords = name.split(RegExp(r'\s+')).toSet();
+    for (final t in terms) {
+      if (nameWords.contains(t)) score += 20;
+      if (catNames.any((c) => c.contains(t))) score += 15;
+    }
+
+    if (desc.contains(q)) score += 5;
+    return score;
+  }
+
   Future<void> _performSearch() async {
     final query = _searchController.text.trim();
+    final seq = ++_searchSeq;
     if (query.isEmpty) {
       setState(() {
         _hasSearched = false;
@@ -1708,20 +1749,14 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
     });
 
     try {
-      final results = await _api.getProducts(search: query, perPage: 50);
+      final results = await _api.searchProducts(query, perPage: 100);
+      if (!mounted || seq != _searchSeq) return; // stale response, ignore
       // Filter out excluded vendor products from search results
       final filtered = results.where((p) =>
           !ApiConstants.isVendorExcluded(id: p.vendorId, name: p.vendorName)).toList();
-      // Sort by relevance: products whose name matches the term first, then
-      // products that only match in the description.
-      final q = query.toLowerCase();
-      filtered.sort((a, b) {
-        final aName = a.name.toLowerCase().contains(q);
-        final bName = b.name.toLowerCase().contains(q);
-        if (aName && !bName) return -1;
-        if (!aName && bName) return 1;
-        return 0;
-      });
+      // Sort by relevance score (name exact > name starts-with > category match
+      // > name contains > description contains).
+      filtered.sort((a, b) => _searchScore(b, query) - _searchScore(a, query));
       if (mounted) {
         setState(() {
           _results = filtered;
@@ -1729,6 +1764,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
         });
       }
     } catch (e) {
+      if (!mounted || seq != _searchSeq) return;
       if (mounted) {
         setState(() {
           _isSearching = false;
@@ -1752,6 +1788,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
         title: TextField(
           controller: _searchController,
           autofocus: true,
+          onChanged: _onQueryChanged,
           onSubmitted: (_) => _performSearch(),
           decoration: const InputDecoration(
             hintText: 'Search vendors, beauty, fashion...',

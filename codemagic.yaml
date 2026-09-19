@@ -94,7 +94,8 @@ workflows:
       - name: Install dependencies
         script: flutter pub get
       - name: Build Android APK
-        script: flutter build apk --release
+        script: |
+          flutter build apk --release
       - name: Rename APK
         script: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/Zzmorestore.apk
     artifacts:

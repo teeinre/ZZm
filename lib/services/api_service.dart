@@ -26,11 +26,83 @@ class ApiService {
     _authToken = null;
   }
 
-  String _getBasicAuthHeader() {
-    final credentials = '${ApiConstants.consumerKey}:${ApiConstants.consumerSecret}';
-    final bytes = utf8.encode(credentials);
-    final base64 = base64Encode(bytes);
-    return 'Basic $base64';
+  // ── JWT Token Expiry Helpers ────────────────────────────────────────
+  //
+  // JWT tokens issued by the WordPress JWT Auth plugin contain an
+  // `exp` (expiration unix timestamp) claim in the payload.  When the
+  // current time passes `exp`, every authenticated call returns:
+  //   HTTP 403 { "code": "jwt-auth_invalid_token",
+  //             "message": "expired token", "data": { "status": 403 } }
+  //
+  // The fix is two-pronged:
+  //   (a) PROACTIVE: check `exp` BEFORE issuing the call; if we're past
+  //       exp - 2 minutes (near-expiry window), we skip the doomed call
+  //       and immediately raise a TokenExpiredException so the UI can
+  //       show "session expired, please login" instead of "checkout failed".
+  //   (b) REACTIVE: if the server still returns 403 with
+  //       "jwt-auth_invalid_token" (possible clock skew / plugin reload),
+  //       we detect that in _handleResponse and raise the same specific
+  //       exception type so the UI path is identical.
+
+  /// Decodes the JWT payload and returns the full JSON map, or null if
+  /// the token is malformed.
+  Map<String, dynamic>? _decodeJwtPayload(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+      final payload = parts[1];
+      final padded = payload.padRight(
+          payload.length + (4 - payload.length % 4) % 4, '=');
+      final decoded = utf8.decode(base64Decode(padded));
+      return jsonDecode(decoded) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Returns the `exp` (unix seconds) value from the current JWT, or
+  /// null if the token is missing / malformed / has no exp claim.
+  int? get currentTokenExpiryUnix {
+    final t = _authToken;
+    if (t == null) return null;
+    final payload = _decodeJwtPayload(t);
+    if (payload == null) return null;
+    final exp = payload['exp'];
+    if (exp is int) return exp;
+    if (exp is num) return exp.toInt();
+    if (exp is String) return int.tryParse(exp);
+    return null;
+  }
+
+  /// True if we have a token and it is expired (or within the 2-minute
+  /// pre-expiry safety window so we refresh before the server rejects).
+  ///
+  /// If no token exists, returns false (caller will get normal
+  /// UnauthorizedException instead of TokenExpiredException — which is
+  /// correct: "not logged in" != "session expired").
+  bool get isTokenExpiredOrNearExpiry {
+    final exp = currentTokenExpiryUnix;
+    if (exp == null) return false;
+    const safetyWindowSeconds = 120; // 2 min
+    final nowUnix = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    return nowUnix >= (exp - safetyWindowSeconds);
+  }
+
+  /// Helper that returns the expiry countdown as a human-readable string
+  /// (e.g. "2h 15m remaining") — useful for debug logging.
+  String get debugTokenLifetime {
+    final exp = currentTokenExpiryUnix;
+    if (exp == null) return 'no-token';
+    final nowUnix =
+        DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    final diff = exp - nowUnix;
+    if (diff <= 0) return 'EXPIRED (${-diff}s ago)';
+    final h = diff ~/ 3600;
+    final m = (diff % 3600) ~/ 60;
+    final s = diff % 60;
+    if (h > 0) return '${h}h ${m}m remaining';
+    if (m > 0) return '${m}m ${s}s remaining';
+    return '${s}s remaining';
   }
 
   Map<String, String> _getHeaders({bool useWcAuth = false, bool requireAuth = false}) {
@@ -38,9 +110,10 @@ class ApiService {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
-    if (useWcAuth) {
-      headers['Authorization'] = _getBasicAuthHeader();
-    } else if (requireAuth && _authToken != null) {
+    // WooCommerce Basic auth has been removed — the server-side proxy
+    // (wc-proxy.php) appends the real consumer credentials. `useWcAuth` is
+    // kept only for call-site compatibility and no longer emits any header.
+    if (requireAuth && _authToken != null) {
       headers['Authorization'] = 'Bearer $_authToken';
       // Also send via X-JWT-Token as LiteSpeed-proof alternative header
       headers['X-JWT-Token'] = _authToken!;
@@ -60,27 +133,41 @@ class ApiService {
 
   Future<http.Response> _get(String url, {bool useWcAuth = true, bool requireAuth = false}) async {
     try {
-      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
-      final response = await client.get(
-        Uri.parse(effectiveUrl),
-        headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
+      return await _authAwareRequest(
+        () async {
+          final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
+          return await client.get(
+            Uri.parse(effectiveUrl),
+            headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
+          );
+        },
+        requireAuth: requireAuth,
+        methodName: 'GET',
+        url: url,
       );
-      return _handleResponse(response);
     } catch (e) {
+      if (e is ApiException) rethrow;
       throw Exception('Failed to load data: $e');
     }
   }
 
   Future<http.Response> _post(String url, Map<String, dynamic> data, {bool useWcAuth = false, bool requireAuth = false}) async {
     try {
-      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
-      final response = await client.post(
-        Uri.parse(effectiveUrl),
-        headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
-        body: jsonEncode(data),
+      return await _authAwareRequest(
+        () async {
+          final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
+          return await client.post(
+            Uri.parse(effectiveUrl),
+            headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
+            body: jsonEncode(data),
+          );
+        },
+        requireAuth: requireAuth,
+        methodName: 'POST',
+        url: url,
       );
-      return _handleResponse(response);
     } catch (e) {
+      if (e is ApiException) rethrow;
       throw Exception('Failed to post data: $e');
     }
   }
@@ -92,63 +179,120 @@ class ApiService {
 
   Future<http.Response> _put(String url, Map<String, dynamic> data, {bool useWcAuth = false, bool requireAuth = false}) async {
     try {
-      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
-      final response = await client.put(
-        Uri.parse(effectiveUrl),
-        headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
-        body: jsonEncode(data),
+      return await _authAwareRequest(
+        () async {
+          final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
+          return await client.put(
+            Uri.parse(effectiveUrl),
+            headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
+            body: jsonEncode(data),
+          );
+        },
+        requireAuth: requireAuth,
+        methodName: 'PUT',
+        url: url,
       );
-      return _handleResponse(response);
     } catch (e) {
+      if (e is ApiException) rethrow;
       throw Exception('Failed to put data: $e');
     }
   }
 
   Future<http.Response> _delete(String url, {bool useWcAuth = false, bool requireAuth = false}) async {
     try {
-      final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
-      final response = await client.delete(
-        Uri.parse(effectiveUrl),
-        headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
+      return await _authAwareRequest(
+        () async {
+          final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
+          return await client.delete(
+            Uri.parse(effectiveUrl),
+            headers: _getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth),
+          );
+        },
+        requireAuth: requireAuth,
+        methodName: 'DELETE',
+        url: url,
       );
-      return _handleResponse(response);
     } catch (e) {
+      if (e is ApiException) rethrow;
       throw Exception('Failed to delete data: $e');
     }
   }
 
-  Future<http.StreamedResponse> _postMultipart(String url, Map<String, String> fields, String filePath, {bool useWcAuth = true}) async {
-    final request = http.MultipartRequest('POST', Uri.parse(url));
-    request.headers.addAll(_getHeaders(useWcAuth: useWcAuth));
+  /// Wraps every authenticated HTTP call with:
+  ///   (1) PROACTIVE token-expiry check — skips the doomed HTTP call if
+  ///       the JWT `exp` claim says we're past (exp - safetyWindow).
+  ///       Returns a TokenExpiredException immediately — same as the
+  ///       reactive path.
+  ///   (2) REACTIVE single transparent retry — if the server STILL
+  ///       responds with jwt-auth_invalid_token 403 (e.g. clock skew,
+  ///       WP plugin rotated its secret), we catch the specific
+  ///       TokenExpiredException ONCE, clear the stale token locally,
+  ///       and re-raise so the UI can prompt the user to re-login.
+  ///       (We can't truly refresh JWT without stored credentials; the
+  ///        correct recovery path is an interactive re-login.)
+  Future<http.Response> _authAwareRequest(
+    Future<http.Response> Function() sendRequest, {
+    required bool requireAuth,
+    required String methodName,
+    required String url,
+  }) async {
+    // ── Proactive check (only meaningful for authed calls) ──────────
+    if (requireAuth && isTokenExpiredOrNearExpiry) {
+      debugPrint('[ApiService] $methodName ${_redact(url)} — JWT PROACTIVE expiry '
+          '(lifetime=${debugTokenLifetime}). Raising TokenExpiredException.');
+      clearAuthToken();
+      throw TokenExpiredException(
+          'Your session has expired. Please log in again to continue.');
+    }
+
+    try {
+      final response = await sendRequest();
+      return _handleResponse(response);
+    } on TokenExpiredException catch (e, st) {
+      // We got the specific JWT-expired exception (proactive check already
+      // covered, but maybe clock skew or server-side config change).
+      // Clear the stale token so the app correctly reflects "not logged in".
+      debugPrint('[ApiService] $methodName ${_redact(url)} — REACTIVE token expiry: '
+          '${e.toString()}. Clearing stale token. Stack: $st');
+      clearAuthToken();
+      rethrow;
+    }
+  }
+
+  /// Redacts query parameters (including ?token=) from a URL so we can
+  /// safely write it to debug logs without leaking credentials.
+  static String _redact(String url) {
+    try {
+      final u = Uri.parse(url);
+      if (u.queryParameters.isEmpty) return '$u';
+      return '${u.scheme}://${u.host}${u.path}?[query-redacted]';
+    } catch (_) {
+      return url.length > 80 ? '${url.substring(0, 80)}…' : url;
+    }
+  }
+
+  Future<http.StreamedResponse> _postMultipart(String url, Map<String, String> fields, String filePath, {bool useWcAuth = true, bool requireAuth = false}) async {
+    final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
+    final request = http.MultipartRequest('POST', Uri.parse(effectiveUrl));
+    request.headers.addAll(_getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth));
     request.fields.addAll(fields);
     request.files.add(await http.MultipartFile.fromPath('file', filePath));
     return await client.send(request);
   }
 
-  /// Upload an image to the WordPress media library.
+  /// Upload an image to the WordPress media library via the server proxy.
   /// Returns the uploaded image data (id, url) or null on failure.
   Future<Map<String, dynamic>?> uploadProductImage(String filePath) async {
     try {
-      final url = '${ApiConstants.wpApiBase}/media';
-      final streamed = await _postMultipart(url, {}, filePath, useWcAuth: false);
-      // Use JWT auth if available, else fall back to WC auth wonky uploads
+      final url = ApiConstants.wcProxyMediaEndpoint;
+      final streamed = await _postMultipart(url, {}, filePath, useWcAuth: false, requireAuth: true);
       final response = await http.Response.fromStream(streamed);
-      if (response.statusCode == 201) {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         return Map<String, dynamic>.from(jsonDecode(response.body));
       }
+      debugPrint('[UploadImage] Proxy returned ${response.statusCode}: ${response.body}');
     } catch (e) {
       debugPrint('[UploadImage] Error: $e');
-    }
-    // Fallback: try with WC auth
-    try {
-      final url = '${ApiConstants.wpApiBase}/media';
-      final streamed = await _postMultipart(url, {}, filePath, useWcAuth: true);
-      final response = await http.Response.fromStream(streamed);
-      if (response.statusCode == 201) {
-        return Map<String, dynamic>.from(jsonDecode(response.body));
-      }
-    } catch (e) {
-      debugPrint('[UploadImage] WC fallback error: $e');
     }
     return null;
   }
@@ -162,15 +306,85 @@ class ApiService {
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return response;
     } else if (response.statusCode == 401) {
+      // Try to detect token expiry in 401s too (some WAF setups mask 403 as 401)
+      if (_bodyIndicatesExpiredToken(response.body)) {
+        throw TokenExpiredException(
+            _extractReadableErrorMessage(response.body));
+      }
       throw UnauthorizedException('Unauthorized access');
+    } else if (response.statusCode == 403) {
+      // ── 403: check for expired JWT plugin response ─────────────────
+      // JWT Auth for WP REST returns exactly this payload on expired tokens:
+      //   {"code":"jwt-auth_invalid_token","message":"expired token",
+      //    "data":{"status":403}}
+      // We explicitly detect this so callers can present a friendly
+      // "session expired, please log in again" message instead of the
+      // cryptic "exceptions failed to create checkout session(403)".
+      if (_bodyIndicatesExpiredToken(response.body)) {
+        throw TokenExpiredException(
+            _extractReadableErrorMessage(response.body));
+      }
+      throw ApiException(
+        'Request failed with status: ${response.statusCode}',
+        response.statusCode,
+        response.body,
+      );
     } else if (response.statusCode == 404) {
       throw NotFoundException('Resource not found');
     } else {
       throw ApiException(
         'Request failed with status: ${response.statusCode}',
         response.statusCode,
+        response.body,
       );
     }
+  }
+
+  /// Returns true if a raw response body is the JWT Auth plugin's
+  /// well-known "expired token" payload (or any of the variants that
+  /// LiteSpeed / WAF / plugin permutations return).
+  bool _bodyIndicatesExpiredToken(String body) {
+    if (body.isEmpty) return false;
+    final lower = body.toLowerCase();
+    // Check both the exact WP JWT Auth codes and generic strings so we
+    // catch the issue even if a plugin changes exact wording.
+    if (lower.contains('jwt-auth_invalid_token')) return true;
+    if (lower.contains('jwt_auth_invalid_token')) return true;
+    if (lower.contains('expired token') || lower.contains('token expired')) {
+      return true;
+    }
+    // Also check the parsed JSON code field for robustness.
+    try {
+      final parsed = jsonDecode(body);
+      if (parsed is Map) {
+        final code = parsed['code']?.toString().toLowerCase() ?? '';
+        final msg = parsed['message']?.toString().toLowerCase() ?? '';
+        if (code.contains('jwt-auth_invalid_token') ||
+            code.contains('jwt_auth_invalid_token')) return true;
+        if (msg.contains('expired token') || msg.contains('token expired')) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Extracts the most human-friendly error message possible from a
+  /// failed response body.  Falls back to "Session expired. Please log in again."
+  /// so users never see "jwt-auth_invalid_token" verbatim.
+  String _extractReadableErrorMessage(String body) {
+    try {
+      final parsed = jsonDecode(body);
+      if (parsed is Map) {
+        final msg = parsed['message']?.toString();
+        if (msg != null && msg.trim().isNotEmpty && msg.length < 240) {
+          // Don't show "expired token" raw — it's jargon. Show the friendly
+          // version below instead.
+          if (msg.toLowerCase().trim() != 'expired token') return msg;
+        }
+      }
+    } catch (_) {}
+    return 'Your session has expired. Please log in again to continue.';
   }
 
   Future<User?> login(String username, String password) async {
@@ -371,6 +585,9 @@ class ApiService {
     String? category,
     String? search,
     String? type,
+    String? author,
+    String? orderby,
+    String? order,
   }) async {
     var url = '${ApiConstants.productsEndpoint}?page=$page&per_page=$perPage&status=publish';
     if (category != null) {
@@ -382,6 +599,15 @@ class ApiService {
     if (type != null) {
       url += '&type=$type';
     }
+    if (author != null && author.isNotEmpty) {
+      url += '&author=$author';
+    }
+    if (orderby != null && orderby.isNotEmpty) {
+      url += '&orderby=$orderby';
+    }
+    if (order != null && order.isNotEmpty) {
+      url += '&order=$order';
+    }
     final response = await _get(url, useWcAuth: true);
     final List<dynamic> data = jsonDecode(response.body);
     return data.map((json) => Product.fromJson(Map<String, dynamic>.from(json))).toList();
@@ -390,11 +616,262 @@ class ApiService {
   Future<List<Category>> getCategories({
     int page = 1,
     int perPage = ApiConstants.defaultPerPage,
+    bool orderByCount = false,
   }) async {
-    final url = '${ApiConstants.categoriesEndpoint}?page=$page&per_page=$perPage';
+    var url = '${ApiConstants.categoriesEndpoint}?page=$page&per_page=$perPage&hide_empty=true';
+    if (orderByCount) {
+      url += '&orderby=count&order=desc';
+    }
     final response = await _get(url, useWcAuth: true);
     final List<dynamic> data = jsonDecode(response.body);
     return data.map((json) => Category.fromJson(Map<String, dynamic>.from(json))).toList();
+  }
+
+  Future<List<Category>> getAllProductCategories({
+    bool hideEmpty = false,
+  }) async {
+    final url = '${ApiConstants.vendorApiBase}?action=get_all_product_categories'
+        '&hide_empty=${hideEmpty ? 'true' : 'false'}';
+    final response = await _get(url, useWcAuth: false);
+    if (response.statusCode != 200) {
+      throw Exception(
+          'getAllProductCategories failed HTTP ${response.statusCode}: ${response.body}');
+    }
+    final body = jsonDecode(response.body);
+    final List list = body['categories'] ?? [];
+    return list
+        .map((json) =>
+            Category.fromJson(Map<String, dynamic>.from(json as Map)))
+        .toList();
+  }
+
+  Future<List<Product>> getProductsByCategory(
+    int categoryId, {
+    int page = 1,
+    int perPage = 60,
+  }) async {
+    final url = '${ApiConstants.vendorApiBase}?action=get_products_by_category'
+        '&category_id=$categoryId&page=$page&per_page=$perPage';
+    final response = await _get(url, useWcAuth: false);
+    if (response.statusCode != 200) {
+      throw Exception(
+          'getProductsByCategory failed HTTP ${response.statusCode}: ${response.body}');
+    }
+    final body = jsonDecode(response.body);
+    final List list = body['products'] ?? [];
+    return list
+        .map((json) => Product.fromJson(Map<String, dynamic>.from(json as Map)))
+        .toList();
+  }
+
+  /// Fetches ALL published products (no category filter) via vendor-api.php.
+  /// Used for the "All products" browse path and the Home "Trending in All"
+  /// section. Reuses the same direct-SQL endpoint as [getProductsByCategory]
+  /// (with `category_id=0`) so every product type — simple, variable,
+  /// booking, subscription, etc. — is returned consistently.
+  Future<List<Product>> getAllProducts({
+    int page = 1,
+    int perPage = 60,
+  }) async {
+    final url = '${ApiConstants.vendorApiBase}?action=get_products_by_category'
+        '&category_id=0&page=$page&per_page=$perPage';
+    final response = await _get(url, useWcAuth: false);
+    if (response.statusCode != 200) {
+      throw Exception(
+          'getAllProducts failed HTTP ${response.statusCode}: ${response.body}');
+    }
+    final body = jsonDecode(response.body);
+    final List list = body['products'] ?? [];
+    return list
+        .map((json) => Product.fromJson(Map<String, dynamic>.from(json as Map)))
+        .toList();
+  }
+
+  /// Fetches the latest app version info from the server (vendor-api.php).
+  /// Used for the in-app "update available" prompt. Returns null on failure.
+  Future<Map<String, dynamic>?> getLatestAppVersion() async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_app_version';
+      final response = await _get(url, useWcAuth: false);
+      if (response.statusCode != 200) return null;
+      final body = jsonDecode(response.body);
+      if (body is Map) return Map<String, dynamic>.from(body);
+    } catch (_) {
+      // Ignore — update check is best-effort.
+    }
+    return null;
+  }
+
+  /// Comprehensive product search: combines FOUR strategies so no matching
+  /// product falls through the cracks. Results are de-duplicated by product id.
+  ///
+  /// ERROR HANDLING POLICY:
+  ///   This function NEVER throws Exception just because "no results found".
+  ///   It ONLY throws when every single strategy failed with a network/server
+  ///   exception AND we could not build any pool to scan.  This means:
+  ///     - Gibberish query "dfbhfh"  → returns [] (not throw)
+  ///     - "property" hits WAF 403   → other strategies run, may return []
+  ///       BUT the call site sees [] → UI renders "No results found", not
+  ///       the dreaded red "Search failed. Please try again." banner.
+  ///
+  /// Strategy 0 — vendor-api.php?action=search_products (NEW).
+  ///   Direct-SQL search bypassing WP_Query's `s` parameter entirely.
+  ///   This is the "WAF-proof" / "reserved-word-proof" primary path.
+  ///   Searches title, content, excerpt, SKU — everything the SQL LIKE can
+  ///   reach.  Returns 200 + [] when nothing matches (never 4xx/5xx).
+  ///
+  /// Strategy 1 — WooCommerce built-in `search` param (title / excerpt).
+  ///   Fast / indexed, but fragile: WAFs often reject terms that look
+  ///   SQL-ish ("property", "order", "select", "union", "drop").  Fail-open.
+  ///
+  /// Strategy 2 — Category-name match (best-effort, silent skip on failure).
+  ///   When the user searches "accountancy" we want products that live inside
+  ///   a category called "Accountancy Services" even if the product title
+  ///   never mentions the keyword.
+  ///
+  /// Strategy 3 — Broad client-side text match against a large product pool.
+  ///   WC's `search` parameter mostly touches post_title; a service product
+  ///   whose description mentions "property" or "accounting" but title says
+  ///   "Monthly Retainer" would be invisible.  We fetch a generous page of
+  ///   products WITHOUT a search filter and perform our own substring match
+  ///   on: name, description, shortDescription, category names, vendor name,
+  ///   and SKU.
+  Future<List<Product>> searchProducts(String query, {int perPage = 100}) async {
+    final q = query.toLowerCase().trim();
+    final merged = <int, Product>{};
+    bool strategy0Failed = false;
+    bool strategy1Failed = false;
+    bool strategy3Failed = false;
+    bool anyStrategyRan = false;
+
+    if (q.isEmpty) return [];
+
+    // ── Strategy 0: vendor-api.php search_products (WAF-proof primary) ──
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=search_products'
+          '&q=${Uri.encodeQueryComponent(query)}'
+          '&per_page=$perPage';
+      final response = await _get(url, useWcAuth: false);
+      anyStrategyRan = true;
+      final body = jsonDecode(response.body);
+      if (body is Map && body['products'] is List) {
+        for (final raw in (body['products'] as List<dynamic>)) {
+          if (raw is! Map<String, dynamic>) continue;
+          try {
+            final p = Product.fromJson(raw);
+            merged[p.id] = p;
+          } catch (_) {}
+        }
+        debugPrint('[search:S0] vendor-api returned ${merged.length} hits for "$q"');
+      }
+    } catch (e, st) {
+      strategy0Failed = true;
+      debugPrint('[search:S0] vendor-api search_products failed: $e');
+      debugPrint('[search:S0] StackTrace: $st');
+    }
+
+    // ── Strategy 1: Title / excerpt via WC REST `search` ────────────────
+    try {
+      final byText = await getProducts(search: query, perPage: perPage);
+      anyStrategyRan = true;
+      for (final p in byText) {
+        merged[p.id] = p;
+      }
+      debugPrint('[search:S1] WC ?search= returned ${byText.length} for "$q"');
+    } catch (e, st) {
+      // Fail open: if the server-side title search errors (timeout, WAF,
+      // 5xx), we still run Strategy 3 so "search failed" never appears
+      // when we could have found results in the description scan.
+      strategy1Failed = true;
+      debugPrint('[search:S1] WC title search failed (WAF?): $e');
+      debugPrint('[search:S1] StackTrace: $st');
+    }
+
+    // ── Strategy 3: Client-side title + description + short_desc pool ───
+    try {
+      final pool = <int, Product>{};
+      // Sort #1: newest first — catches recently-added service products.
+      try {
+        final recent = await getProducts(perPage: 200, orderby: 'date', order: 'desc');
+        anyStrategyRan = true;
+        for (final p in recent) {
+          pool[p.id] = p;
+        }
+      } catch (_) {}
+      // Sort #2: most-sold first — catches popular services.
+      try {
+        final popular = await getProducts(perPage: 200, orderby: 'popularity', order: 'desc');
+        anyStrategyRan = true;
+        for (final p in popular) {
+          pool[p.id] = p;
+        }
+      } catch (_) {}
+      // If both specific-sort fetches are rejected (some WAFs block
+      // arbitrary orderby), fall back to one generic 200-item fetch so we
+      // at least scan something.
+      if (pool.isEmpty) {
+        try {
+          final fallback = await getProducts(perPage: 200);
+          anyStrategyRan = true;
+          for (final p in fallback) {
+            pool[p.id] = p;
+          }
+        } catch (e2) {
+          debugPrint('[search:S3] Even generic pool fetch failed: $e2');
+        }
+      }
+
+      if (pool.isNotEmpty) {
+        final terms = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+        int scannedMatches = 0;
+        for (final p in pool.values) {
+          if (merged.containsKey(p.id)) continue;
+
+          final name = p.name.toLowerCase();
+          final desc = (p.description ?? '').toLowerCase();
+          final short = (p.shortDescription ?? '').toLowerCase();
+          final vendor = (p.vendorName ?? '').toLowerCase();
+          final sku = (p.sku ?? '').toLowerCase();
+          final catNames = p.categories
+              .map((c) => (c.name ?? '').toLowerCase())
+              .join(' ');
+          final allText = '$name $desc $short $vendor $sku $catNames';
+
+          bool matches = allText.contains(q);
+          if (!matches && terms.length > 1) {
+            matches = terms.every((t) => allText.contains(t));
+          }
+          if (matches) {
+            merged[p.id] = p;
+            scannedMatches++;
+          }
+        }
+        debugPrint('[search:S3] Pool size=${pool.length}, scanned-matches=$scannedMatches for "$q"');
+      }
+    } catch (e, st) {
+      strategy3Failed = true;
+      debugPrint('[search:S3] Description pool scan failed: $e');
+      debugPrint('[search:S3] StackTrace: $st');
+    }
+
+    debugPrint('[search:summary] query="$q" merged=${merged.length} '
+        'failures={S0:$strategy0Failed, S1:$strategy1Failed, S3:$strategy3Failed} '
+        'anyRan=$anyStrategyRan');
+
+    // ONLY surface an error if we literally could not talk to the server at
+    // all — every single path threw an exception AND no pool was ever
+    // built.  In that one case we have zero confidence in the result set.
+    // Otherwise, even an EMPTY result set is a legit "no matches" answer
+    // that the UI should display as "No results found" (not an error).
+    final allFailedWithExceptions =
+        strategy0Failed && strategy1Failed && strategy3Failed;
+    final neverTalked = !anyStrategyRan;
+
+    if (merged.isEmpty && allFailedWithExceptions && neverTalked) {
+      throw Exception('Search could not reach the server. Please try again.');
+    }
+
+    return merged.values.toList();
   }
 
   Future<Product?> getProduct(int id) async {
@@ -406,6 +883,18 @@ class ApiService {
   /// Fetches the raw product JSON (includes type, attributes, stock_status, etc.
   /// that are not present in the Product model).
   Future<Map<String, dynamic>> getProductJson(int id) async {
+    // Primary: vendor-api.php get_product (works without the WC REST proxy).
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_product&product_id=$id';
+      final response = await _get(url, useWcAuth: false);
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        if (body is Map<String, dynamic>) return body;
+        if (body is Map) return Map<String, dynamic>.from(body);
+      }
+    } catch (_) {
+      // fall through to the WC REST proxy below
+    }
     final url = '${ApiConstants.productsEndpoint}/$id';
     final response = await _get(url, useWcAuth: true);
     return Map<String, dynamic>.from(jsonDecode(response.body));
@@ -413,6 +902,22 @@ class ApiService {
 
   /// Fetches all variations for a variable product.
   Future<List<Map<String, dynamic>>> getProductVariations(int productId) async {
+    // Primary: vendor-api.php get_product already embeds `variations`.
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_product&product_id=$productId';
+      final response = await _get(url, useWcAuth: false);
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        final variations = (body is Map) ? body['variations'] : null;
+        if (variations is List) {
+          return variations
+              .map((v) => Map<String, dynamic>.from(v as Map))
+              .toList();
+        }
+      }
+    } catch (_) {
+      // fall through to the WC REST proxy below
+    }
     final url = '${ApiConstants.productsEndpoint}/$productId/variations?per_page=100';
     final response = await _get(url, useWcAuth: true);
     final List<dynamic> data = jsonDecode(response.body);
@@ -423,7 +928,7 @@ class ApiService {
   Future<Map<String, dynamic>?> createProductVariation(int productId, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.productsEndpoint}/$productId/variations';
-      final response = await _post(url, data, useWcAuth: true);
+      final response = await _post(url, data, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -434,7 +939,7 @@ class ApiService {
   Future<bool> updateProductVariation(int productId, int variationId, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.productsEndpoint}/$productId/variations/$variationId';
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -534,7 +1039,7 @@ class ApiService {
   Future<bool> updateShippingZoneMethod(int zoneId, int instanceId, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.shippingZonesEndpoint}/$zoneId/methods/$instanceId';
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -676,6 +1181,143 @@ class ApiService {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // DOKAN STORE CATEGORIES (vendor-level categories, NOT product categories)
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // Dokan stores are organised into a custom taxonomy (`store_category`)
+  // which lives on VENDOR / USER objects, NOT on products.  To "filter
+  // products by store category" we first find which vendors belong to a
+  // store category, then return only products whose `post_author` (vendor
+  // user ID) is in that set.
+  //
+  // The primary data source is vendor-api.php (`get_store_categories` +
+  // `get_all_stores_with_categories`) because it reads directly from
+  // wp_get_object_terms with no REST permission/serialisation surprises.
+  // As a fallback we query the WordPress taxonomy REST endpoint.
+
+  /// Returns the list of Dokan store-category terms (id, name, slug, count).
+  /// Primary path: vendor-api.php?action=get_store_categories.
+  /// Fallback: /wp/v2/store_category.
+  Future<List<Map<String, dynamic>>> getStoreCategories() async {
+    // ── 1. vendor-api.php (authoritative) ──────────────────────────────
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_store_categories';
+      final response = await _get(url, useWcAuth: false);
+      final body = jsonDecode(response.body);
+      if (body is Map && body['categories'] is List) {
+        final list = (body['categories'] as List<dynamic>)
+            .map((c) => Map<String, dynamic>.from(c))
+            .toList();
+        if (list.isNotEmpty) return list;
+      }
+    } catch (_) {}
+
+    // ── 2. WP REST taxonomy endpoint (fallback) ───────────────────────
+    try {
+      final candidates = ['store_category', 'dokan_store_category'];
+      for (final tax in candidates) {
+        final url =
+            '${ApiConstants.wpApiBase}/$tax?per_page=100&hide_empty=false';
+        try {
+          final response = await _get(url, useWcAuth: false);
+          final List<dynamic> data = jsonDecode(response.body);
+          if (data.isNotEmpty) {
+            return data.map((t) {
+              final m = Map<String, dynamic>.from(t);
+              return {
+                'id': m['id'] as int? ?? 0,
+                'name': m['name']?.toString() ?? '',
+                'slug': m['slug']?.toString() ?? '',
+                'count': m['count'] is int
+                    ? m['count'] as int
+                    : int.tryParse(m['count']?.toString() ?? '0') ?? 0,
+                'parent': m['parent'] is int
+                    ? m['parent'] as int
+                    : int.tryParse(m['parent']?.toString() ?? '0') ?? 0,
+              };
+            }).toList();
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    return [];
+  }
+
+  /// Fetches every Dokan store together with its `store_category` ids and
+  /// a reverse-mapping `category_vendors` (category id → list of WP user
+  /// ids whose vendor account is in that category).
+  ///
+  /// Primary: vendor-api.php?action=get_all_stores_with_categories.
+  /// Fallback: combines getDokanStores with per-store lookups.
+  Future<Map<String, dynamic>> getAllStoresWithCategories() async {
+    // ── 1. vendor-api.php (authoritative, single HTTP call) ────────────
+    try {
+      final url =
+          '${ApiConstants.vendorApiBase}?action=get_all_stores_with_categories';
+      final response = await _get(url, useWcAuth: false);
+      final body = jsonDecode(response.body);
+      if (body is Map && body['stores'] is List) {
+        return Map<String, dynamic>.from(body);
+      }
+    } catch (_) {}
+
+    // ── 2. Fallback: assemble from individual endpoints ────────────────
+    final stores = <Map<String, dynamic>>[];
+    final categoryVendors = <String, List<int>>{};
+    try {
+      final dokanStores = await getDokanStores(perPage: 200);
+      for (final s in dokanStores) {
+        final uid = s['user_id'] is int
+            ? s['user_id'] as int
+            : int.tryParse(s['user_id']?.toString() ??
+                    s['owner_id']?.toString() ??
+                    s['id']?.toString() ??
+                    '') ??
+                0;
+        final storeId = s['id'] is int
+            ? s['id'] as int
+            : int.tryParse(s['id']?.toString() ?? '') ?? 0;
+        final catIdsRaw = s['store_categories'] ?? s['categories'];
+        final catIds = <int>[];
+        if (catIdsRaw is List) {
+          for (final c in catIdsRaw) {
+            if (c is int) {
+              catIds.add(c);
+            } else if (c is Map && c['id'] != null) {
+              final id = int.tryParse(c['id'].toString());
+              if (id != null) catIds.add(id);
+            }
+          }
+        }
+        for (final cid in catIds) {
+          final key = cid.toString();
+          categoryVendors[key] ??= <int>[];
+          categoryVendors[key]!.add(uid);
+        }
+        stores.add({
+          'store_id': storeId,
+          'user_id': uid,
+          'store_name': s['store_name']?.toString() ??
+              s['shop_name']?.toString() ??
+              s['name']?.toString() ??
+              '',
+          'slug': s['slug']?.toString() ?? '',
+          'category_ids': catIds,
+          'rating': s['rating'] ?? 0,
+        });
+      }
+    } catch (_) {}
+
+    return {
+      'stores': stores,
+      'category_vendors': categoryVendors,
+      'taxonomy': null,
+      'total_stores': stores.length,
+    };
+  }
+
   /// Register a new user via WordPress REST API.
   Future<Map<String, dynamic>?> registerUser(String username, String email, String password) async {
     try {
@@ -715,7 +1357,7 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getUserOrders(int userId) async {
     try {
       final url = '${ApiConstants.ordersEndpoint}?customer=$userId&per_page=20';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
       return data.map((o) => Map<String, dynamic>.from(o)).toList();
     } catch (e) {
@@ -857,7 +1499,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getCustomerData(int customerId) async {
     try {
       final url = '${ApiConstants.wcApiBase}/customers/$customerId';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -892,7 +1534,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getWCCustomerByEmail(String email) async {
     try {
       final url = '${ApiConstants.wcApiBase}/customers?email=${Uri.encodeComponent(email)}';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
       if (data.isNotEmpty) {
         return Map<String, dynamic>.from(data.first);
@@ -905,7 +1547,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getWCCustomerById(String userId) async {
     try {
       final url = '${ApiConstants.wcApiBase}/customers/$userId';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (_) {}
     return null;
@@ -915,7 +1557,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getOrder(int orderId) async {
     try {
       final url = '${ApiConstants.ordersEndpoint}/$orderId';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -954,7 +1596,7 @@ class ApiService {
         data['coupon_lines'] = couponLines;
       }
       final url = ApiConstants.ordersEndpoint;
-      final response = await _post(url, data, useWcAuth: true);
+      final response = await _post(url, data, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -965,7 +1607,7 @@ class ApiService {
   Future<bool> updateCustomer(int customerId, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.customersEndpoint}/$customerId';
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -1229,7 +1871,7 @@ class ApiService {
       // multi-product filter in a single query efficiently)
       var url = '${ApiConstants.ordersEndpoint}?page=$page&per_page=$perPage';
       if (status != null) url += '&status=$status';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
       final allOrders = data.map((o) => Map<String, dynamic>.from(o)).toList();
 
@@ -1249,7 +1891,7 @@ class ApiService {
   Future<bool> updateOrderStatus(int orderId, String status) async {
     try {
       final url = '${ApiConstants.ordersEndpoint}/$orderId';
-      await _put(url, {'status': status}, useWcAuth: true);
+      await _put(url, {'status': status}, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -1339,7 +1981,7 @@ class ApiService {
       await _post(url, {
         'note': note,
         'customer_note': customerNote,
-      }, useWcAuth: true);
+      }, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -1464,7 +2106,7 @@ class ApiService {
           'value': e.value.toString(),
         }).toList(),
       };
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -1497,7 +2139,7 @@ class ApiService {
         ],
       };
       final url = ApiConstants.ordersEndpoint;
-      final response = await _post(url, data, useWcAuth: true);
+      final response = await _post(url, data, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -1539,7 +2181,7 @@ class ApiService {
   Future<Map<String, dynamic>?> createCoupon(Map<String, dynamic> data) async {
     try {
       final url = ApiConstants.couponsEndpoint;
-      final response = await _post(url, data, useWcAuth: true);
+      final response = await _post(url, data, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -1550,7 +2192,7 @@ class ApiService {
   Future<bool> updateCoupon(int id, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.couponsEndpoint}/$id';
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -1561,7 +2203,7 @@ class ApiService {
   Future<bool> deleteCoupon(int id) async {
     try {
       final url = '${ApiConstants.couponsEndpoint}/$id';
-      await _delete(url, useWcAuth: true);
+      await _delete(url, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -1739,7 +2381,7 @@ class ApiService {
   Future<bool> replyToReview(int reviewId, int productId, String reply) async {
     try {
       final url = '${ApiConstants.wcApiBase}/products/reviews/$reviewId';
-      await _put(url, {'review': reply, 'product_id': productId}, useWcAuth: true);
+      await _put(url, {'review': reply, 'product_id': productId}, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -2814,11 +3456,24 @@ class ApiService {
 class ApiException implements Exception {
   final String message;
   final int statusCode;
+  final String? body;
 
-  ApiException(this.message, [this.statusCode = 500]);
+  ApiException(this.message, [this.statusCode = 500, this.body]);
 
   @override
   String toString() => message;
+}
+
+/// Thrown specifically when a JWT token expires.  This is a subtype so
+/// UI code can use `on TokenExpiredException catch (e)` to show a
+/// friendly "session expired, please log in" prompt with a direct
+/// navigation to the login screen — instead of showing a generic
+/// "checkout failed, 403" error.
+///
+/// Also raised PROACTIVELY (before any HTTP call) when we decode the
+/// JWT payload and see we're inside the safety window past the exp claim.
+class TokenExpiredException extends ApiException {
+  TokenExpiredException(String message) : super(message, 403);
 }
 
 class UnauthorizedException extends ApiException {

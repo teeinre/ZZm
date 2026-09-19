@@ -1,7 +1,13 @@
 class ApiConstants {
   static const String baseUrl = 'https://zzmore.store/wp-json';
   static const String wpApiBase = '$baseUrl/wp/v2';
-  static const String wcApiBase = '$baseUrl/wc/v3';
+
+  // WooCommerce API is now accessed through the server-side proxy
+  // (mu-plugin: wc-proxy.php) so the consumer key/secret never ships in the
+  // app binary. The proxy appends the real WooCommerce credentials on the
+  // server and forwards to /wc/v3 behind the scenes.
+  static const String wcProxyBase = '$baseUrl/wc-proxy/v1';
+  static const String wcApiBase = '$wcProxyBase/wc/v3';
   static const String authEndpoint = '$baseUrl/jwt-auth/v1/token';
   static const String tokenValidateEndpoint = '$baseUrl/jwt-auth/v1/token/validate';
   static const String productsEndpoint = '$wcApiBase/products';
@@ -23,9 +29,12 @@ class ApiConstants {
   static const String dokanAnnouncementsEndpoint = '$dokanV1Base/announcement';
   static const String couponsEndpoint = '$wcApiBase/coupons';
 
-  // WooCommerce Bookings REST API (wc-bookings/v1)
-  static const String wcBookingsBase = '$baseUrl/wc-bookings/v1';
+  // WooCommerce Bookings REST API (wc-bookings/v1) — via the server proxy
+  static const String wcBookingsBase = '$wcProxyBase/wc-bookings/v1';
   static const String wcBookingsSlotsEndpoint = '$wcBookingsBase/products/slots';
+
+  // Media upload via the server proxy (wp/v2/media handled natively server-side)
+  static const String wcProxyMediaEndpoint = '$wcProxyBase/wp/v2/media';
 
   // WooCommerce Store API (block-based checkout — enables Dokan multi-vendor shipping)
   static const String storeApiBase = '$baseUrl/wc/store/v1';
@@ -111,10 +120,20 @@ class ApiConstants {
   // Shipping fee (mu-plugin: zzmore-shipping-fee.php)
   static const String productShippingFeeEndpoint = '$appV1Base/product-shipping-fee';
 
-  // WooCommerce API credentials
-  static const String consumerKey = 'ck_537f3489368abb26297c733faf5dafb8b659a411';
-  static const String consumerSecret = 'cs_e8b0de9db4df97bf5797e13aa8c4dd80a45d96d5';
+  // WooCommerce credentials are NO LONGER embedded in the app. All WooCommerce
+  // REST traffic flows through the server-side proxy (server/mu-plugin/wc-proxy.php),
+  // which holds the consumer key/secret on the server and forwards requests.
 
   static const int defaultPerPage = 10;
   static const int maxPerPage = 100;
+
+  // ── App version (for the in-app "update available" check) ──
+  // Keep these in sync with pubspec.yaml `version:` (the build number is
+  // the integer after the `+`). The server returns the latest version via
+  // vendor-api.php?action=get_app_version; when its version code is higher
+  // than [appVersionCode] we prompt the user to update.
+  static const int appVersionCode = 15;
+  static const String appVersionName = '3.3.7';
+  static const String appUpdateUrl =
+      'https://play.google.com/store/apps/details?id=store.zzmore.app';
 }
