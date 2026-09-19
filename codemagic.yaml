@@ -34,13 +34,9 @@ workflows:
         script: |
           if [ -n "$APP_STORE_CONNECT_PRIVATE_KEY" ]; then
             flutter build ipa --release \
-              --dart-define=WOOCOMMERCE_CONSUMER_KEY=$WOOCOMMERCE_CONSUMER_KEY \
-              --dart-define=WOOCOMMERCE_CONSUMER_SECRET=$WOOCOMMERCE_CONSUMER_SECRET \
               --export-options-plist=$HOME/export_options.plist
           else
-            flutter build ios --release --no-codesign \
-              --dart-define=WOOCOMMERCE_CONSUMER_KEY=$WOOCOMMERCE_CONSUMER_KEY \
-              --dart-define=WOOCOMMERCE_CONSUMER_SECRET=$WOOCOMMERCE_CONSUMER_SECRET
+            flutter build ios --release --no-codesign
           fi
       - name: Verify, package, and rename IPA
         script: |
@@ -99,9 +95,7 @@ workflows:
         script: flutter pub get
       - name: Build Android APK
         script: |
-          flutter build apk --release \
-            --dart-define=WOOCOMMERCE_CONSUMER_KEY=$WOOCOMMERCE_CONSUMER_KEY \
-            --dart-define=WOOCOMMERCE_CONSUMER_SECRET=$WOOCOMMERCE_CONSUMER_SECRET
+          flutter build apk --release
       - name: Rename APK
         script: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/Zzmorestore.apk
     artifacts:

@@ -105,21 +105,15 @@ class ApiService {
     return '${s}s remaining';
   }
 
-  String _getBasicAuthHeader() {
-    final credentials = '${ApiConstants.consumerKey}:${ApiConstants.consumerSecret}';
-    final bytes = utf8.encode(credentials);
-    final base64 = base64Encode(bytes);
-    return 'Basic $base64';
-  }
-
   Map<String, String> _getHeaders({bool useWcAuth = false, bool requireAuth = false}) {
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
-    if (useWcAuth) {
-      headers['Authorization'] = _getBasicAuthHeader();
-    } else if (requireAuth && _authToken != null) {
+    // WooCommerce Basic auth has been removed — the server-side proxy
+    // (wc-proxy.php) appends the real consumer credentials. `useWcAuth` is
+    // kept only for call-site compatibility and no longer emits any header.
+    if (requireAuth && _authToken != null) {
       headers['Authorization'] = 'Bearer $_authToken';
       // Also send via X-JWT-Token as LiteSpeed-proof alternative header
       headers['X-JWT-Token'] = _authToken!;
@@ -277,38 +271,28 @@ class ApiService {
     }
   }
 
-  Future<http.StreamedResponse> _postMultipart(String url, Map<String, String> fields, String filePath, {bool useWcAuth = true}) async {
-    final request = http.MultipartRequest('POST', Uri.parse(url));
-    request.headers.addAll(_getHeaders(useWcAuth: useWcAuth));
+  Future<http.StreamedResponse> _postMultipart(String url, Map<String, String> fields, String filePath, {bool useWcAuth = true, bool requireAuth = false}) async {
+    final effectiveUrl = requireAuth ? _appendTokenParam(url) : url;
+    final request = http.MultipartRequest('POST', Uri.parse(effectiveUrl));
+    request.headers.addAll(_getHeaders(useWcAuth: useWcAuth, requireAuth: requireAuth));
     request.fields.addAll(fields);
     request.files.add(await http.MultipartFile.fromPath('file', filePath));
     return await client.send(request);
   }
 
-  /// Upload an image to the WordPress media library.
+  /// Upload an image to the WordPress media library via the server proxy.
   /// Returns the uploaded image data (id, url) or null on failure.
   Future<Map<String, dynamic>?> uploadProductImage(String filePath) async {
     try {
-      final url = '${ApiConstants.wpApiBase}/media';
-      final streamed = await _postMultipart(url, {}, filePath, useWcAuth: false);
-      // Use JWT auth if available, else fall back to WC auth wonky uploads
+      final url = ApiConstants.wcProxyMediaEndpoint;
+      final streamed = await _postMultipart(url, {}, filePath, useWcAuth: false, requireAuth: true);
       final response = await http.Response.fromStream(streamed);
-      if (response.statusCode == 201) {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         return Map<String, dynamic>.from(jsonDecode(response.body));
       }
+      debugPrint('[UploadImage] Proxy returned ${response.statusCode}: ${response.body}');
     } catch (e) {
       debugPrint('[UploadImage] Error: $e');
-    }
-    // Fallback: try with WC auth
-    try {
-      final url = '${ApiConstants.wpApiBase}/media';
-      final streamed = await _postMultipart(url, {}, filePath, useWcAuth: true);
-      final response = await http.Response.fromStream(streamed);
-      if (response.statusCode == 201) {
-        return Map<String, dynamic>.from(jsonDecode(response.body));
-      }
-    } catch (e) {
-      debugPrint('[UploadImage] WC fallback error: $e');
     }
     return null;
   }
@@ -878,7 +862,7 @@ class ApiService {
   Future<Map<String, dynamic>?> createProductVariation(int productId, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.productsEndpoint}/$productId/variations';
-      final response = await _post(url, data, useWcAuth: true);
+      final response = await _post(url, data, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -889,7 +873,7 @@ class ApiService {
   Future<bool> updateProductVariation(int productId, int variationId, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.productsEndpoint}/$productId/variations/$variationId';
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -989,7 +973,7 @@ class ApiService {
   Future<bool> updateShippingZoneMethod(int zoneId, int instanceId, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.shippingZonesEndpoint}/$zoneId/methods/$instanceId';
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -1307,7 +1291,7 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getUserOrders(int userId) async {
     try {
       final url = '${ApiConstants.ordersEndpoint}?customer=$userId&per_page=20';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
       return data.map((o) => Map<String, dynamic>.from(o)).toList();
     } catch (e) {
@@ -1449,7 +1433,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getCustomerData(int customerId) async {
     try {
       final url = '${ApiConstants.wcApiBase}/customers/$customerId';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -1484,7 +1468,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getWCCustomerByEmail(String email) async {
     try {
       final url = '${ApiConstants.wcApiBase}/customers?email=${Uri.encodeComponent(email)}';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
       if (data.isNotEmpty) {
         return Map<String, dynamic>.from(data.first);
@@ -1497,7 +1481,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getWCCustomerById(String userId) async {
     try {
       final url = '${ApiConstants.wcApiBase}/customers/$userId';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (_) {}
     return null;
@@ -1507,7 +1491,7 @@ class ApiService {
   Future<Map<String, dynamic>?> getOrder(int orderId) async {
     try {
       final url = '${ApiConstants.ordersEndpoint}/$orderId';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -1546,7 +1530,7 @@ class ApiService {
         data['coupon_lines'] = couponLines;
       }
       final url = ApiConstants.ordersEndpoint;
-      final response = await _post(url, data, useWcAuth: true);
+      final response = await _post(url, data, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -1557,7 +1541,7 @@ class ApiService {
   Future<bool> updateCustomer(int customerId, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.customersEndpoint}/$customerId';
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -1821,7 +1805,7 @@ class ApiService {
       // multi-product filter in a single query efficiently)
       var url = '${ApiConstants.ordersEndpoint}?page=$page&per_page=$perPage';
       if (status != null) url += '&status=$status';
-      final response = await _get(url, useWcAuth: true);
+      final response = await _get(url, requireAuth: true);
       final List<dynamic> data = jsonDecode(response.body);
       final allOrders = data.map((o) => Map<String, dynamic>.from(o)).toList();
 
@@ -1841,7 +1825,7 @@ class ApiService {
   Future<bool> updateOrderStatus(int orderId, String status) async {
     try {
       final url = '${ApiConstants.ordersEndpoint}/$orderId';
-      await _put(url, {'status': status}, useWcAuth: true);
+      await _put(url, {'status': status}, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -1931,7 +1915,7 @@ class ApiService {
       await _post(url, {
         'note': note,
         'customer_note': customerNote,
-      }, useWcAuth: true);
+      }, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -2056,7 +2040,7 @@ class ApiService {
           'value': e.value.toString(),
         }).toList(),
       };
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -2089,7 +2073,7 @@ class ApiService {
         ],
       };
       final url = ApiConstants.ordersEndpoint;
-      final response = await _post(url, data, useWcAuth: true);
+      final response = await _post(url, data, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -2131,7 +2115,7 @@ class ApiService {
   Future<Map<String, dynamic>?> createCoupon(Map<String, dynamic> data) async {
     try {
       final url = ApiConstants.couponsEndpoint;
-      final response = await _post(url, data, useWcAuth: true);
+      final response = await _post(url, data, requireAuth: true);
       return Map<String, dynamic>.from(jsonDecode(response.body));
     } catch (e) {
       return null;
@@ -2142,7 +2126,7 @@ class ApiService {
   Future<bool> updateCoupon(int id, Map<String, dynamic> data) async {
     try {
       final url = '${ApiConstants.couponsEndpoint}/$id';
-      await _put(url, data, useWcAuth: true);
+      await _put(url, data, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -2153,7 +2137,7 @@ class ApiService {
   Future<bool> deleteCoupon(int id) async {
     try {
       final url = '${ApiConstants.couponsEndpoint}/$id';
-      await _delete(url, useWcAuth: true);
+      await _delete(url, requireAuth: true);
       return true;
     } catch (e) {
       return false;
@@ -2331,7 +2315,7 @@ class ApiService {
   Future<bool> replyToReview(int reviewId, int productId, String reply) async {
     try {
       final url = '${ApiConstants.wcApiBase}/products/reviews/$reviewId';
-      await _put(url, {'review': reply, 'product_id': productId}, useWcAuth: true);
+      await _put(url, {'review': reply, 'product_id': productId}, requireAuth: true);
       return true;
     } catch (e) {
       return false;
