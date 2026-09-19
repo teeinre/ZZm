@@ -111,9 +111,13 @@ class ApiConstants {
   // Shipping fee (mu-plugin: zzmore-shipping-fee.php)
   static const String productShippingFeeEndpoint = '$appV1Base/product-shipping-fee';
 
-  // WooCommerce API credentials
-  static const String consumerKey = 'REDACTED_WC_KEY';
-  static const String consumerSecret = 'REDACTED_WC_SECRET';
+  // WooCommerce API credentials.
+  // Provided at build time via --dart-define (never committed to source):
+  //   flutter build apk --release \
+  //     --dart-define=WOOCOMMERCE_CONSUMER_KEY=ck_... \
+  //     --dart-define=WOOCOMMERCE_CONSUMER_SECRET=cs_...
+  static const String consumerKey = String.fromEnvironment('WOOCOMMERCE_CONSUMER_KEY');
+  static const String consumerSecret = String.fromEnvironment('WOOCOMMERCE_CONSUMER_SECRET');
 
   static const int defaultPerPage = 10;
   static const int maxPerPage = 100;
