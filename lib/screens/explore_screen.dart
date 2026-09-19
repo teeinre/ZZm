@@ -231,18 +231,17 @@ class _ExploreScreenState extends State<ExploreScreen> {
       }
     }
 
-    // ── Path 2: vendor-api.php search_products pool builder (for "All") ─
-    // Cheap way to get a cross-section of all product types when no
-    // category is filtered — useful for sites where WC REST skips
-    // booking/subscription types.
+    // ── Path 2 (PREFERRED for "All"): vendor-api.php all-products via
+    //    get_products_by_category?category_id=0 — same direct SQL as the
+    //    category path, so every product type is returned consistently. ──
     if (raw.isEmpty && cid == null) {
       triedPaths++;
       try {
-        raw = await _api.searchProducts(' ', perPage: _perPage);
-        debugPrint('[Explore] p2 vendor-api pool (All): ${raw.length}');
+        raw = await _api.getAllProducts(page: _page, perPage: _perPage);
+        debugPrint('[Explore] p2 vendor-api all-products: ${raw.length}');
       } catch (e) {
         throwCount++;
-        debugPrint('[Explore] p2 vendor-api pool THREW: $e');
+        debugPrint('[Explore] p2 vendor-api all-products THREW: $e');
       }
     }
 
@@ -353,6 +352,14 @@ class _ExploreScreenState extends State<ExploreScreen> {
       } catch (_) {
         throwCount++;
       }
+    } else {
+      // "All products" — vendor-api all-products (direct SQL, all types).
+      triedPaths++;
+      try {
+        raw = await _api.getAllProducts(page: _page, perPage: _perPage);
+      } catch (_) {
+        throwCount++;
+      }
     }
     if (raw.isEmpty) {
       triedPaths++;
@@ -362,15 +369,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
           perPage: _perPage,
           category: cid?.toString(),
         );
-      } catch (_) {
-        throwCount++;
-      }
-    }
-    if (raw.isEmpty && cid == null) {
-      triedPaths++;
-      try {
-        raw = await _api.getProducts(
-            page: _page, perPage: _perPage, orderby: 'title', order: 'asc');
       } catch (_) {
         throwCount++;
       }

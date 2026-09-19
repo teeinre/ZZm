@@ -112,6 +112,14 @@ add_filter( 'determine_current_user', function ( $user_id ) {
 // =========================================================================
 // Credential resolution (server-side only).
 // =========================================================================
+// Optional local secrets file (wc-proxy-secrets.php) keeps the real consumer
+// key/secret out of version control. WordPress auto-loads it when dropped in
+// wp-content/mu-plugins/; we also include_once as a fallback.
+$_zzmore_wc_secrets_file = __DIR__ . '/wc-proxy-secrets.php';
+if ( file_exists( $_zzmore_wc_secrets_file ) ) {
+	include_once $_zzmore_wc_secrets_file;
+}
+
 function zzmore_wc_proxy_key() {
 	$env = getenv( 'WOOCOMMERCE_CONSUMER_KEY' );
 	if ( false !== $env && '' !== $env ) {

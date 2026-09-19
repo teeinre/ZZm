@@ -138,6 +138,16 @@ class ProductsProvider with ChangeNotifier {
         } catch (_) {
           // fall through to wc-rest
         }
+      } else if (catId == null && !needsSearch) {
+        // "All products" (no category, no search) — vendor-api all-products.
+        try {
+          freshProducts = await apiService.getAllProducts(
+            page: _currentPage,
+            perPage: ApiConstants.defaultPerPage,
+          );
+        } catch (_) {
+          // fall through to wc-rest
+        }
       }
 
       // ── Primary path 2: vendor-api.php searchProducts ─────────────
@@ -207,6 +217,13 @@ class ProductsProvider with ChangeNotifier {
         try {
           moreProducts = await apiService.getProductsByCategory(
             catId,
+            page: _currentPage,
+            perPage: ApiConstants.defaultPerPage,
+          );
+        } catch (_) {}
+      } else if (catId == null && !needsSearch) {
+        try {
+          moreProducts = await apiService.getAllProducts(
             page: _currentPage,
             perPage: ApiConstants.defaultPerPage,
           );

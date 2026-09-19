@@ -968,37 +968,37 @@ if ( $action === 'get_products_by_category' ) {
 
     global $wpdb;
 
-    // ── 1. Total matching posts ────────────────────────────────────────
-    $total_sql = "
-        SELECT COUNT(DISTINCT p.ID)
-        FROM {$wpdb->posts} p
+    // category_id = 0 means "All products" — browse the whole catalog with
+    // no term filter.  A single code path keeps every product type
+    // (simple, variable, booking, subscription, etc.) consistent whether
+    // the user is browsing a category or the entire catalog.
+    $join  = '';
+    $where = "p.post_type = 'product' AND p.post_status = 'publish'";
+    if ( $category_id > 0 ) {
+        $join  = "
         INNER JOIN {$wpdb->term_relationships} tr
             ON tr.object_id = p.ID
         INNER JOIN {$wpdb->term_taxonomy} tt
             ON tt.term_taxonomy_id = tr.term_taxonomy_id
-           AND tt.taxonomy = 'product_cat'
-        WHERE tt.term_id = %d
-          AND p.post_type = 'product'
-          AND p.post_status = 'publish'
-    ";
-    $total = (int) $wpdb->get_var( $wpdb->prepare( $total_sql, $category_id ) );
+           AND tt.taxonomy = 'product_cat'";
+        $where .= ' AND tt.term_id = %d';
+    }
+
+    // ── 1. Total matching posts ────────────────────────────────────────
+    $total_sql = "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p{$join} WHERE {$where}";
+    if ( $category_id > 0 ) {
+        $total = (int) $wpdb->get_var( $wpdb->prepare( $total_sql, $category_id ) );
+    } else {
+        $total = (int) $wpdb->get_var( $total_sql );
+    }
 
     // ── 2. Fetch IDs for this page ─────────────────────────────────────
-    $ids_sql = "
-        SELECT DISTINCT p.ID
-        FROM {$wpdb->posts} p
-        INNER JOIN {$wpdb->term_relationships} tr
-            ON tr.object_id = p.ID
-        INNER JOIN {$wpdb->term_taxonomy} tt
-            ON tt.term_taxonomy_id = tr.term_taxonomy_id
-           AND tt.taxonomy = 'product_cat'
-        WHERE tt.term_id = %d
-          AND p.post_type = 'product'
-          AND p.post_status = 'publish'
-        ORDER BY p.post_title ASC
-        LIMIT %d OFFSET %d
-    ";
-    $ids = $wpdb->get_col( $wpdb->prepare( $ids_sql, $category_id, $per_page, $offset ) );
+    $ids_sql = "SELECT DISTINCT p.ID FROM {$wpdb->posts} p{$join} WHERE {$where} ORDER BY p.post_title ASC LIMIT %d OFFSET %d";
+    if ( $category_id > 0 ) {
+        $ids = $wpdb->get_col( $wpdb->prepare( $ids_sql, $category_id, $per_page, $offset ) );
+    } else {
+        $ids = $wpdb->get_col( $wpdb->prepare( $ids_sql, $per_page, $offset ) );
+    }
 
     $products = [];
     foreach ( $ids as $pid ) {
@@ -1087,6 +1087,144 @@ if ( $action === 'get_products_by_category' ) {
         'page'        => $page,
         'per_page'    => $per_page,
         'category_id' => $category_id,
+    ] );
+}
+
+// ── get_product (no auth) ─────────────────────────────────────────────
+// GET /?action=get_product&product_id=<ID>
+//
+// Returns a single product's full JSON (type, attributes, variations,
+// images, etc.) so the product-detail screen can render variable /
+// booking / subscription products without depending on the WC REST proxy
+// (which may be unavailable or unconfigured).
+if ( $action === 'get_product' ) {
+    $product_id = (int) ( $_GET['product_id'] ?? $_GET['id'] ?? 0 );
+    if ( $product_id <= 0 ) {
+        vendor_api_respond( [ 'error' => 'product_id is required.', 'code' => 'bad_request' ], 400 );
+    }
+
+    $wc_product = wc_get_product( $product_id );
+    if ( ! $wc_product ) {
+        vendor_api_respond( [ 'error' => 'Product not found.', 'code' => 'not_found' ], 404 );
+    }
+
+    $author_id  = (int) get_post_field( 'post_author', $product_id );
+    $store_name = null;
+    if ( function_exists( 'dokan' ) ) {
+        $vendor = dokan()->vendor->get( $author_id );
+        if ( $vendor && $vendor->get_id() ) {
+            $store_name = $vendor->get_shop_name();
+        }
+    }
+    $store_name = $store_name ?: get_the_author_meta( 'display_name', $author_id );
+
+    // Attributes — mirror the WC REST shape (name / options / variation).
+    $attributes = [];
+    foreach ( $wc_product->get_attributes() as $attr ) {
+        if ( ! is_object( $attr ) ) continue;
+        $attributes[] = [
+            'id'        => method_exists( $attr, 'get_id' ) ? (int) $attr->get_id() : 0,
+            'name'      => $attr->get_name(),
+            'position'  => method_exists( $attr, 'get_position' ) ? (int) $attr->get_position() : 0,
+            'visible'   => method_exists( $attr, 'get_visible' ) ? (bool) $attr->get_visible() : true,
+            'variation' => method_exists( $attr, 'get_variation' ) ? (bool) $attr->get_variation() : false,
+            'options'   => $attr->get_options(),
+        ];
+    }
+
+    // Variations — embedded so the client doesn't need a 2nd call.
+    $variations = [];
+    if ( $wc_product->is_type( 'variable' ) ) {
+        foreach ( $wc_product->get_children() as $vid ) {
+            $v = wc_get_product( $vid );
+            if ( ! $v ) continue;
+
+            $vimg_id = $v->get_image_id();
+            $vimg    = $vimg_id ? wp_get_attachment_image_url( $vimg_id, 'woocommerce_single' ) : null;
+
+            $var_attrs = [];
+            foreach ( $v->get_variation_attributes() as $k => $val ) {
+                $var_attrs[] = [ 'name' => wc_attribute_label( $k ), 'option' => $val ];
+            }
+
+            $variations[] = [
+                'id'             => (int) $vid,
+                'sku'            => $v->get_sku(),
+                'price'          => $v->get_price(),
+                'regular_price'  => $v->get_regular_price(),
+                'sale_price'     => $v->get_sale_price(),
+                'stock_status'   => $v->is_in_stock() ? 'instock' : 'outofstock',
+                'stock_quantity' => $v->get_stock_quantity(),
+                'attributes'     => $var_attrs,
+                'image'          => $vimg ? [ 'src' => $vimg ] : null,
+            ];
+        }
+    }
+
+    // Images (thumbnail + gallery).
+    $thumb_id = get_post_thumbnail_id( $product_id );
+    $images   = [];
+    if ( $thumb_id ) {
+        $src = wp_get_attachment_image_url( $thumb_id, 'woocommerce_single' );
+        if ( $src ) $images[] = [ 'id' => (int) $thumb_id, 'src' => $src ];
+    }
+    foreach ( $wc_product->get_gallery_image_ids() as $gid ) {
+        $u = wp_get_attachment_image_url( $gid, 'woocommerce_single' );
+        if ( $u ) $images[] = [ 'id' => (int) $gid, 'src' => $u ];
+    }
+
+    $cats = [];
+    foreach ( wp_get_object_terms( $product_id, 'product_cat', [ 'fields' => 'id=>name' ] ) as $cid => $cname ) {
+        $cats[] = [ 'id' => (int) $cid, 'name' => $cname ];
+    }
+
+    vendor_api_respond( [
+        'id'                => $product_id,
+        'name'              => $wc_product->get_name(),
+        'slug'              => $wc_product->get_slug(),
+        'type'              => $wc_product->get_type(),
+        'status'            => $wc_product->get_status(),
+        'permalink'         => get_permalink( $product_id ),
+        'description'       => $wc_product->get_description(),
+        'short_description' => $wc_product->get_short_description(),
+        'sku'               => $wc_product->get_sku() ?: '',
+        'price'             => $wc_product->get_price(),
+        'regular_price'     => $wc_product->get_regular_price(),
+        'sale_price'        => $wc_product->get_sale_price(),
+        'on_sale'           => $wc_product->is_on_sale(),
+        'stock_status'      => $wc_product->is_in_stock() ? 'instock' : 'outofstock',
+        'stock_quantity'    => $wc_product->get_stock_quantity(),
+        'average_rating'    => (string) $wc_product->get_average_rating(),
+        'rating_count'      => (int) $wc_product->get_rating_count(),
+        'attributes'        => $attributes,
+        'variations'        => $variations,
+        'images'            => $images,
+        'categories'        => $cats,
+        'vendor_id'         => $author_id,
+        'vendor_name'       => $store_name,
+    ] );
+}
+
+// ── get_app_version (no auth) ─────────────────────────────────────────
+// GET /?action=get_app_version
+//
+// Returns the latest app version info so the client can prompt the user to
+// update when a newer build is available.  Values are read from WordPress
+// options (so an admin can bump them without touching code):
+//   zzmore_latest_app_version_code  (int)    latest build number
+//   zzmore_latest_app_version_name  (string) latest human version
+//   zzmore_app_update_url           (string) store listing URL
+// If the options are unset, sensible defaults are returned and the client
+// treats "latest <= installed" as up-to-date.
+if ( $action === 'get_app_version' ) {
+    $latest_code = (int) get_option( 'zzmore_latest_app_version_code', 0 );
+    $latest_name = (string) get_option( 'zzmore_latest_app_version_name', '' );
+    $update_url  = (string) get_option( 'zzmore_app_update_url', 'https://play.google.com/store/apps/details?id=store.zzmore.app' );
+
+    vendor_api_respond( [
+        'latest_version_code' => $latest_code,
+        'latest_version_name' => $latest_name,
+        'update_url'          => $update_url,
     ] );
 }
 
@@ -2604,5 +2742,6 @@ vendor_api_respond( [
         'get_store_public', 'get_store_reviews', 'update_order_status', 'request_withdrawal',
         'get_store_categories', 'get_all_stores_with_categories',
         'search_products', 'get_all_product_categories', 'get_products_by_category',
+        'get_product', 'get_app_version',
     ],
 ], 400 );
