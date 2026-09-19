@@ -1,7 +1,13 @@
 class ApiConstants {
   static const String baseUrl = 'https://zzmore.store/wp-json';
   static const String wpApiBase = '$baseUrl/wp/v2';
-  static const String wcApiBase = '$baseUrl/wc/v3';
+
+  // WooCommerce API is now accessed through the server-side proxy
+  // (mu-plugin: wc-proxy.php) so the consumer key/secret never ships in the
+  // app binary. The proxy appends the real WooCommerce credentials on the
+  // server and forwards to /wc/v3 behind the scenes.
+  static const String wcProxyBase = '$baseUrl/wc-proxy/v1';
+  static const String wcApiBase = '$wcProxyBase/wc/v3';
   static const String authEndpoint = '$baseUrl/jwt-auth/v1/token';
   static const String tokenValidateEndpoint = '$baseUrl/jwt-auth/v1/token/validate';
   static const String productsEndpoint = '$wcApiBase/products';
@@ -23,9 +29,12 @@ class ApiConstants {
   static const String dokanAnnouncementsEndpoint = '$dokanV1Base/announcement';
   static const String couponsEndpoint = '$wcApiBase/coupons';
 
-  // WooCommerce Bookings REST API (wc-bookings/v1)
-  static const String wcBookingsBase = '$baseUrl/wc-bookings/v1';
+  // WooCommerce Bookings REST API (wc-bookings/v1) — via the server proxy
+  static const String wcBookingsBase = '$wcProxyBase/wc-bookings/v1';
   static const String wcBookingsSlotsEndpoint = '$wcBookingsBase/products/slots';
+
+  // Media upload via the server proxy (wp/v2/media handled natively server-side)
+  static const String wcProxyMediaEndpoint = '$wcProxyBase/wp/v2/media';
 
   // WooCommerce Store API (block-based checkout — enables Dokan multi-vendor shipping)
   static const String storeApiBase = '$baseUrl/wc/store/v1';
@@ -111,13 +120,9 @@ class ApiConstants {
   // Shipping fee (mu-plugin: zzmore-shipping-fee.php)
   static const String productShippingFeeEndpoint = '$appV1Base/product-shipping-fee';
 
-  // WooCommerce API credentials.
-  // Provided at build time via --dart-define (never committed to source):
-  //   flutter build apk --release \
-  //     --dart-define=WOOCOMMERCE_CONSUMER_KEY=ck_... \
-  //     --dart-define=WOOCOMMERCE_CONSUMER_SECRET=cs_...
-  static const String consumerKey = String.fromEnvironment('WOOCOMMERCE_CONSUMER_KEY');
-  static const String consumerSecret = String.fromEnvironment('WOOCOMMERCE_CONSUMER_SECRET');
+  // WooCommerce credentials are NO LONGER embedded in the app. All WooCommerce
+  // REST traffic flows through the server-side proxy (server/mu-plugin/wc-proxy.php),
+  // which holds the consumer key/secret on the server and forwards requests.
 
   static const int defaultPerPage = 10;
   static const int maxPerPage = 100;
