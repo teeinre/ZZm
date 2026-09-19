@@ -29,24 +29,41 @@ class AuthProvider with ChangeNotifier {
     try {
       final token = await storageService.getAuthToken();
       if (token != null) {
+        // ── CRITICAL: reject cached token if it's already expired ───
+        // Without this check, the user would get "session expired" error
+        // banners / "could not checkout(403)" from every API call on
+        // app startup.  Instead we silently purge the stale token on
+        // init and show the login screen — correct UX.
         apiService.setAuthToken(token);
-        final userData = await storageService.getUserData();
-        if (userData['userId'] != null) {
-          _user = User(
-            id: int.tryParse(userData['userId'] ?? '0') ?? 0,
-            email: userData['email'] ?? '',
-            username: userData['displayName'],
-            token: token,
-            role: userData['role'],
-            vendorStoreId: int.tryParse(userData['vendor_store_id'] ?? ''),
-          );
-          _isAuthenticated = true;
-          _isVendor = userData['role'] == 'vendor' ||
-              (int.tryParse(userData['vendor_store_id'] ?? '') ?? 0) > 0;
-        } else {
+        if (apiService.isTokenExpiredOrNearExpiry) {
+          debugPrint('[Auth] Cached token is ALREADY expired '
+              '(lifetime=${apiService.debugTokenLifetime}). Purging stale auth.');
           await storageService.deleteAuthToken();
           apiService.clearAuthToken();
+          _user = null;
           _isAuthenticated = false;
+          _isVendor = false;
+        } else {
+          final userData = await storageService.getUserData();
+          if (userData['userId'] != null) {
+            _user = User(
+              id: int.tryParse(userData['userId'] ?? '0') ?? 0,
+              email: userData['email'] ?? '',
+              username: userData['displayName'],
+              token: token,
+              role: userData['role'],
+              vendorStoreId: int.tryParse(userData['vendor_store_id'] ?? ''),
+            );
+            _isAuthenticated = true;
+            _isVendor = userData['role'] == 'vendor' ||
+                (int.tryParse(userData['vendor_store_id'] ?? '') ?? 0) > 0;
+            debugPrint('[Auth] Restored cached auth. '
+                'Token lifetime: ${apiService.debugTokenLifetime}');
+          } else {
+            await storageService.deleteAuthToken();
+            apiService.clearAuthToken();
+            _isAuthenticated = false;
+          }
         }
       }
     } catch (_) {
@@ -150,6 +167,22 @@ class AuthProvider with ChangeNotifier {
     apiService.clearAuthToken();
     await storageService.deleteAuthToken();
     await storageService.clearAll();
+    notifyListeners();
+  }
+
+  /// Handles a runtime session-expiry event (JWT `exp` reached, or a 403
+  /// "jwt-auth_invalid_token" response from an authenticated call).
+  ///
+  /// Unlike [logout], this only clears the AUTH state — it deliberately does
+  /// NOT wipe the rest of secure storage (cart, saved vendors, location), so
+  /// the user can simply log back in and continue where they left off.
+  Future<void> handleSessionExpired() async {
+    apiService.clearAuthToken();
+    await storageService.deleteAuthToken();
+    _user = null;
+    _isAuthenticated = false;
+    _isVendor = false;
+    _errorMessage = 'Your session has expired. Please log in again to continue.';
     notifyListeners();
   }
 

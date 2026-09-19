@@ -209,10 +209,7 @@ add_action( 'rest_api_init', function () {
     // Flutter sends cart items + JWT auth header. Returns a single-use token.
     register_rest_route( 'bridge/v1', '/generate-token', [
         'methods'             => 'POST',
-        'permission_callback' => function () {
-            // Must have a valid JWT token that resolves to a WP user.
-            return is_user_logged_in();
-        },
+        'permission_callback' => '__return_true', // guests allowed (guest checkout)
         'callback' => 'wvb_generate_token',
     ] );
 
@@ -229,10 +226,12 @@ add_action( 'rest_api_init', function () {
     // Flutter fetches order details after checkout completes.
     register_rest_route( 'bridge/v1', '/order/(?P<id>\d+)', [
         'methods'             => 'GET',
-        'permission_callback' => function () {
-            return is_user_logged_in();
-        },
-        'callback' => 'wvb_get_order',
+        'permission_callback' => '__return_true',
+        'callback'            => 'wvb_get_order',
+        'args'                => [
+            'id'  => [ 'required' => true, 'type' => 'integer' ],
+            'key' => [ 'required' => false, 'type' => 'string' ],
+        ],
     ] );
 } );
 
@@ -243,12 +242,9 @@ add_action( 'rest_api_init', function () {
  * Response:  { "token": "abc...", "expires_in": 120 }
  */
 function wvb_generate_token( WP_REST_Request $request ) {
-    $user_id = get_current_user_id();
+    $user_id = get_current_user_id(); // 0 for guests
     $items   = $request->get_param( 'items' );
 
-    if ( empty( $user_id ) ) {
-        return new WP_Error( 'no_user', 'Not authenticated. Use a valid JWT token.', [ 'status' => 401 ] );
-    }
     if ( ! is_array( $items ) ) {
         $items = [];
     }
@@ -289,9 +285,12 @@ function wvb_enter( WP_REST_Request $request ) {
     $user_id = (int) $data['user_id'];
     $items   = (array) $data['items'];
 
-    // Log the user in via cookie auth (so WooCommerce checkout sees them)
+    // Log the user in via cookie auth (so WooCommerce checkout sees them).
+    // Guests (user_id 0) stay logged-out so WooCommerce runs guest checkout.
     wp_set_current_user( $user_id );
-    wp_set_auth_cookie( $user_id, true );
+    if ( $user_id > 0 ) {
+        wp_set_auth_cookie( $user_id, true );
+    }
 
     // Rebuild the WooCommerce cart
     if ( function_exists( 'WC' ) ) {
@@ -361,15 +360,20 @@ function wvb_enter( WP_REST_Request $request ) {
  * Fetch order details for Flutter app after checkout.
  */
 function wvb_get_order( WP_REST_Request $request ) {
-    $order_id = (int) $request['id'];
-    $order    = wc_get_order( $order_id );
+    $order_id  = (int) $request['id'];
+    $order_key = sanitize_text_field( (string) $request->get_param( 'key' ) );
+    $order     = wc_get_order( $order_id );
 
     if ( ! $order ) {
         return new WP_Error( 'not_found', 'Order not found', [ 'status' => 404 ] );
     }
 
-    // Verify order belongs to the authenticated user
-    if ( (int) $order->get_customer_id() !== get_current_user_id() ) {
+    // Guest checkout: verify via the order key from the order-received URL.
+    $key_ok   = ! empty( $order_key ) && hash_equals( $order->get_order_key(), $order_key );
+    // Logged-in checkout: verify order ownership.
+    $owner_ok = is_user_logged_in() && (int) $order->get_customer_id() === get_current_user_id();
+
+    if ( ! $key_ok && ! $owner_ok ) {
         return new WP_Error( 'forbidden', 'Not your order', [ 'status' => 403 ] );
     }
 

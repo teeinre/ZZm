@@ -1014,12 +1014,8 @@ class DokanApiClient {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
-    if (useBasicAuth) {
-      final token = base64Encode(
-        utf8.encode('${ApiConstants.consumerKey}:${ApiConstants.consumerSecret}'),
-      );
-      headers['Authorization'] = 'Basic $token';
-    }
+    // WooCommerce Basic auth removed — Dokan calls now use JWT (getHeaders /
+    // getAuthToken) or the server-side proxy. No consumer key ships in the app.
     return headers;
   }
 
