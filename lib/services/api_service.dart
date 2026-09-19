@@ -664,6 +664,44 @@ class ApiService {
         .toList();
   }
 
+  /// Fetches ALL published products (no category filter) via vendor-api.php.
+  /// Used for the "All products" browse path and the Home "Trending in All"
+  /// section. Reuses the same direct-SQL endpoint as [getProductsByCategory]
+  /// (with `category_id=0`) so every product type — simple, variable,
+  /// booking, subscription, etc. — is returned consistently.
+  Future<List<Product>> getAllProducts({
+    int page = 1,
+    int perPage = 60,
+  }) async {
+    final url = '${ApiConstants.vendorApiBase}?action=get_products_by_category'
+        '&category_id=0&page=$page&per_page=$perPage';
+    final response = await _get(url, useWcAuth: false);
+    if (response.statusCode != 200) {
+      throw Exception(
+          'getAllProducts failed HTTP ${response.statusCode}: ${response.body}');
+    }
+    final body = jsonDecode(response.body);
+    final List list = body['products'] ?? [];
+    return list
+        .map((json) => Product.fromJson(Map<String, dynamic>.from(json as Map)))
+        .toList();
+  }
+
+  /// Fetches the latest app version info from the server (vendor-api.php).
+  /// Used for the in-app "update available" prompt. Returns null on failure.
+  Future<Map<String, dynamic>?> getLatestAppVersion() async {
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_app_version';
+      final response = await _get(url, useWcAuth: false);
+      if (response.statusCode != 200) return null;
+      final body = jsonDecode(response.body);
+      if (body is Map) return Map<String, dynamic>.from(body);
+    } catch (_) {
+      // Ignore — update check is best-effort.
+    }
+    return null;
+  }
+
   /// Comprehensive product search: combines FOUR strategies so no matching
   /// product falls through the cracks. Results are de-duplicated by product id.
   ///
@@ -845,6 +883,18 @@ class ApiService {
   /// Fetches the raw product JSON (includes type, attributes, stock_status, etc.
   /// that are not present in the Product model).
   Future<Map<String, dynamic>> getProductJson(int id) async {
+    // Primary: vendor-api.php get_product (works without the WC REST proxy).
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_product&product_id=$id';
+      final response = await _get(url, useWcAuth: false);
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        if (body is Map<String, dynamic>) return body;
+        if (body is Map) return Map<String, dynamic>.from(body);
+      }
+    } catch (_) {
+      // fall through to the WC REST proxy below
+    }
     final url = '${ApiConstants.productsEndpoint}/$id';
     final response = await _get(url, useWcAuth: true);
     return Map<String, dynamic>.from(jsonDecode(response.body));
@@ -852,6 +902,22 @@ class ApiService {
 
   /// Fetches all variations for a variable product.
   Future<List<Map<String, dynamic>>> getProductVariations(int productId) async {
+    // Primary: vendor-api.php get_product already embeds `variations`.
+    try {
+      final url = '${ApiConstants.vendorApiBase}?action=get_product&product_id=$productId';
+      final response = await _get(url, useWcAuth: false);
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        final variations = (body is Map) ? body['variations'] : null;
+        if (variations is List) {
+          return variations
+              .map((v) => Map<String, dynamic>.from(v as Map))
+              .toList();
+        }
+      }
+    } catch (_) {
+      // fall through to the WC REST proxy below
+    }
     final url = '${ApiConstants.productsEndpoint}/$productId/variations?per_page=100';
     final response = await _get(url, useWcAuth: true);
     final List<dynamic> data = jsonDecode(response.body);

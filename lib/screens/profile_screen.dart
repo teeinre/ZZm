@@ -320,7 +320,12 @@ class _OrdersPageState extends State<OrdersPage> {
   Future<void> _loadOrders() async {
     try {
       final api = ApiService();
-      final orders = await api.getUserOrders(widget.userId);
+      // Primary: vendor-api.php (matches "My Account" orders view, uses the
+      // WordPress user id directly). Fall back to WC REST only if empty.
+      var orders = await api.getVendorApiUserOrders(perPage: 50);
+      if (orders.isEmpty) {
+        orders = await api.getUserOrders(widget.userId);
+      }
       if (mounted) {
         setState(() {
           _orders = orders;

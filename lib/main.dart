@@ -7,7 +7,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:app_links/app_links.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'constants/app_colors.dart';
+import 'constants/api_constants.dart';
 import 'services/api_service.dart';
 import 'cache/hive_service.dart';
 import 'services/storage_service.dart';
@@ -184,6 +186,7 @@ class _AppRootState extends State<_AppRoot> {
   void initState() {
     super.initState();
     _initDeepLinks();
+    _checkForUpdate();
   }
 
   Future<void> _initDeepLinks() async {
@@ -199,6 +202,61 @@ class _AppRootState extends State<_AppRoot> {
 
     // Links that arrive while the app is running.
     _subscription = _appLinks!.uriLinkStream.listen(_handleResetUri);
+  }
+
+  /// Best-effort check for a newer app build. When the server reports a
+  /// version code higher than the installed build, prompt the user to open
+  /// the store listing. Silently no-ops on any failure.
+  Future<void> _checkForUpdate() async {
+    try {
+      final info = await ApiService().getLatestAppVersion();
+      if (info == null) return;
+
+      final latestCode = (info['latest_version_code'] as num?)?.toInt() ?? 0;
+      if (latestCode <= ApiConstants.appVersionCode) return;
+
+      // Let the main UI settle before interrupting the user.
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+
+      final latestName = info['latest_version_name']?.toString();
+      final updateUrl =
+          info['update_url']?.toString() ?? ApiConstants.appUpdateUrl;
+
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Update available'),
+          content: Text(
+            (latestName != null && latestName.isNotEmpty)
+                ? 'A newer version ($latestName) of ZZmore is available. '
+                    'Please update to get the latest features and fixes.'
+                : 'A newer version of ZZmore is available. Please update to '
+                    'get the latest features and fixes.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Later'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                try {
+                  await launchUrl(
+                    Uri.parse(updateUrl),
+                    mode: LaunchMode.externalApplication,
+                  );
+                } catch (_) {}
+              },
+              child: const Text('Update'),
+            ),
+          ],
+        ),
+      );
+    } catch (_) {
+      // Best-effort only.
+    }
   }
 
   @override

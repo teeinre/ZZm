@@ -76,6 +76,9 @@ app.*.map.json
 google-services.json
 GoogleService-Info.plist
 
+# Server-side WooCommerce proxy secrets (never commit real consumer keys)
+server/mu-plugin/wc-proxy-secrets.php
+
 # Android signing keys (already in android/.gitignore, explicit here as backup)
 **/*.jks
 **/*.keystore
