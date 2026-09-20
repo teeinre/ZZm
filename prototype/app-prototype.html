@@ -1,0 +1,1202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zzmore Store — Mobile App Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@500;600;700;800&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
+<style>
+  :root{
+    --orange:#e67e14; --orange-dark:#c95f0a; --orange-soft:#fdf1e3;
+    --ink:#221b14; --muted:#8a8178; --line:#eee6db; --bg:#faf7f2;
+    --card:#ffffff; --green:#2e9e5b; --red:#d64545; --gold:#f5a623;
+  }
+  @page{ size:A4; margin:0; }
+  *{ box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  html,body{ margin:0; padding:0; }
+  body{ font-family:'Inter',-apple-system,'Segoe UI',Arial,sans-serif; color:var(--ink); background:#e9e4dc; }
+  h1,h2,h3,h4{ font-family:'Poppins','Inter',sans-serif; margin:0; }
+  .ic{ font-family:'Material Symbols Outlined'; font-weight:400; font-variation-settings:'FILL' 0,'wght' 400; line-height:1; display:inline-block; vertical-align:middle; }
+
+  /* ---------- Page shell ---------- */
+  .page{ width:210mm; min-height:297mm; margin:0 auto; background:#fff; position:relative; page-break-after:always; padding:15mm 16mm; overflow:hidden; }
+  .page--dark{ background:linear-gradient(150deg,#20140a 0%,#3a220d 55%,#e67e14 130%); color:#fff; }
+  .page-head{ display:flex; align-items:baseline; justify-content:space-between; border-bottom:2px solid var(--line); padding-bottom:4mm; margin-bottom:7mm; }
+  .page-head .kicker{ color:var(--orange); font-weight:700; letter-spacing:.16em; text-transform:uppercase; font-size:10pt; }
+  .page-head h2{ font-size:19pt; font-weight:800; }
+  .page-head .flowno{ font-size:30pt; font-weight:800; color:var(--orange-soft); }
+
+  /* ---------- Phone frame ---------- */
+  .stage{ display:flex; gap:10mm; align-items:flex-start; justify-content:center; flex-wrap:wrap; }
+  .phone{ width:66mm; background:#0d0d0d; border-radius:9mm; padding:2.4mm; box-shadow:0 12px 30px rgba(0,0,0,.25); }
+  .phone .screen{ background:var(--bg); border-radius:7mm; overflow:hidden; height:132mm; display:flex; flex-direction:column; position:relative; }
+  .statusbar{ height:6mm; background:var(--bg); display:flex; align-items:center; justify-content:space-between; padding:0 4mm; font-size:6.5pt; font-weight:600; color:var(--ink); }
+  .statusbar .sb-ico{ display:flex; gap:1mm; color:var(--ink); }
+  .appbar{ display:flex; align-items:center; gap:2.5mm; padding:3mm 4mm 2.5mm; }
+  .appbar .title{ font-family:'Poppins'; font-weight:700; font-size:11pt; flex:1; }
+  .appbar .ic-btn{ width:8.5mm; height:8.5mm; border-radius:50%; background:#fff; border:1px solid var(--line); display:flex; align-items:center; justify-content:center; font-size:8pt; color:var(--ink); }
+  .content{ flex:1; overflow:hidden; padding:2mm 4mm 4mm; display:flex; flex-direction:column; gap:3mm; }
+  .bottomnav{ height:15mm; background:#fff; border-top:1px solid var(--line); display:flex; }
+  .tab{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1mm; color:var(--muted); font-size:5.5pt; font-weight:600; }
+  .tab .ic{ font-size:10pt; }
+  .tab--active{ color:var(--orange); }
+
+  /* ---------- Atoms ---------- */
+  .card{ background:var(--card); border-radius:3.5mm; padding:3mm; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .row{ display:flex; align-items:center; gap:2.5mm; }
+  .img{ background:linear-gradient(135deg,#f6d9b8,#e67e14); border-radius:2.5mm; display:flex; align-items:center; justify-content:center; color:#fff; font-family:'Material Symbols Outlined'; font-size:14pt; }
+  .price{ color:var(--orange-dark); font-weight:800; font-family:'Poppins'; }
+  .price .old{ color:var(--muted); font-weight:500; text-decoration:line-through; font-size:6.5pt; }
+  .rating{ display:flex; align-items:center; gap:.8mm; font-size:6.5pt; color:var(--gold); font-weight:700; }
+  .btn{ display:flex; align-items:center; justify-content:center; gap:2mm; border-radius:3mm; padding:2.8mm; font-weight:700; font-size:8pt; cursor:default; }
+  .btn--primary{ background:var(--orange); color:#fff; }
+  .btn--outline{ background:#fff; color:var(--orange); border:1px solid var(--orange); }
+  .btn--block{ width:100%; }
+  .chip{ border:1px solid var(--line); border-radius:5mm; padding:1.6mm 3mm; font-size:6.5pt; font-weight:600; color:var(--muted); background:#fff; white-space:nowrap; }
+  .chip--active{ background:var(--orange); color:#fff; border-color:var(--orange); }
+  .input{ background:#fff; border:1px solid var(--line); border-radius:3mm; padding:2.8mm 3mm; font-size:7.5pt; color:var(--ink); display:flex; align-items:center; gap:2mm; }
+  .input .ic{ color:var(--muted); font-size:9pt; }
+  .badge{ background:var(--orange); color:#fff; border-radius:2mm; font-size:5.5pt; font-weight:700; padding:.6mm 1.6mm; }
+  .badge--green{ background:var(--green); }
+  .tag{ background:var(--orange-soft); color:var(--orange-dark); border-radius:2mm; font-size:5.5pt; font-weight:700; padding:.8mm 1.8mm; }
+  .muted{ color:var(--muted); }
+  .tiny{ font-size:6pt; }
+  .divider{ height:1px; background:var(--line); }
+  .avatar{ width:9mm; height:9mm; border-radius:50%; background:linear-gradient(135deg,#f0a04b,#c95f0a); color:#fff; display:flex; align-items:center; justify-content:center; font-family:'Poppins'; font-weight:700; font-size:7pt; }
+  .list-item{ display:flex; align-items:center; gap:2.5mm; padding:2.4mm 0; }
+
+  /* ---------- Annotations ---------- */
+  .annotations{ margin-top:6mm; display:grid; grid-template-columns:repeat(2,1fr); gap:3mm; }
+  .annot{ display:flex; gap:2.5mm; background:var(--bg); border:1px solid var(--line); border-radius:3mm; padding:3mm; }
+  .annot .n{ flex:none; width:6mm; height:6mm; border-radius:50%; background:var(--orange); color:#fff; font-weight:800; font-size:8pt; display:flex; align-items:center; justify-content:center; }
+  .annot b{ display:block; font-size:8.5pt; }
+  .annot span{ font-size:7.5pt; color:var(--muted); }
+
+  /* ---------- Cover ---------- */
+  .cover{ height:100%; display:flex; flex-direction:column; }
+  .cover .logo{ width:22mm; height:22mm; border-radius:6mm; background:linear-gradient(135deg,#f0a04b,#c95f0a); display:flex; align-items:center; justify-content:center; font-family:'Poppins'; font-weight:800; font-size:26pt; color:#fff; }
+  .cover h1{ font-size:34pt; font-weight:800; line-height:1.05; margin-top:8mm; }
+  .cover .sub{ font-size:12pt; color:#e8d9c7; margin-top:3mm; max-width:150mm; }
+  .cover .meta{ margin-top:auto; display:flex; gap:6mm; font-size:9pt; color:#d9c4ab; }
+  .cover .meta b{ color:#fff; display:block; }
+  .cover .ver{ display:inline-block; background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.3); border-radius:2mm; padding:1mm 3mm; font-weight:600; font-size:9pt; margin-top:4mm; }
+
+  /* ---------- Overview ---------- */
+  .swatches{ display:flex; gap:4mm; flex-wrap:wrap; }
+  .swatch{ width:30mm; }
+  .swatch .c{ height:16mm; border-radius:3mm; box-shadow:inset 0 0 0 1px rgba(0,0,0,.05); }
+  .swatch .l{ font-size:7.5pt; margin-top:1.5mm; }
+  .swatch .l b{ display:block; font-size:8pt; }
+  .toc{ margin-top:6mm; }
+  .toc .item{ display:flex; align-items:center; gap:4mm; padding:3mm 0; border-bottom:1px solid var(--line); }
+  .toc .item .n{ font-family:'Poppins'; font-weight:800; color:var(--orange); font-size:12pt; width:10mm; }
+  .toc .item b{ font-size:10pt; }
+  .toc .item span{ color:var(--muted); font-size:8.5pt; }
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<div class="page page--dark">
+  <div class="cover">
+    <div class="logo">Z</div>
+    <h1>Zzmore Store<br>Mobile App Prototype</h1>
+    <p class="sub">A high-fidelity, annotated walkthrough of the core user journeys for the African-owned multi-vendor marketplace — iOS &amp; Android.</p>
+    <div>
+      <span class="ver">v3.3.7 · Build 16</span>
+      <div style="margin-top:5mm; font-size:9.5pt; color:#e8d9c7;">Flutter · WordPress / WooCommerce / Dokan</div>
+    </div>
+    <div class="meta">
+      <div><b>Prepared</b>September 2026</div>
+      <div><b>Flows</b>8 core journeys</div>
+      <div><b>Platform</b>iOS · Android</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ OVERVIEW + TOC ============ -->
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="kicker">Design System</div>
+      <h2>Brand, colour &amp; typography</h2>
+    </div>
+    <div class="flowno">00</div>
+  </div>
+
+  <div class="swatches">
+    <div class="swatch"><div class="c" style="background:#e67e14;"></div><div class="l"><b>Primary</b>#E67E14</div></div>
+    <div class="swatch"><div class="c" style="background:#c95f0a;"></div><div class="l"><b>Primary dark</b>#C95F0A</div></div>
+    <div class="swatch"><div class="c" style="background:#fdf1e3;"></div><div class="l"><b>Soft tint</b>#FDF1E3</div></div>
+    <div class="swatch"><div class="c" style="background:#221b14;"></div><div class="l"><b>Ink</b>#221B14</div></div>
+    <div class="swatch"><div class="c" style="background:#8a8178;"></div><div class="l"><b>Muted</b>#8A8178</div></div>
+    <div class="swatch"><div class="c" style="background:#2e9e5b;"></div><div class="l"><b>Success</b>#2E9E5B</div></div>
+    <div class="swatch"><div class="c" style="background:#f5a623;"></div><div class="l"><b>Rating</b>#F5A623</div></div>
+  </div>
+
+  <h3 style="margin-top:7mm; font-size:13pt;">Typography</h3>
+  <div style="display:flex; gap:8mm; margin-top:3mm;">
+    <div>
+      <div style="font-family:'Poppins'; font-weight:800; font-size:22pt;">Poppins</div>
+      <div class="muted tiny" style="margin-top:1mm;">Headings &amp; brand</div>
+    </div>
+    <div>
+      <div style="font-family:'Inter'; font-weight:500; font-size:22pt;">Inter</div>
+      <div class="muted tiny" style="margin-top:1mm;">Body &amp; UI labels</div>
+    </div>
+  </div>
+
+  <div class="toc">
+    <div class="toc item"><div class="n">01</div><div><b>Onboarding &amp; Authentication</b><br><span>Splash · Login</span></div></div>
+    <div class="toc item"><div class="n">02</div><div><b>Home</b><br><span>Trending · Categories · Vendor spotlight</span></div></div>
+    <div class="toc item"><div class="n">03</div><div><b>Discover &amp; Explore</b><br><span>Categories A–Z · Search</span></div></div>
+    <div class="toc item"><div class="n">04</div><div><b>Product Detail</b><br><span>Media · Variations · Booking slots</span></div></div>
+    <div class="toc item"><div class="n">05</div><div><b>Cart &amp; Checkout</b><br><span>Cart · Shipping · Payment</span></div></div>
+    <div class="toc item"><div class="n">06</div><div><b>Vendor Store</b><br><span>Profile · Products · Follow</span></div></div>
+    <div class="toc item"><div class="n">07</div><div><b>Account &amp; Orders</b><br><span>Profile · My orders</span></div></div>
+    <div class="toc item"><div class="n">08</div><div><b>Notifications &amp; Updates</b><br><span>Push alerts · Update prompt</span></div></div>
+  </div>
+</div>
+
+<!-- ============ FLOW 01: ONBOARDING + AUTH ============ -->
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="kicker">Flow 01 · Onboarding &amp; Authentication</div>
+      <h2>Splash &amp; Sign in</h2>
+    </div>
+    <div class="flowno">01</div>
+  </div>
+
+  <div class="stage">
+    <!-- Splash -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="content" style="align-items:center; justify-content:center; text-align:center; gap:4mm; padding:6mm;">
+        <div class="avatar" style="width:20mm; height:20mm; border-radius:6mm; font-size:20pt;">Z</div>
+        <div style="font-family:'Poppins'; font-weight:800; font-size:17pt;">Zzmore</div>
+        <div class="muted" style="font-size:7.5pt; max-width:52mm;">Buy &amp; sell anything, anywhere in Africa — from one marketplace.</div>
+        <div class="img" style="width:52mm; height:28mm; font-size:22pt;">storefront</div>
+        <div class="btn btn--primary btn--block">Get Started</div>
+        <div class="btn btn--outline btn--block">I already have an account</div>
+      </div>
+    </div></div>
+
+    <!-- Login -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Welcome back</div></div>
+      <div class="content">
+        <div style="font-size:8pt; font-weight:600;">Sign in to continue</div>
+        <div class="input"><span class="ic">mail</span>Email address</div>
+        <div class="input"><span class="ic">lock</span>Password</div>
+        <div class="row" style="justify-content:flex-end;"><span class="tiny" style="color:var(--orange); font-weight:700;">Forgot password?</span></div>
+        <div class="btn btn--primary btn--block">Sign in</div>
+        <div class="row" style="justify-content:center; gap:2mm;"><div class="divider" style="flex:1;"></div><span class="tiny muted">or</span><div class="divider" style="flex:1;"></div></div>
+        <div class="btn btn--outline btn--block"><span class="ic" style="font-size:9pt;">lock</span>Continue with Google</div>
+        <div class="btn btn--outline btn--block">Continue with Apple</div>
+        <div class="row" style="justify-content:center; margin-top:auto;"><span class="tiny muted">New here?</span><span class="tiny" style="color:var(--orange); font-weight:700;">Create account</span></div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Brand-first splash</b><span>Single CTA drives immediate conversion; animated logo reinforces brand.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Frictionless sign-in</b><span>Email/password plus Google &amp; Apple OAuth for one-tap access.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Account recovery</b><span>Forgot-password triggers the JWT reset flow (deep link).</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Guest access</b><span>Shopping works without login; auth only gated at checkout.</span></div></div>
+  </div>
+</div>
+
+<!-- ============ FLOW 02: HOME ============ -->
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="kicker">Flow 02 · Home</div>
+      <h2>Trending &amp; vendor spotlight</h2>
+    </div>
+    <div class="flowno">02</div>
+  </div>
+
+  <div class="stage">
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar">
+        <div class="title" style="font-size:12pt;">Zzmore</div>
+        <span class="row tiny muted" style="gap:1mm;"><span class="ic" style="font-size:8pt;">location_on</span>Lagos</span>
+        <span class="ic-btn"><span class="ic">search</span></span>
+        <span class="ic-btn" style="position:relative;"><span class="ic">shopping_cart</span><span class="badge" style="position:absolute; top:-1mm; right:-1mm;">2</span></span>
+      </div>
+      <div class="content">
+        <div class="input"><span class="ic">search</span><span class="muted">Search products, vendors…</span></div>
+        <div style="font-size:8pt; font-weight:700;">Trending now</div>
+        <div class="row" style="gap:2mm; overflow:hidden;">
+          <span class="chip chip--active">All</span><span class="chip">Electronics</span><span class="chip">Fashion</span><span class="chip">Bookings</span><span class="chip">Services</span>
+        </div>
+        <div class="row" style="gap:2.5mm;">
+          <div class="card" style="flex:1; padding:2.5mm;">
+            <div class="img" style="height:16mm; font-size:12pt;">devices</div>
+            <div style="font-size:6.5pt; font-weight:600; margin-top:1.5mm;">Wireless Earbuds Pro</div>
+            <div class="row" style="justify-content:space-between; margin-top:1mm;"><span class="price" style="font-size:7.5pt;">₦18,500</span><span class="rating"><span class="ic">star</span>4.8</span></div>
+          </div>
+          <div class="card" style="flex:1; padding:2.5mm;">
+            <div class="img" style="height:16mm; font-size:12pt;">checkroom</div>
+            <div style="font-size:6.5pt; font-weight:600; margin-top:1.5mm;">Ankara Maxi Dress</div>
+            <div class="row" style="justify-content:space-between; margin-top:1mm;"><span class="price" style="font-size:7.5pt;">₦12,000</span><span class="rating"><span class="ic">star</span>4.9</span></div>
+          </div>
+        </div>
+        <div style="font-size:8pt; font-weight:700;">Categories</div>
+        <div class="row" style="gap:2mm;">
+          <div class="card" style="flex:1; text-align:center; padding:2.5mm;"><div class="ic" style="font-size:11pt; color:var(--orange);">checkroom</div><div class="tiny" style="font-weight:600;">Fashion</div></div>
+          <div class="card" style="flex:1; text-align:center; padding:2.5mm;"><div class="ic" style="font-size:11pt; color:var(--orange);">devices</div><div class="tiny" style="font-weight:600;">Electronics</div></div>
+          <div class="card" style="flex:1; text-align:center; padding:2.5mm;"><div class="ic" style="font-size:11pt; color:var(--orange);">event_available</div><div class="tiny" style="font-weight:600;">Bookings</div></div>
+          <div class="card" style="flex:1; text-align:center; padding:2.5mm;"><div class="ic" style="font-size:11pt; color:var(--orange);">build</div><div class="tiny" style="font-weight:600;">Services</div></div>
+        </div>
+        <div style="font-size:8pt; font-weight:700;">Vendor spotlight</div>
+        <div class="card">
+          <div class="row">
+            <div class="avatar">AB</div>
+            <div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Adaeze's Boutique</div><div class="rating"><span class="ic">star</span>4.9 · 214 reviews</div></div>
+            <div class="btn btn--outline" style="padding:1.8mm 3mm; font-size:6.5pt;">Follow</div>
+          </div>
+          <div class="row" style="margin-top:2.5mm; gap:2mm;">
+            <div class="img" style="flex:1; height:12mm; font-size:10pt;">checkroom</div>
+            <div class="img" style="flex:1; height:12mm; font-size:10pt;">apparel</div>
+            <div class="img" style="flex:1; height:12mm; font-size:10pt;">diamond</div>
+          </div>
+        </div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab tab--active"><span class="ic">home</span>Home</div>
+        <div class="tab"><span class="ic">explore</span>Explore</div>
+        <div class="tab"><span class="ic">shopping_cart</span>Cart</div>
+        <div class="tab"><span class="ic">person</span>Profile</div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Trending carousel</b><span>"All" now resolves via the unified vendor-api product pool — no more empty state.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Category shortcuts</b><span>One-tap into physical, booking, subscription &amp; service categories.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Vendor spotlight</b><span>Curated store with follow action and product previews.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Cart badge</b><span>Live cart count with one-tap access from the header.</span></div></div>
+  </div>
+</div>
+
+<!-- ============ FLOW 03: EXPLORE + SEARCH ============ -->
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="kicker">Flow 03 · Discover &amp; Explore</div>
+      <h2>Categories &amp; search</h2>
+    </div>
+    <div class="flowno">03</div>
+  </div>
+
+  <div class="stage">
+    <!-- Explore -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><div class="title">Explore</div><span class="ic-btn"><span class="ic">search</span></span></div>
+      <div class="content">
+        <div class="row" style="gap:2mm; overflow:hidden;">
+          <span class="chip chip--active">All</span><span class="chip">Beauty</span><span class="chip">Bookings</span><span class="chip">Fashion</span><span class="chip">Electronics</span>
+        </div>
+        <div class="row" style="gap:2.5mm;">
+          <div class="card" style="flex:1; padding:2.5mm;">
+            <div class="img" style="height:15mm; font-size:11pt;">face_retouching_natural</div>
+            <div style="font-size:6.5pt; font-weight:600; margin-top:1.5mm;">Shea Butter Set</div>
+            <div class="price" style="font-size:7.5pt;">₦6,500</div>
+          </div>
+          <div class="card" style="flex:1; padding:2.5mm;">
+            <div class="img" style="height:15mm; font-size:11pt;">spa</div>
+            <div style="font-size:6.5pt; font-weight:600; margin-top:1.5mm;">Spa Day Booking</div>
+            <div class="price" style="font-size:7.5pt;">₦25,000</div>
+          </div>
+        </div>
+        <div class="row" style="gap:2.5mm;">
+          <div class="card" style="flex:1; padding:2.5mm;">
+            <div class="img" style="height:15mm; font-size:11pt;">laptop_mac</div>
+            <div style="font-size:6.5pt; font-weight:600; margin-top:1.5mm;">MacBook Air M2</div>
+            <div class="price" style="font-size:7.5pt;">₦780,000</div>
+          </div>
+          <div class="card" style="flex:1; padding:2.5mm;">
+            <div class="img" style="height:15mm; font-size:11pt;">auto_renew</div>
+            <div style="font-size:6.5pt; font-weight:600; margin-top:1.5mm;">Meal Subscription</div>
+            <div class="price" style="font-size:7.5pt;">₦15,000<span class="muted tiny">/mo</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab"><span class="ic">home</span>Home</div>
+        <div class="tab tab--active"><span class="ic">explore</span>Explore</div>
+        <div class="tab"><span class="ic">shopping_cart</span>Cart</div>
+        <div class="tab"><span class="ic">person</span>Profile</div>
+      </div>
+    </div></div>
+
+    <!-- Search -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="input" style="flex:1; padding:2mm 3mm;"><span class="ic">search</span>ankara</div><span class="ic-btn"><span class="ic">tune</span></span></div>
+      <div class="content">
+        <div class="muted tiny">24 results for “ankara”</div>
+        <div class="card list-item"><div class="img" style="width:13mm; height:13mm; font-size:11pt;">checkroom</div><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">Ankara Maxi Dress</div><div class="rating"><span class="ic">star</span>4.9 (132)</div><div class="price" style="font-size:7.5pt;">₦12,000</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item"><div class="img" style="width:13mm; height:13mm; font-size:11pt;">checkroom</div><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">Ankara Two-Piece Set</div><div class="rating"><span class="ic">star</span>4.7 (58)</div><div class="price" style="font-size:7.5pt;">₦9,800</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item"><div class="img" style="width:13mm; height:13mm; font-size:11pt;">apparel</div><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">Ankara Men's Shirt</div><div class="rating"><span class="ic">star</span>4.6 (41)</div><div class="price" style="font-size:7.5pt;">₦8,200</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Unified "All"</b><span>Every product type (physical, booking, subscription, service) listed together via direct SQL.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>A–Z ordering</b><span>Categories sorted alphabetically with "Uncategorized" pinned last.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Multi-strategy search</b><span>Title → category → description matching so "ankara" never misses a hit.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Filters</b><span>Faceted refinement with the tune control; empty results fail open gracefully.</span></div></div>
+  </div>
+</div>
+
+<!-- ============ FLOW 04: PRODUCT DETAIL ============ -->
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="kicker">Flow 04 · Product Detail</div>
+      <h2>Media, variations &amp; booking</h2>
+    </div>
+    <div class="flowno">04</div>
+  </div>
+
+  <div class="stage">
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title"></div><span class="ic-btn"><span class="ic">share</span></span><span class="ic-btn"><span class="ic" style="color:var(--red);">favorite</span></span></div>
+      <div class="content">
+        <div class="img" style="height:42mm; font-size:26pt;">spa</div>
+        <div class="row" style="justify-content:space-between; align-items:flex-start;">
+          <div style="flex:1;"><div style="font-size:9pt; font-weight:700;">Luxury Spa Day — Full Body</div><div class="rating" style="margin-top:1mm;"><span class="ic">star</span>4.8 · 214 reviews</div></div>
+          <span class="price" style="font-size:11pt;">₦25,000</span>
+        </div>
+        <div class="card row">
+          <div class="avatar">SP</div>
+          <div style="flex:1;"><div style="font-size:7pt; font-weight:700;">Serenity Spa &amp; Wellness</div><div class="muted tiny">Booking · Lagos</div></div>
+          <div class="btn btn--outline" style="padding:1.8mm 3mm; font-size:6.5pt;">Visit store</div>
+        </div>
+        <div style="font-size:7.5pt; font-weight:700;">Pick a date &amp; time</div>
+        <div class="row" style="gap:2mm;">
+          <span class="chip chip--active">Today</span><span class="chip">Tomorrow</span><span class="chip">Fri 20</span>
+        </div>
+        <div class="row" style="gap:2mm;">
+          <span class="chip">10:00</span><span class="chip chip--active">11:30</span><span class="chip">14:00</span><span class="chip">16:30</span>
+        </div>
+        <div style="font-size:7.5pt; font-weight:700;">Quantity</div>
+        <div class="row" style="gap:2mm; align-items:center;">
+          <div class="btn btn--outline" style="padding:1mm 3.5mm;">−</div><span style="font-weight:700; width:6mm; text-align:center;">1</span><div class="btn btn--outline" style="padding:1mm 3.5mm;">+</div>
+        </div>
+      </div>
+      <div style="padding:3mm 4mm 4mm; background:#fff; border-top:1px solid var(--line); display:flex; gap:2.5mm;">
+        <div class="btn btn--outline" style="flex:1;">Add to cart</div>
+        <div class="btn btn--primary" style="flex:1;">Buy now</div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Rich media</b><span>Image carousel with swipe and pinch-to-zoom.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Booking slots</b><span>Date/time selection rendered in-app for WC Bookings products.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Vendor attribution</b><span>Direct path to the seller's storefront for trust &amp; discovery.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Dual CTA</b><span>Add-to-cart and instant Buy Now for faster conversion.</span></div></div>
+  </div>
+</div>
+
+<!-- ============ FLOW 05: CART + CHECKOUT ============ -->
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="kicker">Flow 05 · Cart &amp; Checkout</div>
+      <h2>Cart, shipping &amp; payment</h2>
+    </div>
+    <div class="flowno">05</div>
+  </div>
+
+  <div class="stage">
+    <!-- Cart -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><div class="title">My Cart</div><span class="badge">2</span></div>
+      <div class="content">
+        <div class="card list-item"><div class="img" style="width:14mm; height:14mm; font-size:12pt;">spa</div><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">Luxury Spa Day</div><div class="muted tiny">Booking · 11:30</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><span class="price" style="font-size:7.5pt;">₦25,000</span><div class="row" style="gap:1.5mm;"><div class="btn btn--outline" style="padding:.5mm 2.5mm;">−</div><span style="font-weight:700;">1</span><div class="btn btn--outline" style="padding:.5mm 2.5mm;">+</div></div></div></div></div>
+        <div class="card list-item"><div class="img" style="width:14mm; height:14mm; font-size:12pt;">checkroom</div><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">Ankara Maxi Dress</div><div class="muted tiny">Fashion · M</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><span class="price" style="font-size:7.5pt;">₦12,000</span><div class="row" style="gap:1.5mm;"><div class="btn btn--outline" style="padding:.5mm 2.5mm;">−</div><span style="font-weight:700;">1</span><div class="btn btn--outline" style="padding:.5mm 2.5mm;">+</div></div></div></div></div>
+        <div class="card">
+          <div class="row" style="justify-content:space-between; padding:1.5mm 0;"><span class="muted tiny">Subtotal</span><b style="font-size:7.5pt;">₦37,000</b></div>
+          <div class="row" style="justify-content:space-between; padding:1.5mm 0;"><span class="muted tiny">Shipping</span><b style="font-size:7.5pt;">₦2,500</b></div>
+          <div class="divider"></div>
+          <div class="row" style="justify-content:space-between; padding:2mm 0;"><b style="font-size:8.5pt;">Total</b><span class="price" style="font-size:9.5pt;">₦39,500</span></div>
+        </div>
+      </div>
+      <div style="padding:3mm 4mm 4mm; background:#fff; border-top:1px solid var(--line);"><div class="btn btn--primary btn--block">Proceed to checkout</div></div>
+    </div></div>
+
+    <!-- Checkout -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Checkout</div></div>
+      <div class="content">
+        <div class="card row"><span class="ic" style="color:var(--orange);">location_on</span><div style="flex:1;"><div style="font-size:7pt; font-weight:700;">Deliver to</div><div class="muted tiny">12 Adeola Odeku St, Victoria Island, Lagos</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div style="font-size:7.5pt; font-weight:700;">Payment method</div>
+        <div class="card list-item" style="margin:0;"><span class="ic" style="color:var(--orange);">credit_card</span><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">Card payment</div><div class="muted tiny">Visa · Mastercard · Verve</div></div><span class="ic" style="color:var(--orange);">radio_button_checked</span></div>
+        <div class="card list-item" style="margin:0;"><span class="ic muted">account_balance</span><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">Bank transfer</div><div class="muted tiny">Pay via transfer</div></div><span class="ic muted">radio_button_unchecked</span></div>
+        <div class="card list-item" style="margin:0;"><span class="ic muted">payments</span><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">Cash on delivery</div><div class="muted tiny">Pay on receipt</div></div><span class="ic muted">radio_button_unchecked</span></div>
+        <div class="card row" style="justify-content:space-between;"><b style="font-size:8pt;">Order total</b><span class="price" style="font-size:9.5pt;">₦39,500</span></div>
+      </div>
+      <div style="padding:3mm 4mm 4mm; background:#fff; border-top:1px solid var(--line);"><div class="btn btn--primary btn--block">Place order · ₦39,500</div></div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Multi-vendor cart</b><span>Items grouped by vendor with per-vendor shipping.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Transparent totals</b><span>Subtotal, shipping and total always visible before checkout.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Payment choice</b><span>Card, transfer and cash-on-delivery for the local market.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Proactive auth</b><span>Token refreshed before checkout to prevent 403 failures.</span></div></div>
+  </div>
+</div>
+
+<!-- ============ FLOW 06: VENDOR STORE ============ -->
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="kicker">Flow 06 · Vendor Store</div>
+      <h2>Storefront profile</h2>
+    </div>
+    <div class="flowno">06</div>
+  </div>
+
+  <div class="stage">
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title"></div><span class="ic-btn"><span class="ic">share</span></span></div>
+      <div class="content">
+        <div class="img" style="height:30mm; font-size:20pt; border-radius:3.5mm;">storefront</div>
+        <div class="row" style="margin-top:-6mm;">
+          <div class="avatar" style="width:14mm; height:14mm; font-size:10pt; border:2px solid #fff;">AB</div>
+          <div style="flex:1;"><div style="font-size:9pt; font-weight:700;">Adaeze's Boutique</div><div class="rating"><span class="ic">star</span>4.9 · 214 reviews</div></div>
+        </div>
+        <div class="row" style="gap:2.5mm;">
+          <div class="btn btn--primary" style="flex:1; padding:2.2mm;">Follow</div>
+          <div class="btn btn--outline" style="flex:1; padding:2.2mm;">Message</div>
+        </div>
+        <div class="card row" style="justify-content:space-around; text-align:center;">
+          <div><div style="font-weight:800; font-size:9pt;">312</div><div class="muted tiny">Products</div></div>
+          <div><div style="font-weight:800; font-size:9pt;">8.4k</div><div class="muted tiny">Followers</div></div>
+          <div><div style="font-weight:800; font-size:9pt;">4.9</div><div class="muted tiny">Rating</div></div>
+        </div>
+        <div style="font-size:7.5pt; font-weight:700;">Products</div>
+        <div class="row" style="gap:2.5mm;">
+          <div class="card" style="flex:1; padding:2.5mm;"><div class="img" style="height:15mm; font-size:11pt;">checkroom</div><div style="font-size:6.5pt; font-weight:600; margin-top:1.5mm;">Ankara Dress</div><div class="price" style="font-size:7.5pt;">₦12,000</div></div>
+          <div class="card" style="flex:1; padding:2.5mm;"><div class="img" style="height:15mm; font-size:11pt;">apparel</div><div style="font-size:6.5pt; font-weight:600; margin-top:1.5mm;">Two-Piece Set</div><div class="price" style="font-size:7.5pt;">₦9,800</div></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Branded header</b><span>Cover image with overlapping avatar and share action.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Trust signals</b><span>Followers, rating and product count build buyer confidence.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Follow / Message</b><span>Direct engagement keeps buyers connected to the store.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Storefront catalogue</b><span>Vendor's own products, filtered by Dokan store ID.</span></div></div>
+  </div>
+</div>
+
+<!-- ============ FLOW 07: ACCOUNT + ORDERS ============ -->
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="kicker">Flow 07 · Account &amp; Orders</div>
+      <h2>Profile &amp; order history</h2>
+    </div>
+    <div class="flowno">07</div>
+  </div>
+
+  <div class="stage">
+    <!-- Profile -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><div class="title">Profile</div><span class="ic-btn"><span class="ic">settings</span></span></div>
+      <div class="content">
+        <div class="card row">
+          <div class="avatar" style="width:14mm; height:14mm; font-size:10pt;">CM</div>
+          <div style="flex:1;"><div style="font-size:9pt; font-weight:700;">Chioma M.</div><div class="muted tiny">chioma@email.com</div></div>
+          <span class="tag">Verified</span>
+        </div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">receipt_long</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">My orders</div><div class="muted tiny">Track &amp; manage purchases</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">location_on</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Addresses</div><div class="muted tiny">Delivery &amp; billing</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">credit_card</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Payment methods</div><div class="muted tiny">Cards &amp; accounts</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">notifications</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Notifications</div><div class="muted tiny">Alerts &amp; preferences</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--red);">logout</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600; color:var(--red);">Log out</div></div></div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab"><span class="ic">home</span>Home</div>
+        <div class="tab"><span class="ic">explore</span>Explore</div>
+        <div class="tab"><span class="ic">shopping_cart</span>Cart</div>
+        <div class="tab tab--active"><span class="ic">person</span>Profile</div>
+      </div>
+    </div></div>
+
+    <!-- Orders -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">My Orders</div></div>
+      <div class="content">
+        <div class="card">
+          <div class="row" style="justify-content:space-between;"><span style="font-size:7pt; font-weight:700;">#10245</span><span class="badge badge--green">Delivered</span></div>
+          <div class="muted tiny" style="margin-top:1mm;">Sep 14 · 2 items</div>
+          <div class="divider" style="margin:2mm 0;"></div>
+          <div class="row" style="justify-content:space-between;"><span class="muted tiny">Total</span><b style="font-size:7.5pt;">₦39,500</b></div>
+        </div>
+        <div class="card">
+          <div class="row" style="justify-content:space-between;"><span style="font-size:7pt; font-weight:700;">#10233</span><span class="badge">Processing</span></div>
+          <div class="muted tiny" style="margin-top:1mm;">Sep 18 · 1 item</div>
+          <div class="divider" style="margin:2mm 0;"></div>
+          <div class="row" style="justify-content:space-between;"><span class="muted tiny">Total</span><b style="font-size:7.5pt;">₦25,000</b></div>
+        </div>
+        <div class="card">
+          <div class="row" style="justify-content:space-between;"><span style="font-size:7pt; font-weight:700;">#10190</span><span class="badge" style="background:var(--red);">Cancelled</span></div>
+          <div class="muted tiny" style="margin-top:1mm;">Sep 02 · 1 item</div>
+          <div class="divider" style="margin:2mm 0;"></div>
+          <div class="row" style="justify-content:space-between;"><span class="muted tiny">Total</span><b style="font-size:7.5pt;">₦8,200</b></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Account hub</b><span>Central access to orders, addresses, payments and settings.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Unified orders</b><span>Same vendor-api order feed as My Account — no more mismatch.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Status badges</b><span>Delivered / Processing / Cancelled colour-coded at a glance.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Secure logout</b><span>Clears the JWT and returns to the signed-out state.</span></div></div>
+  </div>
+</div>
+
+<!-- ============ FLOW 08: NOTIFICATIONS + UPDATE ============ -->
+<div class="page">
+  <div class="page-head">
+    <div>
+      <div class="kicker">Flow 08 · Notifications &amp; Updates</div>
+      <h2>Push alerts &amp; update prompt</h2>
+    </div>
+    <div class="flowno">08</div>
+  </div>
+
+  <div class="stage">
+    <!-- Notifications -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><div class="title">Notifications</div><span class="ic-btn"><span class="ic">done_all</span></span></div>
+      <div class="content">
+        <div class="card list-item" style="border-left:2.5px solid var(--orange);"><div class="img" style="width:12mm; height:12mm; border-radius:2.5mm; font-size:10pt;">campaign</div><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">Your order #10233 is processing</div><div class="muted tiny">2h ago</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item" style="border-left:2.5px solid var(--orange);"><div class="img" style="width:12mm; height:12mm; border-radius:2.5mm; font-size:10pt;">local_offer</div><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">20% off Adaeze's Boutique</div><div class="muted tiny">Yesterday</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item"><div class="img" style="width:12mm; height:12mm; border-radius:2.5mm; font-size:10pt;">new_releases</div><div style="flex:1;"><div style="font-size:7pt; font-weight:600;">New update available v3.3.7</div><div class="muted tiny">3d ago</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card row" style="margin-top:1mm; background:var(--orange-soft); border:1px solid #f6d9b8;">
+          <span class="ic" style="color:var(--orange);">system_update</span>
+          <div style="flex:1;"><div style="font-size:7pt; font-weight:700;">Update available</div><div class="muted tiny">Version 3.3.7 is ready to install.</div></div>
+          <div class="btn btn--primary" style="padding:1.8mm 3mm; font-size:6.5pt;">Update</div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Order &amp; promo alerts</b><span>FCM push + local notifications keep users informed.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Update prompt</b><span>Version check against vendor-api returns a nudge when a new build ships.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>One-tap update</b><span>Opens the Play Store / App Store listing via deep link.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Read-state</b><span>Unread items marked with an orange accent for quick triage.</span></div></div>
+  </div>
+</div>
+
+<!-- ─────────────── SCENARIO 9 – VENDOR DASHBOARD ─────────────── -->
+<div class="page">
+  <div class="page-head">
+    <div><span class="kicker">Scenario 09</span><h2>Vendor Dashboard — Store Owner Home</h2></div>
+    <span class="flowno">09</span>
+  </div>
+  <div class="stage">
+    <!-- 9a Dashboard Home -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar" style="background:var(--orange); color:#fff;"><div class="row" style="flex:1; gap:2.5mm;"><div class="img" style="width:10mm; height:10mm; border-radius:50%; font-size:9pt; background:#fff; color:var(--orange);">store</div><div><div style="font-size:7.5pt; font-weight:500; color:#fdf1e3;">Welcome back,</div><div class="title" style="color:#fff; font-size:10.5pt;">Adaeze's Boutique</div></div></div><span class="ic-btn" style="background:var(--orange-dark); border:none; color:#fff;"><span class="ic">notifications_outlined</span></span></div>
+      <div class="content">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:2.2mm;">
+          <div class="card" style="background:linear-gradient(135deg,#6366f1,#4f46e5); color:#fff;"><span class="ic" style="font-size:12pt;">shopping_cart_outlined</span><div style="font-size:9pt; font-weight:800; margin-top:1.5mm;">124</div><div class="tiny" style="color:#e0e7ff;">Orders</div></div>
+          <div class="card" style="background:linear-gradient(135deg,var(--orange),#c95f0a); color:#fff;"><span class="ic" style="font-size:12pt;">monetization_on_outlined</span><div style="font-size:9pt; font-weight:800; margin-top:1.5mm;">₦486,200</div><div class="tiny" style="color:#fde68a;">Sales</div></div>
+          <div class="card" style="background:linear-gradient(135deg,#10b981,#059669); color:#fff;"><span class="ic" style="font-size:12pt;">inventory_2_outlined</span><div style="font-size:9pt; font-weight:800; margin-top:1.5mm;">68</div><div class="tiny" style="color:#d1fae5;">Products</div></div>
+          <div class="card" style="background:linear-gradient(135deg,#f59e0b,#d97706); color:#fff;"><span class="ic" style="font-size:12pt;">pending_outlined</span><div style="font-size:9pt; font-weight:800; margin-top:1.5mm;">7</div><div class="tiny" style="color:#fef3c7;">Pending</div></div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Quick Actions</div>
+          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:2mm; margin-top:3mm;">
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:#eef2ff; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#6366f1; font-size:12pt;" class="ic">inventory_2</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">Products</div></div>
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:#d1fae5; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#059669; font-size:12pt;" class="ic">receipt_long</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">Orders</div></div>
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:#cffafe; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#0891b2; font-size:12pt;" class="ic">qr_code_2</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">Pay Links</div></div>
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:#cffafe; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#0891b2; font-size:12pt;" class="ic">local_shipping</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">Shipping</div></div>
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:var(--orange-soft); margin:0 auto; display:flex; align-items:center; justify-content:center; color:var(--orange); font-size:12pt;" class="ic">discount</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">Coupons</div></div>
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:#fee2e2; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#dc2626; font-size:12pt;" class="ic">request_quote</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">RFQ</div></div>
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:#fee2e2; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#dc2626; font-size:12pt;" class="ic">live_tv</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">Live</div></div>
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:#ffedd5; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#ea580c; font-size:12pt;" class="ic">assignment_return</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">Refunds</div></div>
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:#fee2e2; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#dc2626; font-size:12pt;" class="ic">account_balance_wallet</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">Withdraw</div></div>
+            <div style="text-align:center;"><div style="width:11mm; height:11mm; border-radius:3mm; background:#f1f5f9; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#475569; font-size:12pt;" class="ic">settings</div><div class="tiny" style="margin-top:1.2mm; font-weight:600;">Settings</div></div>
+          </div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Performance Report</div>
+          <div style="margin-top:2mm; display:flex; flex-direction:column; gap:2.5mm;">
+            <div class="row"><div class="img" style="width:8mm; height:8mm; background:#ecfeff; color:#0891b2; font-size:9pt;" class="ic">track_changes_outlined</div><div style="flex:1; font-size:7pt;">Conversion</div><div style="font-size:7pt; font-weight:700;">4.2%</div></div>
+            <div class="row"><div class="img" style="width:8mm; height:8mm; background:#fef3c7; color:#d97706; font-size:9pt;" class="ic">payments_outlined</div><div style="flex:1; font-size:7pt;">AOV</div><div style="font-size:7pt; font-weight:700;">₦12,450</div></div>
+            <div class="row"><div class="img" style="width:8mm; height:8mm; background:#fee2e2; color:#dc2626; font-size:9pt;" class="ic">pending_outlined</div><div style="flex:1; font-size:7pt;">Pending balance</div><div style="font-size:7pt; font-weight:700;">₦54,800</div></div>
+            <div class="row"><div class="img" style="width:8mm; height:8mm; background:#d1fae5; color:#059669; font-size:9pt;" class="ic">account_balance_wallet_outlined</div><div style="flex:1; font-size:7pt;">Available to withdraw</div><div style="font-size:7pt; font-weight:700;">₦431,400</div></div>
+          </div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Announcements</div>
+          <div class="card list-item" style="background:var(--orange-soft); border:none; padding:2mm; margin-top:2mm;"><div class="img" style="width:8mm; height:8mm; background:var(--orange); color:#fff; font-size:9pt;" class="ic">campaign_outlined</div><div style="flex:1;"><div style="font-size:7pt; font-weight:700;">Black Friday promo starts Nov 22</div><div class="muted tiny">Opt-in by Friday for site-wide feature.</div></div></div>
+        </div>
+      </div>
+    </div></div>
+
+    <!-- 9b Vendor Orders -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Orders (124)</div><span class="ic-btn"><span class="ic">filter_list</span></span></div>
+      <div class="content">
+        <div style="display:flex; gap:1.5mm;">
+          <div class="chip chip--active">All</div><div class="chip">Pending</div><div class="chip">Processing</div><div class="chip">Shipped</div><div class="chip">Done</div>
+        </div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm;">shopping_bag</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Order #10233</div><span class="badge badge--accent">Processing</span></div><div class="muted tiny">3 items · Chidi Okonkwo</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦42,500</div><div class="muted tiny">Today, 10:42</div></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#a7f3d0,#10b981);">diamond</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Order #10232</div><span class="badge badge--success">Paid</span></div><div class="muted tiny">1 item · Blessing Adebayo</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦18,900</div><div class="muted tiny">Yesterday</div></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#fed7aa,#ea580c);">calendar_month</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Order #10231 — Booking</div><span class="badge badge--warn">Pending</span></div><div class="muted tiny">Makeup session · Tolu A.</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦35,000</div><div class="muted tiny">Yesterday</div></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#fde68a,#f59e0b);">auto_transmission</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Order #10230</div><span class="badge badge--success">Shipped</span></div><div class="muted tiny">2 items · Uju N.</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦21,800</div><div class="muted tiny">2 days ago</div></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#e9d5ff,#7c3aed);">redeem</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Order #10229 — Sub</div><span class="badge badge--success">Active</span></div><div class="muted tiny">Monthly grooming · Kay O.</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦15,000/mo</div><div class="muted tiny">3 days ago</div></div></div></div>
+      </div>
+    </div></div>
+
+    <!-- 9c Vendor Products -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Products (68)</div><span class="ic-btn"><span class="ic">add</span></span></div>
+      <div class="content">
+        <div class="search"><span class="ic">search</span><input placeholder="Search products"></div>
+        <div style="display:flex; gap:1.5mm;">
+          <div class="chip chip--active">All</div><div class="chip">Physical</div><div class="chip">Booking</div><div class="chip">Service</div><div class="chip">Sub</div>
+        </div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm;">shopping_bag</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Ankara Smart Handbag</div><div class="muted tiny">Physical · 2 variants</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦24,500</div><span class="badge badge--success">Live</span></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#fecaca,#ef4444);">calendar_month</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Bridal Makeup — Full Face</div><div class="muted tiny">Booking · 3 durations</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦85,000</div><span class="badge badge--success">Live</span></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#a7f3d0,#10b981);">stylist</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Hair Styling — Kinky Twist</div><div class="muted tiny">Service</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦18,000</div><span class="badge badge--warn">Draft</span></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#fde68a,#f59e0b);">auto_transmission</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Monthly Car Wash Plan</div><div class="muted tiny">Subscription · 4/mo</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦15,000</div><span class="badge badge--success">Live</span></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#e9d5ff,#7c3aed);">redeem</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Beaded Jewelry Set</div><div class="muted tiny">Physical · 1 variant</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="price tiny">₦9,500</div><span class="badge badge--warn">Out of stock</span></div></div></div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Stats overview</b><span>Top KPIs (orders, sales, products, pending) + performance report & balance.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>10 quick actions</b><span>Products, Orders, Pay Links, Shipping, Coupons, RFQ, Live, Refunds, Withdraw, Settings.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Orders centre</b><span>Status chips, per-type badges (bookings/subscriptions) with amounts & customer.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Products</b><span>Search + type filter, live/draft/stock badges, FAB add.</span></div></div>
+    <div class="annot"><div class="n">5</div><div><b>Announcements</b><span>Marketplace-wide notices keep vendors aligned to promos &amp; deadlines.</span></div></div>
+  </div>
+</div>
+
+<!-- ─────────────── SCENARIO 10 – VENDOR SUB-DASHBOARD ─────────────── -->
+<div class="page">
+  <div class="page-head">
+    <div><span class="kicker">Scenario 10</span><h2>Vendor — Payments, Livestream &amp; Reports</h2></div>
+    <span class="flowno">10</span>
+  </div>
+  <div class="stage">
+    <!-- 10a Payment Links -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Payment Links</div><span class="ic-btn"><span class="ic">add</span></span></div>
+      <div class="content">
+        <div class="card" style="background:linear-gradient(135deg,var(--orange),#c95f0a); color:#fff;">
+          <div style="font-size:8pt; font-weight:700;">Total Collected</div>
+          <div style="font-size:14pt; font-weight:800; font-family:'Poppins';">₦1,284,900</div>
+          <div class="tiny" style="color:#fde68a;">21 links · 112 paid</div>
+        </div>
+        <div class="card list-item"><div class="img" style="width:12mm; height:12mm; font-size:10pt;">invoice</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Custom Order — Weddings R Us</div><div class="muted tiny">2 paid · ₦120,000</div></div><div style="text-align:right;"><span class="ic muted" style="font-size:9pt;">qr_code_2</span></div></div>
+        <div class="card list-item"><div class="img" style="width:12mm; height:12mm; font-size:10pt; background:linear-gradient(135deg,#a7f3d0,#10b981);">calendar_month</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Makeup Deposit — Bride B.</div><div class="muted tiny">Paid · ₦35,000</div></div><div style="text-align:right;"><span class="ic muted" style="font-size:9pt;">qr_code_2</span></div></div>
+        <div class="card list-item"><div class="img" style="width:12mm; height:12mm; font-size:10pt; background:linear-gradient(135deg,#e9d5ff,#7c3aed);">diamond</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Bulk Beaded Set — Uju N.</div><div class="muted tiny">Pending · ₦9,500</div></div><div style="text-align:right;"><span class="ic muted" style="font-size:9pt;">qr_code_2</span></div></div>
+        <div class="card list-item"><div class="img" style="width:12mm; height:12mm; font-size:10pt; background:linear-gradient(135deg,#fed7aa,#ea580c);">redeem</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Hairstyling — Kay O.</div><div class="muted tiny">Paid · ₦18,000</div></div><div style="text-align:right;"><span class="ic muted" style="font-size:9pt;">qr_code_2</span></div></div>
+        <div class="btn btn--primary" style="width:100%;"><span class="ic">qr_code_2</span>Generate QR Payment</div>
+      </div>
+    </div></div>
+
+    <!-- 10b Livestream -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Livestream Studio</div><span class="ic-btn" style="background:#fee2e2; border:none; color:#dc2626;"><span class="ic">live_tv</span></span></div>
+      <div class="content">
+        <div class="card" style="padding:0; overflow:hidden; background:#000; position:relative; min-height:52mm; display:flex; align-items:center; justify-content:center;">
+          <div style="color:#fff; text-align:center;">
+            <span class="ic" style="font-size:24pt;">videocam_off</span>
+            <div style="font-size:8pt; font-weight:600; margin-top:2mm;">Tap Go Live to start broadcasting</div>
+          </div>
+          <div style="position:absolute; top:2mm; left:2mm; display:flex; gap:1mm;">
+            <span class="badge" style="background:#dc2626; color:#fff; border:none;"><span class="ic" style="font-size:7pt;">fiber_manual_record</span>&nbsp; LIVE</span>
+            <span class="badge" style="background:rgba(0,0,0,.5); color:#fff; border:none;"><span class="ic" style="font-size:7pt;">visibility</span>&nbsp; 148</span>
+          </div>
+          <div style="position:absolute; bottom:2mm; left:2mm; right:2mm; display:flex; justify-content:space-between; color:#fff;">
+            <span class="badge" style="background:rgba(0,0,0,.5); color:#fff; border:none; font-size:6.5pt;">🎁 Featured: Ankara Bag</span>
+            <div style="display:flex; gap:1.2mm;">
+              <span class="ic" style="font-size:10pt;">flip_camera_ios</span>
+              <span class="ic" style="font-size:10pt;">mic_off</span>
+            </div>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:2mm;">
+          <div class="card"><div class="tiny muted">Viewers</div><div style="font-size:9pt; font-weight:800;">148</div></div>
+          <div class="card"><div class="tiny muted">Cart adds</div><div style="font-size:9pt; font-weight:800;">26</div></div>
+          <div class="card"><div class="tiny muted">Sales</div><div style="font-size:9pt; font-weight:800; color:var(--orange);">₦218,400</div></div>
+          <div class="card"><div class="tiny muted">Avg. watch</div><div style="font-size:9pt; font-weight:800;">11:42</div></div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Featured products (pin to stream)</div>
+          <div class="list-item" style="border-bottom:1px solid var(--line); padding:1.8mm 0;"><div class="img" style="width:12mm; height:12mm; font-size:9pt;">shopping_bag</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Ankara Smart Handbag</div><div class="price tiny">₦24,500</div></div><span class="badge badge--accent">Pin</span></div>
+          <div class="list-item" style="padding:1.8mm 0 0;"><div class="img" style="width:12mm; height:12mm; font-size:9pt; background:linear-gradient(135deg,#a7f3d0,#10b981);">diamond</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Beaded Jewelry Set</div><div class="price tiny">₦9,500</div></div><span class="chip">Add</span></div>
+        </div>
+        <div class="btn btn--primary" style="width:100%; background:#dc2626;"><span class="ic">videocam</span>Go Live</div>
+      </div>
+    </div></div>
+
+    <!-- 10c Withdrawals & Sales Report -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Withdrawals</div><span class="ic-btn"><span class="ic">history</span></span></div>
+      <div class="content">
+        <div class="card" style="background:linear-gradient(135deg,#10b981,#059669); color:#fff;">
+          <div style="font-size:8pt; font-weight:700;">Available balance</div>
+          <div style="font-size:14pt; font-weight:800; font-family:'Poppins';">₦431,400</div>
+          <div class="tiny" style="color:#d1fae5;">Pending: ₦54,800</div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Withdraw to</div>
+          <div class="list-item" style="border-bottom:1px solid var(--line); padding:2mm 0;"><span class="ic" style="color:var(--orange);">account_balance</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">GTBank ·· 0012345678</div><div class="muted tiny">Adaeze Nkechi Okafor</div></div><span class="badge badge--success">Default</span></div>
+          <div style="margin-top:2mm;"><div class="muted tiny">Amount</div><div class="input"><span class="ic">payments</span><input value="100000"></div></div>
+          <div style="display:flex; gap:1.5mm; margin-top:1.5mm;"><div class="chip">₦25k</div><div class="chip">₦50k</div><div class="chip">₦100k</div><div class="chip">All</div></div>
+          <div class="btn btn--primary" style="width:100%; margin-top:2mm;"><span class="ic">arrow_outward</span>Request Withdrawal</div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Recent withdrawals</div>
+          <div class="list-item" style="border-bottom:1px solid var(--line); padding:1.8mm 0;"><span class="ic" style="color:var(--green);">check_circle</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">GTBank ··4567</div><div class="muted tiny">2026-09-10</div></div><div class="price tiny">₦250,000</div></div>
+          <div class="list-item" style="padding:1.8mm 0 0;"><span class="ic" style="color:#f59e0b;">schedule</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">GTBank ··4567</div><div class="muted tiny">2026-09-15 · Processing</div></div><div class="price tiny">₦150,000</div></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Payment Links</b><span>Offline/WhatsApp shareable links + QR code per-request for custom orders.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Livestream Studio</b><span>Viewers/cart/sales stats, pin products into the live feed and checkout-in-stream.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Withdrawals</b><span>Available balance, saved bank, quick amount chips, history.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Sales metrics</b><span>Inline report on the dashboard; full Sales Report screen mirrors this with date-range view.</span></div></div>
+  </div>
+</div>
+
+<!-- ─────────────── SCENARIO 11 – VENDOR SETTINGS & STORE MANAGEMENT ─────────────── -->
+<div class="page">
+  <div class="page-head">
+    <div><span class="kicker">Scenario 11</span><h2>Vendor — Store, Reviews, Coupons, Shipping, RFQ</h2></div>
+    <span class="flowno">11</span>
+  </div>
+  <div class="stage">
+    <!-- 11a Store Settings -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Store Settings</div></div>
+      <div class="content">
+        <div class="card" style="text-align:center;">
+          <div class="img" style="width:20mm; height:20mm; border-radius:50%; margin:0 auto; font-size:14pt;">storefront</div>
+          <div style="font-size:9pt; font-weight:700; margin-top:2mm;">Adaeze's Boutique</div>
+          <div class="muted tiny">Store ID: V-0042 · Verified</div>
+          <div class="row" style="justify-content:center; gap:1.5mm; margin-top:2mm;">
+            <div class="chip chip--outline"><span class="ic">photo_camera</span>Logo</div>
+            <div class="chip chip--outline"><span class="ic">image</span>Banner</div>
+          </div>
+        </div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">edit_note</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Store name</div><div class="muted tiny">Adaeze's Boutique</div></div><span class="ic muted" style="font-size:9pt;">edit</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">store_mall_directory</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Store category</div><div class="muted tiny">Fashion &amp; Accessories</div></div><span class="ic muted" style="font-size:9pt;">edit</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">alternate_email</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Contact email</div><div class="muted tiny">adaeze@zzmore.store</div></div><span class="ic muted" style="font-size:9pt;">edit</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">call</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Phone</div><div class="muted tiny">+234 803 000 0000</div></div><span class="ic muted" style="font-size:9pt;">edit</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">location_on</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Store address</div><div class="muted tiny">Lagos, Nigeria</div></div><span class="ic muted" style="font-size:9pt;">edit</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">verified_user</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">KYC / Verification</div><div class="muted tiny" style="color:var(--green);">Verified</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">payments</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Payout bank details</div><div class="muted tiny">GTBank ·· 0012345678</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+      </div>
+    </div></div>
+
+    <!-- 11b Reviews -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Store Reviews</div></div>
+      <div class="content">
+        <div class="card" style="text-align:center; background:var(--orange-soft); border:1px solid #f6d9b8;">
+          <div style="font-size:16pt; font-weight:800; font-family:'Poppins'; color:var(--orange-dark);">4.8</div>
+          <div style="color:#f59e0b; letter-spacing:.3mm;">★★★★★</div>
+          <div class="muted tiny">Based on 142 reviews</div>
+          <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:1.5mm; margin-top:2mm; text-align:left; font-size:6pt;">
+            <div>5★</div><div style="background:#fde68a; height:2.2mm; grid-column:span 4; border-radius:99px;"></div><div class="muted">118</div>
+            <div>4★</div><div style="background:#fde68a; height:2.2mm; grid-column:span 3; border-radius:99px;"></div><div class="muted">17</div>
+            <div>3★</div><div style="background:#fde68a; height:2.2mm; grid-column:span 1; border-radius:99px;"></div><div class="muted">5</div>
+            <div>2★</div><div style="background:#fde68a; height:2.2mm; border-radius:99px;"></div><div class="muted">1</div>
+            <div>1★</div><div style="background:#fde68a; height:2.2mm; border-radius:99px;"></div><div class="muted">1</div>
+          </div>
+        </div>
+        <div class="card list-item"><div class="img" style="width:10mm; height:10mm; border-radius:50%; font-size:9pt; background:linear-gradient(135deg,#6366f1,#4f46e5);">person</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Chidi O.</div><div style="color:#f59e0b; font-size:8pt;">★★★★★</div></div><div class="muted tiny">Ankara Handbag · 2 days ago</div><div style="font-size:7pt; margin-top:1mm;">Beautiful quality, shipped on time! Will order again.</div></div></div>
+        <div class="card list-item"><div class="img" style="width:10mm; height:10mm; border-radius:50%; font-size:9pt; background:linear-gradient(135deg,#ec4899,#be185d);">person</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Blessing A.</div><div style="color:#f59e0b; font-size:8pt;">★★★★☆</div></div><div class="muted tiny">Bridal Makeup · 1 week ago</div><div style="font-size:7pt; margin-top:1mm;">Absolutely loved the look! 💕</div></div></div>
+        <div class="card list-item"><div class="img" style="width:10mm; height:10mm; border-radius:50%; font-size:9pt; background:linear-gradient(135deg,#10b981,#059669);">person</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Tolu A.</div><div style="color:#f59e0b; font-size:8pt;">★★★★★</div></div><div class="muted tiny">Kinky Twist · 2 weeks ago</div><div style="font-size:7pt; margin-top:1mm;">Neat, took her time, 10/10.</div></div></div>
+      </div>
+    </div></div>
+
+    <!-- 11c Coupons, Shipping, RFQ, Refunds, Verification -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Coupons &amp; Policies</div><span class="ic-btn"><span class="ic">add</span></span></div>
+      <div class="content">
+        <div class="card list-item" style="background:linear-gradient(135deg,#fef3c7,#fbbf24);"><div class="row" style="gap:2mm;"><span class="ic" style="color:#92400e;">discount</span><div style="flex:1;"><div style="font-size:8pt; font-weight:800; color:#78350f;">BLACKFRIDAY26</div><div class="tiny" style="color:#78350f;">20% OFF · 22 - 30 Nov</div></div><span class="badge" style="background:#92400e; color:#fff; border:none;">Active</span></div></div>
+        <div class="card list-item"><span class="ic" style="color:var(--green);">local_shipping</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Shipping zones</div><div class="muted tiny">Lagos: free over ₦50k; Flat ₦2,500</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">request_quote</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">RFQ — 3 new</div><div class="muted tiny">Chidi O. (Beaded Jewelry × 100</div></div><span class="badge badge--accent">New</span></div>
+        <div class="card list-item"><span class="ic" style="color:#f59e0b;">assignment_return</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Refunds — 2 open</div><div class="muted tiny">#10210 · #10205 pending</div></div><span class="badge badge--warn">2</span></div>
+        <div class="card list-item"><span class="ic" style="color:var(--green);">verified</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Verification</div><div class="muted tiny">KYC complete · Badge earned</div></div><span class="badge badge--success">✓</span></div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Policies</div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--inkSoft);">policy</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Return / Refund policy</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--inkSoft);">gavel</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Store terms &amp; conditions</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="list-item" style="padding:2mm 0;"><span class="ic" style="color:var(--inkSoft);">support_agent</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Customer support hours</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Quick create</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:2mm; margin-top:2mm;">
+            <div class="chip chip--outline"><span class="ic">inventory_2</span>Product</div>
+            <div class="chip chip--outline"><span class="ic">discount</span>Coupon</div>
+            <div class="chip chip--outline"><span class="ic">qr_code_2</span>Pay Link</div>
+            <div class="chip chip--outline"><span class="ic">local_shipping</span>Zone</div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Store settings</b><span>Identity, category, contacts, payout bank, KYC, and policies all editable.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Reviews &amp; ratings</b><span>Aggregate score with per-star bars + individual product-linked reviews.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Coupons, Shipping, RFQ, Refunds</b><span>All vendor self-serve control surfaces for day-to-day ops.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Quick create</b><span>One-tap creation of product, coupon, pay-link, or shipping zone.</span></div></div>
+    <div class="annot"><div class="n">5</div><div><b>Verification badge</b><span>Earned after KYC and a completed identity review — a trust signal for buyers.</span></div></div>
+  </div>
+</div>
+
+<!-- ─────────────── SCENARIO 12 – PROFILE & MY ACCOUNT (DETAIL) ─────────────── -->
+<div class="page">
+  <div class="page-head">
+    <div><span class="kicker">Scenario 12</span><h2>Profile — Home, My Account Tabs &amp; Settings</h2></div>
+    <span class="flowno">12</span>
+  </div>
+  <div class="stage">
+    <!-- 12a Profile Home -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="content" style="padding:0;">
+        <div style="background:linear-gradient(180deg,var(--orange),#c95f0a); padding:5mm 4mm 8mm; color:#fff;">
+          <div class="row" style="gap:3mm;">
+            <div class="img" style="width:18mm; height:18mm; border-radius:50%; background:#fff; color:var(--orange); font-size:14pt;">person</div>
+            <div style="flex:1;">
+              <div style="font-size:9pt; font-weight:500; color:#fdf1e3;">Hello 👋</div>
+              <div style="font-size:11pt; font-weight:700; font-family:'Poppins';">Adaeze Nkechi O.</div>
+              <div class="tiny" style="color:#fde68a; margin-top:.5mm;">adaeze@zzmore.store</div>
+            </div>
+            <span class="ic-btn" style="background:var(--orange-dark); border:none; color:#fff;"><span class="ic">edit</span></span>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:2mm; margin-top:4mm; text-align:center;">
+            <div><div style="font-size:9pt; font-weight:800;">12</div><div class="tiny" style="color:#fde68a;">Orders</div></div>
+            <div><div style="font-size:9pt; font-weight:800;">24</div><div class="tiny" style="color:#fde68a;">Saved</div></div>
+            <div><div style="font-size:9pt; font-weight:800;">5</div><div class="tiny" style="color:#fde68a;">Coupons</div></div>
+            <div><div style="font-size:9pt; font-weight:800;">2</div><div class="tiny" style="color:#fde68a;">Addresses</div></div>
+          </div>
+        </div>
+        <div class="content">
+          <div class="card list-item"><span class="ic" style="color:var(--orange);">inventory_2_outlined</span><div style="flex:1; font-size:8pt; font-weight:600;">Your orders</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="card list-item"><span class="ic" style="color:var(--orange);">person_outline</span><div style="flex:1; font-size:8pt; font-weight:600;">My Account</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="card list-item"><span class="ic" style="color:var(--orange);">settings_outlined</span><div style="flex:1; font-size:8pt; font-weight:600;">Settings</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="card list-item" style="background:var(--orange-soft); border:1px solid #f6d9b8;"><span class="ic" style="color:var(--orange);">dashboard_outlined</span><div style="flex:1;"><div style="font-size:8pt; font-weight:700; color:var(--orange-dark);">Vendor Dashboard</div><div class="tiny muted">Access your seller panel →</div></div><span class="ic" style="color:var(--orange); font-size:9pt;">chevron_right</span></div>
+          <div style="display:flex; gap:1.5mm;">
+            <div class="chip chip--outline" style="flex:1;"><span class="ic">storefront</span>Become a Vendor</div>
+            <div class="chip chip--outline" style="flex:1;"><span class="ic">support_agent</span>Help Center</div>
+          </div>
+          <div style="display:flex; gap:1.5mm;">
+            <div class="chip chip--outline" style="flex:1;"><span class="ic">info</span>About</div>
+            <div class="chip chip--outline" style="flex:1;"><span class="ic">share</span>Share App</div>
+          </div>
+          <div class="btn btn--outline" style="width:100%;"><span class="ic">logout</span>Logout</div>
+        </div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab"><span class="ic">home</span>Home</div>
+        <div class="tab"><span class="ic">explore</span>Explore</div>
+        <div class="tab"><span class="ic">shopping_cart</span>Cart</div>
+        <div class="tab tab--active"><span class="ic">person</span>Profile</div>
+      </div>
+    </div></div>
+
+    <!-- 12b My Account Overview -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">My Account</div></div>
+      <div class="content" style="padding-top:0;">
+        <div style="display:flex; flex-direction:row; border-bottom:1.5px solid var(--line); margin:0 -4mm 3mm; padding:0 4mm 1mm; gap:2mm;">
+          <div class="tab tab--active" style="font-size:7pt;">Overview</div>
+          <div class="tab" style="font-size:7pt;">Orders</div>
+          <div class="tab" style="font-size:7pt;">Downloads</div>
+          <div class="tab" style="font-size:7pt;">Addresses</div>
+          <div class="tab" style="font-size:7pt;">Account</div>
+        </div>
+        <div class="card" style="text-align:center; padding:3.5mm 3mm;">
+          <div class="img" style="width:17mm; height:17mm; border-radius:50%; margin:0 auto; font-size:13pt; background:#6366f1;">person</div>
+          <div style="font-size:9.5pt; font-weight:700; margin-top:2mm;">Adaeze Nkechi Okafor</div>
+          <div class="muted tiny">adaeze@zzmore.store · +234 803...</div>
+          <div style="display:flex; justify-content:center; gap:2mm; margin-top:2mm;">
+            <div class="chip chip--active" style="padding:1mm 2mm;"><span class="ic">receipt_long_outlined</span>Orders · 12</div>
+            <div class="chip chip--active" style="padding:1mm 2mm;"><span class="ic">location_on_outlined</span>Addresses · 2</div>
+          </div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Recent Orders</div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><div class="img" style="width:12mm; height:12mm; font-size:9pt;">shopping_bag</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">#10233</div><div class="muted tiny">3 items · Today</div></div><span class="badge badge--accent">Processing</span></div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><div class="img" style="width:12mm; height:12mm; font-size:9pt; background:linear-gradient(135deg,#a7f3d0,#10b981);">diamond</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">#10232</div><div class="muted tiny">1 item · Yesterday</div></div><span class="badge badge--success">Paid</span></div>
+          <div class="list-item" style="padding:2mm 0 0;"><div class="img" style="width:12mm; height:12mm; font-size:9pt; background:linear-gradient(135deg,#fed7aa,#ea580c);">calendar_month</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">#10231 — Booking</div><div class="muted tiny">Makeup · 2 days ago</div></div><span class="badge badge--warn">Booked</span></div>
+        </div>
+        <div class="card list-item"><span class="ic" style="color:var(--orange);">download_outlined</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Downloads</div><div class="muted tiny">2 files available</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+      </div>
+    </div></div>
+
+    <!-- 12c Settings -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Settings</div></div>
+      <div class="content">
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Notifications</div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--orange);">notifications_active</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Push Notifications</div><div class="muted tiny">Orders, offers &amp; updates</div></div><div style="width:9mm; height:5mm; border-radius:99px; background:var(--orange); position:relative;"><div style="position:absolute; top:.5mm; right:.5mm; width:4mm; height:4mm; background:#fff; border-radius:50%;"></div></div></div>
+          <div class="list-item" style="padding:2mm 0 0;"><span class="ic" style="color:var(--orange);">alternate_email</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Email Offers</div><div class="muted tiny">Promotions &amp; newsletters</div></div><div style="width:9mm; height:5mm; border-radius:99px; background:#d1d5db; position:relative;"><div style="position:absolute; top:.5mm; left:.5mm; width:4mm; height:4mm; background:#fff; border-radius:50%;"></div></div></div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Preferences</div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--orange);">attach_money</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Currency</div><div class="muted tiny">NGN ₦</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--orange);">translate</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Language</div><div class="muted tiny">English</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--orange);">dark_mode</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Theme</div><div class="muted tiny">Light</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="list-item" style="padding:2mm 0;"><span class="ic" style="color:var(--orange);">location_on</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Location</div><div class="muted tiny">Lagos, NG</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">Security</div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--orange);">lock</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Change Password</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="list-item" style="padding:2mm 0;"><span class="ic" style="color:var(--orange);">fingerprint</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Biometric login</div><div style="width:9mm; height:5mm; border-radius:99px; background:var(--orange); position:relative;"><div style="position:absolute; top:.5mm; right:.5mm; width:4mm; height:4mm; background:#fff; border-radius:50%;"></div></div></div>
+        </div>
+        <div class="card"><div style="font-size:8pt; font-weight:700;">About</div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--orange);">info_outline</span><div style="flex:1; font-size:7.5pt; font-weight:600;">About Zzmore</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--orange);">privacy_tip</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Privacy Policy</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="list-item" style="padding:2mm 0; border-bottom:1px solid var(--line);"><span class="ic" style="color:var(--orange);">description</span><div style="flex:1; font-size:7.5pt; font-weight:600;">Terms of Service</div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+          <div class="list-item" style="padding:2mm 0 0;"><span class="ic" style="color:var(--orange);">support_agent</span><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Help &amp; Support</div><div class="muted tiny">Version 3.3.7 (16)</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Profile home</b><span>Header banner, stats, vendor-upgrade entry, help, about, share, and logout.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>My Account tabs</b><span>Overview / Orders / Downloads / Addresses / Account — consistent with web My Account.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Settings</b><span>Notifications, currency, language, theme, location, password, biometric, legal, about.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Vendor jump-in</b><span>Existing sellers go straight from profile to the full vendor dashboard (S09).</span></div></div>
+  </div>
+</div>
+
+<!-- ─────────────── SCENARIO 13 – MY ACCOUNT DEEP-DIVE ─────────────── -->
+<div class="page">
+  <div class="page-head">
+    <div><span class="kicker">Scenario 13</span><h2>My Account — Orders, Addresses, Account Details</h2></div>
+    <span class="flowno">13</span>
+  </div>
+  <div class="stage">
+    <!-- 13a Orders List in My Account -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Your Orders</div><span class="ic-btn"><span class="ic">search</span></span></div>
+      <div class="content">
+        <div style="display:flex; gap:1.5mm;">
+          <div class="chip chip--active">All</div><div class="chip">Processing</div><div class="chip">Shipped</div><div class="chip">Completed</div><div class="chip">Cancelled</div>
+        </div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm;">shopping_bag</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Order #10233</div><span class="badge badge--accent">Processing</span></div><div class="muted tiny">3 items · ₦42,500</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="muted tiny">2026-09-19</div><div style="display:flex; gap:1.5mm;"><div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt;">Track</div><div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt; color:var(--orange);">Details</div></div></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#a7f3d0,#10b981);">diamond</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Order #10232</div><span class="badge badge--success">Paid</span></div><div class="muted tiny">1 item · ₦18,900</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="muted tiny">2026-09-18</div><div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt;">Review</div></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#fed7aa,#ea580c);">calendar_month</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Booking — Bridal Makeup</div><span class="badge badge--warn">Booked · 2026-11-12</span></div><div class="muted tiny">Full face · ₦85,000</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="muted tiny">2026-09-18 booked</div><div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt;">Reschedule</div></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#fde68a,#f59e0b);">redeem</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Order #10218</div><span class="badge badge--success">Completed</span></div><div class="muted tiny">2 items · ₦21,800</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="muted tiny">2026-09-01</div><div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt;">Buy Again</div></div></div></div>
+        <div class="card list-item"><div class="img" style="width:15mm; height:15mm; background:linear-gradient(135deg,#e9d5ff,#7c3aed);">subscriptions</div><div style="flex:1;"><div class="row" style="justify-content:space-between;"><div style="font-size:7.5pt; font-weight:700;">Sub — Car Wash</div><span class="badge badge--success">Active</span></div><div class="muted tiny">Monthly · ₦15,000</div><div class="row" style="justify-content:space-between; margin-top:1mm;"><div class="muted tiny">Renews 2026-10-03</div><div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt;">Manage</div></div></div></div>
+      </div>
+    </div></div>
+
+    <!-- 13b Addresses -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Addresses</div><span class="ic-btn"><span class="ic">add</span></span></div>
+      <div class="content">
+        <div class="card">
+          <div class="row" style="justify-content:space-between;">
+            <div class="row" style="gap:2mm;"><span class="ic" style="color:var(--orange);">receipt_long_outlined</span><div style="font-size:8pt; font-weight:700;">Billing Address</div></div>
+            <div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt;"><span class="ic">edit_outlined</span>Edit</div>
+          </div>
+          <div style="font-size:7.5pt; line-height:1.5; margin-top:2mm;">
+            Adaeze Nkechi Okafor<br>
+            14 Allen Avenue, Ikeja<br>
+            Lagos, 101233, Nigeria<br>
+            +234 803 000 0000
+          </div>
+        </div>
+        <div class="card">
+          <div class="row" style="justify-content:space-between;">
+            <div class="row" style="gap:2mm;"><span class="ic" style="color:var(--orange);">local_shipping_outlined</span><div style="font-size:8pt; font-weight:700;">Shipping Address</div></div>
+            <div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt;"><span class="ic">edit_outlined</span>Edit</div>
+          </div>
+          <div style="font-size:7.5pt; line-height:1.5; margin-top:2mm;">
+            Adaeze Nkechi Okafor<br>
+            22 Awolowo Road, Ikoyi<br>
+            Lagos, 106104, Nigeria<br>
+            +234 803 000 0000
+          </div>
+        </div>
+        <div class="card">
+          <div class="row" style="justify-content:space-between;">
+            <div class="row" style="gap:2mm;"><span class="ic" style="color:var(--orange);">apartment</span><div style="font-size:8pt; font-weight:700;">Saved Office</div></div>
+            <div class="row" style="gap:1.5mm;">
+              <span class="badge badge--success">Default</span>
+              <div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt;"><span class="ic">edit_outlined</span>Edit</div>
+            </div>
+          </div>
+          <div style="font-size:7.5pt; line-height:1.5; margin-top:2mm;">
+            30 Adeola Hopewell, Victoria Island<br>
+            Lagos, 106104, Nigeria
+          </div>
+        </div>
+        <div class="btn btn--primary" style="width:100%;"><span class="ic">add_location</span>Add new address</div>
+      </div>
+    </div></div>
+
+    <!-- 13c Account Details & Downloads -->
+    <div class="phone"><div class="screen">
+      <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+      <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Account Details</div></div>
+      <div class="content">
+        <div class="card">
+          <div class="row" style="justify-content:space-between;"><div style="font-size:8pt; font-weight:700;">Personal info</div><div class="chip chip--outline" style="padding:1mm 2mm; font-size:6.5pt;"><span class="ic">edit_outlined</span>Edit</div></div>
+          <div style="margin-top:2mm;">
+            <div class="label">First name</div><div class="input"><input value="Adaeze Nkechi" disabled></div>
+            <div class="label">Last name</div><div class="input"><input value="Okafor" disabled></div>
+            <div class="label">Display name</div><div class="input"><input value="Adaeze N." disabled></div>
+            <div class="label">Email</div><div class="input"><input value="adaeze@zzmore.store" disabled></div>
+          </div>
+        </div>
+        <div class="card">
+          <div style="font-size:8pt; font-weight:700;">Change password</div>
+          <div style="margin-top:2mm;">
+            <div class="label">Current password</div><div class="input"><span class="ic">lock</span><input value="●●●●●●●●" type="password"></div>
+            <div class="label">New password</div><div class="input"><span class="ic">lock</span><input placeholder="At least 8 chars" type="password"></div>
+            <div class="label">Confirm new password</div><div class="input"><span class="ic">lock</span><input placeholder="Re-enter" type="password"></div>
+          </div>
+          <div class="btn btn--primary" style="width:100%; margin-top:2mm;">Save changes</div>
+        </div>
+        <div class="card">
+          <div style="font-size:8pt; font-weight:700;">Digital downloads</div>
+          <div class="list-item" style="border-bottom:1px solid var(--line); padding:2mm 0;"><div class="img" style="width:11mm; height:11mm; font-size:9pt; background:linear-gradient(135deg,#a7f3d0,#10b981);">picture_as_pdf</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Wedding Planner Guide</div><div class="muted tiny">Order #10198</div></div><span class="badge badge--success">3 left</span></div>
+          <div class="list-item" style="padding:2mm 0 0;"><div class="img" style="width:11mm; height:11mm; font-size:9pt; background:linear-gradient(135deg,#fde68a,#f59e0b);">audiotrack</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Meditation Pack (12 tracks)</div><div class="muted tiny">Order #10177</div></div><span class="badge badge--success">∞</span></div>
+        </div>
+        <div class="btn btn--outline" style="width:100%;"><span class="ic">logout</span>Logout</div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot"><div class="n">1</div><div><b>Orders</b><span>Per-status chips; Track / Review / Buy Again / Reschedule / Manage sub — order-type aware.</span></div></div>
+    <div class="annot"><div class="n">2</div><div><b>Addresses</b><span>Billing + Shipping + saved offices/locations with Default &amp; inline edit.</span></div></div>
+    <div class="annot"><div class="n">3</div><div><b>Account details</b><span>Personal info locked unless editing; full password change + digital downloads.</span></div></div>
+    <div class="annot"><div class="n">4</div><div><b>Bookings &amp; subscriptions</b><span>Orders list respects booking dates and renewals — parity with WC Bookings &amp; Subscriptions.</span></div></div>
+  </div>
+</div>
+
+<!-- ─────────────── SCENARIO 14 – ORDER DETAIL + TEST SCENARIOS ─────────────── -->
+<div class="page">
+  <div class="page-head">
+    <div><span class="kicker">Scenario 14</span><h2>Order Detail &amp; User Testing Scenarios</h2></div>
+    <span class="flowno">14</span>
+  </div>
+  <div style="display:flex; gap:10mm; align-items:flex-start;">
+    <!-- 14a Order detail -->
+    <div class="stage" style="flex:1;">
+      <div class="phone" style="margin:0 auto;"><div class="screen">
+        <div class="statusbar"><span>9:41</span><span class="sb-ico"><span class="ic">signal_cellular_alt</span><span class="ic">wifi</span><span class="ic">battery_full</span></span></div>
+        <div class="appbar"><span class="ic-btn"><span class="ic">arrow_back</span></span><div class="title">Order #10233</div></div>
+        <div class="content">
+          <div class="card" style="background:var(--orange-soft); border:1px solid #f6d9b8;"><div class="row" style="justify-content:space-between;"><div style="font-size:8pt; font-weight:700; color:var(--orange-dark);">Processing</div><div class="tiny muted">Placed 19 Sep, 10:42</div></div>
+            <div style="font-size:6.5pt; margin-top:1.5mm; color:var(--inkSoft);">Payment received · Preparing your items</div>
+            <div style="height:4mm; border-radius:99px; background:#fff; margin-top:2mm; overflow:hidden; display:flex;"><div style="width:40%; background:var(--orange); border-radius:99px;"></div></div>
+          </div>
+          <div class="card"><div class="tiny muted">Vendor</div><div class="list-item" style="padding:2mm 0;"><div class="img" style="width:11mm; height:11mm; border-radius:50%; font-size:9pt;">storefront</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:700;">Adaeze's Boutique</div><div class="muted tiny">Fashion &amp; Accessories · Lagos</div></div><span class="ic muted" style="font-size:9pt;">chevron_right</span></div></div>
+          <div class="card"><div class="tiny muted">Items</div>
+            <div class="list-item" style="border-bottom:1px solid var(--line); padding:2mm 0;"><div class="img" style="width:13mm; height:13mm;">shopping_bag</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Ankara Smart Handbag</div><div class="muted tiny">Qty 1 · Midnight</div></div><div class="price tiny">₦24,500</div></div>
+            <div class="list-item" style="padding:2mm 0 0;"><div class="img" style="width:13mm; height:13mm; background:linear-gradient(135deg,#e9d5ff,#7c3aed);">redeem</div><div style="flex:1;"><div style="font-size:7.5pt; font-weight:600;">Beaded Jewelry Set</div><div class="muted tiny">Qty 1 · Gold</div></div><div class="price tiny">₦9,500</div></div>
+          </div>
+          <div class="card"><div class="tiny muted">Payment &amp; shipping</div>
+            <div class="row" style="justify-content:space-between; padding:1mm 0;"><div class="tiny muted">Subtotal</div><div class="tiny">₦34,000</div></div>
+            <div class="row" style="justify-content:space-between; padding:1mm 0;"><div class="tiny muted">Shipping — Lagos</div><div class="tiny">₦2,500</div></div>
+            <div class="row" style="justify-content:space-between; padding:1mm 0;"><div class="tiny muted">Coupon (BLACKFRIDAY26)</div><div class="tiny" style="color:var(--green);">- ₦6,800</div></div>
+            <div style="border-top:1px solid var(--line); margin-top:1mm; padding-top:1.5mm;" class="row" style="justify-content:space-between;"><div style="font-size:8pt; font-weight:700;">Total</div><div class="price">₦29,700</div></div>
+            <div class="row" style="justify-content:space-between; margin-top:1.5mm;"><div class="tiny muted">Paid via</div><div class="row" style="gap:1mm;"><span class="ic" style="color:var(--orange); font-size:9pt;">credit_card</span><div class="tiny">Card ·· 4242</div></div></div>
+          </div>
+          <div class="card"><div class="tiny muted">Shipping address</div><div style="font-size:7.5pt; line-height:1.5; margin-top:1mm;">22 Awolowo Road, Ikoyi<br>Lagos, 106104, NG</div></div>
+          <div style="display:flex; gap:1.5mm;">
+            <div class="btn btn--outline" style="flex:1;"><span class="ic">chat</span>Contact vendor</div>
+            <div class="btn btn--primary" style="flex:1;"><span class="ic">local_shipping</span>Track order</div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- Testing scenarios -->
+    <div style="flex:1; display:flex; flex-direction:column; gap:3mm;">
+      <div class="card" style="padding:4mm; background:var(--orange-soft); border:1px solid #f6d9b8;">
+        <div style="font-family:'Poppins'; font-weight:800; font-size:11pt; color:var(--orange-dark);">🧪 User testing scenarios</div>
+        <div class="muted tiny" style="margin-top:1mm;">5 tasks · 5 participants · target success rate ≥ 80%</div>
+      </div>
+      <div class="card" style="padding:3.5mm;">
+        <div style="display:flex; gap:2mm; align-items:flex-start;"><div class="annot" style="margin:0;"><div class="n" style="width:7mm; height:7mm; font-size:9pt;">T1</div></div>
+          <div style="flex:1;"><div style="font-size:8.5pt; font-weight:700;">Discover &amp; book a service</div><div class="muted tiny" style="margin-top:.8mm;">Task: Find "Bridal Makeup" on Explore, view vendor profile, pick 12 Nov, add to cart, checkout with a coupon. Success metric: booked &lt; 5 taps wasted, 1 retry max.</div></div>
+        </div>
+      </div>
+      <div class="card" style="padding:3.5mm;">
+        <div style="display:flex; gap:2mm; align-items:flex-start;"><div class="annot" style="margin:0;"><div class="n" style="width:7mm; height:7mm; font-size:9pt;">T2</div></div>
+          <div style="flex:1;"><div style="font-size:8.5pt; font-weight:700;">End-to-end checkout (guest)</div><div class="muted tiny" style="margin-top:.8mm;">Task: Add a subscription product to cart, check out as guest. Verify: no 403 (JWT malformed), all 5 address fields complete, order shows in "Your Orders".</div></div>
+        </div>
+      </div>
+      <div class="card" style="padding:3.5mm;">
+        <div style="display:flex; gap:2mm; align-items:flex-start;"><div class="annot" style="margin:0;"><div class="n" style="width:7mm; height:7mm; font-size:9pt;">T3</div></div>
+          <div style="flex:1;"><div style="font-size:8.5pt; font-weight:700;">Search across product types</div><div class="muted tiny" style="margin-top:.8mm;">Task: Search "property", "makeup", and "bag of rice". Verify all product types (physical / booking / service / sub) appear in results and "All products" on Explore loads.</div></div>
+        </div>
+      </div>
+      <div class="card" style="padding:3.5mm;">
+        <div style="display:flex; gap:2mm; align-items:flex-start;"><div class="annot" style="margin:0;"><div class="n" style="width:7mm; height:7mm; font-size:9pt;">T4</div></div>
+          <div style="flex:1;"><div style="font-size:8.5pt; font-weight:700;">Vendor workflow</div><div class="muted tiny" style="margin-top:.8mm;">Task (vendor account): 1) Check today's orders on dashboard; 2) Generate a pay-link QR for a custom ₦45k booking; 3) Initiate a withdrawal.</div></div>
+        </div>
+      </div>
+      <div class="card" style="padding:3.5mm;">
+        <div style="display:flex; gap:2mm; align-items:flex-start;"><div class="annot" style="margin:0;"><div class="n" style="width:7mm; height:7mm; font-size:9pt;">T5</div></div>
+          <div style="flex:1;"><div style="font-size:8.5pt; font-weight:700;">Profile → My Account parity</div><div class="muted tiny" style="margin-top:.8mm;">Task: Edit billing address, confirm it appears the same in Profile → Orders &amp; My Account tabs. Then change password and confirm re-login works.</div></div>
+        </div>
+      </div>
+      <div class="card" style="padding:3.5mm; background:#f8fafc; border:1px solid var(--line);">
+        <div style="font-size:8pt; font-weight:700; color:var(--orange-dark);">Design decisions log (highlights)</div>
+        <div class="tiny muted" style="margin-top:1mm;">• Orange #e67e14 is the single brand accent with 44-contrast AA+ text.</div>
+        <div class="tiny muted" style="margin-top:.6mm;">• All tap targets ≥ 44×44 dp (WCAG 2.1 AA); 8 dp spacing; 16+ dp on chips/bottom nav.</div>
+        <div class="tiny muted" style="margin-top:.6mm;">• Bottom nav fixed at 4 tabs only (Home / Explore / Cart / Profile); orders live in Profile → Your orders.</div>
+        <div class="tiny muted" style="margin-top:.6mm;">• Platform parity: iOS uses Cupertino overrides inside Material shell; Android uses M3 ripple + status bar edge-to-edge.</div>
+        <div class="tiny muted" style="margin-top:.6mm;">• Booking/vendors/livestream rendered in WebView bridges to guarantee parity with the web marketplace.</div>
+        <div class="tiny muted" style="margin-top:.6mm;">• App-update dialog shown on cold start when vendor-api reports a newer version code.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- @FLOWS@ -->
+</body>
+</html>

@@ -97,6 +97,9 @@ $RECYCLE.BIN/
 # APK files (build outputs — they belong in /build/)
 /*.apk
 
+# Prototype build outputs (regenerable from prototype/app-prototype.html)
+/prototype/*.pdf
+
 # iOS build artifacts downloaded from Codemagic
 /Runner.app/
 
