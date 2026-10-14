@@ -24,6 +24,7 @@ import 'providers/theme_provider.dart';
 import 'providers/currency_provider.dart';
 import 'screens/main_screen.dart';
 import 'screens/auth/forgot_password_screen.dart';
+import 'screens/profile_screen.dart' show LoginPage, RegisterPage;
 
 final GlobalKey<NavigatorState> _appNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -285,7 +286,117 @@ class _AppRootState extends State<_AppRoot> {
   void initState() {
     super.initState();
     _initDeepLinks();
-    _checkForUpdate();
+    _runStartupPrompts();
+  }
+
+  /// Shown at most once per app launch, one after another (never stacked):
+  ///   1. "Update available" (throttled — see [_checkForUpdate])
+  ///   2. A friendly invitation for guests to create an account.
+  /// Neither one blocks the app; the user can always dismiss and carry on.
+  Future<void> _runStartupPrompts() async {
+    // Let the home screen paint before anything pops up.
+    await Future<void>.delayed(const Duration(seconds: 3));
+    if (!mounted) return;
+    await _checkForUpdate();
+    if (!mounted) return;
+    await _promptGuestToSignUp();
+  }
+
+  /// Invites visitors who are not logged in to create an account for member
+  /// discounts. This is only a prompt: closing it simply continues browsing.
+  Future<void> _promptGuestToSignUp() async {
+    try {
+      final auth = context.read<AuthProvider>();
+      // Wait (briefly) for the saved session to be restored so a returning,
+      // logged-in user never sees the invitation.
+      var waited = 0;
+      while (mounted && auth.isLoading && waited < 10000) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        waited += 200;
+      }
+      if (!mounted || auth.isAuthenticated) return;
+
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        backgroundColor: AppColors.creamColor,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(Icons.local_offer_rounded,
+                    size: 40, color: AppColors.goldColor),
+                const SizedBox(height: 12),
+                const Text(
+                  'Sign up to enjoy discounts',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.inkColor,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Create a free ZZmore account to unlock member discounts '
+                  'and offers from our vendors.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.4,
+                    color: AppColors.inkSoftColor,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.goldColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const RegisterPage()),
+                    );
+                  },
+                  child: const Text('Sign up free',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+                const SizedBox(height: 4),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const LoginPage()),
+                    );
+                  },
+                  child: const Text('I already have an account'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Maybe later',
+                      style: TextStyle(color: AppColors.inkSoftColor)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Sign-up prompt skipped: $e');
+    }
   }
 
   Future<void> _initDeepLinks() async {
@@ -303,54 +414,91 @@ class _AppRootState extends State<_AppRoot> {
     _subscription = _appLinks!.uriLinkStream.listen(_handleResetUri);
   }
 
-  /// Best-effort check for a newer app build. When the server reports a
-  /// version code higher than the installed build, prompt the user to open
-  /// the store listing. Silently no-ops on any failure.
+  /// Best-effort check for a newer app build. NEVER blocks the user:
+  ///  * An older app keeps working exactly as before.
+  ///  * The reminder is dismissible ("Later") and is shown at most once every
+  ///    3 days for the same new version (so it never nags).
+  ///  * Only if the server explicitly sets a minimum supported build, and this
+  ///    install is below it, is the prompt non-dismissible (reserved for the
+  ///    rare case where an old build can no longer work with the server).
+  /// Silently no-ops on any failure.
   Future<void> _checkForUpdate() async {
     try {
       final info = await ApiService().getLatestAppVersion();
       if (info == null) return;
 
       final latestCode = (info['latest_version_code'] as num?)?.toInt() ?? 0;
+      final minCode =
+          (info['min_supported_version_code'] as num?)?.toInt() ?? 0;
       if (latestCode <= ApiConstants.appVersionCode) return;
 
-      // Let the main UI settle before interrupting the user.
-      await Future<void>.delayed(const Duration(seconds: 2));
+      final mustUpdate = minCode > 0 && ApiConstants.appVersionCode < minCode;
+
+      // Pick the right store link for this platform. iOS has no default link,
+      // so without one configured on the server we simply don't prompt there.
+      final isIos = defaultTargetPlatform == TargetPlatform.iOS;
+      final updateUrl = isIos
+          ? info['update_url_ios']?.toString() ?? ''
+          : info['update_url']?.toString() ?? ApiConstants.appUpdateUrl;
+      if (updateUrl.isEmpty) return;
+
+      // Throttle the optional reminder (not the mandatory one).
+      final hive = HiveService();
+      final key = 'update_prompt_$latestCode';
+      if (!mustUpdate) {
+        try {
+          final last = int.tryParse(hive.getString(key) ?? '') ?? 0;
+          final age = DateTime.now().millisecondsSinceEpoch - last;
+          if (last > 0 && age < const Duration(days: 3).inMilliseconds) return;
+        } catch (_) {}
+      }
       if (!mounted) return;
 
       final latestName = info['latest_version_name']?.toString();
-      final updateUrl =
-          info['update_url']?.toString() ?? ApiConstants.appUpdateUrl;
+      final custom = info['update_message']?.toString() ?? '';
+      final message = custom.isNotEmpty
+          ? custom
+          : (latestName != null && latestName.isNotEmpty)
+              ? 'A newer version ($latestName) of ZZmore is available with '
+                  'the latest features and fixes. You can keep using the app '
+                  'and update whenever you like.'
+              : 'A newer version of ZZmore is available with the latest '
+                  'features and fixes. You can keep using the app and update '
+                  'whenever you like.';
 
-      showDialog<void>(
+      try {
+        await hive.saveString(
+            key, DateTime.now().millisecondsSinceEpoch.toString());
+      } catch (_) {}
+
+      await showDialog<void>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Update available'),
-          content: Text(
-            (latestName != null && latestName.isNotEmpty)
-                ? 'A newer version ($latestName) of ZZmore is available. '
-                    'Please update to get the latest features and fixes.'
-                : 'A newer version of ZZmore is available. Please update to '
-                    'get the latest features and fixes.',
+        barrierDismissible: !mustUpdate,
+        builder: (ctx) => PopScope(
+          canPop: !mustUpdate,
+          child: AlertDialog(
+            title: const Text('Update available'),
+            content: Text(message),
+            actions: [
+              if (!mustUpdate)
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Later'),
+                ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (!mustUpdate) Navigator.pop(ctx);
+                  try {
+                    await launchUrl(
+                      Uri.parse(updateUrl),
+                      mode: LaunchMode.externalApplication,
+                    );
+                  } catch (_) {}
+                },
+                child: const Text('Update'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Later'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                try {
-                  await launchUrl(
-                    Uri.parse(updateUrl),
-                    mode: LaunchMode.externalApplication,
-                  );
-                } catch (_) {}
-              },
-              child: const Text('Update'),
-            ),
-          ],
         ),
       );
     } catch (_) {

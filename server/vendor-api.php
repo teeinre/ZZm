@@ -1313,10 +1313,18 @@ if ( $action === 'get_app_version' ) {
     $latest_name = (string) get_option( 'zzmore_latest_app_version_name', '' );
     $update_url  = (string) get_option( 'zzmore_app_update_url', 'https://play.google.com/store/apps/details?id=store.zzmore.app' );
 
+    // Optional extras (all default to "no effect"):
+    //   zzmore_min_app_version_code  (int)    builds BELOW this must update.
+    //                                          0 (default) = nobody is ever forced.
+    //   zzmore_app_update_url_ios    (string) App Store link for iPhone users.
+    //   zzmore_app_update_message    (string) custom text for the update prompt.
     vendor_api_respond( [
-        'latest_version_code' => $latest_code,
-        'latest_version_name' => $latest_name,
-        'update_url'          => $update_url,
+        'latest_version_code'        => $latest_code,
+        'latest_version_name'        => $latest_name,
+        'update_url'                 => $update_url,
+        'update_url_ios'             => (string) get_option( 'zzmore_app_update_url_ios', '' ),
+        'min_supported_version_code' => (int) get_option( 'zzmore_min_app_version_code', 0 ),
+        'update_message'             => (string) get_option( 'zzmore_app_update_message', '' ),
     ] );
 }
 

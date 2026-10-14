@@ -4,6 +4,22 @@ All notable changes to ZZmore Store mobile app.
 
 ---
 
+## [3.3.8] — 2026-10-14
+
+### Added
+- Friendly, dismissible "Sign up to enjoy discounts" prompt for visitors who
+  are not logged in (once per app launch; browsing is never blocked).
+- Update reminder is now gentle: dismissible, shown at most once every 3 days
+  per new version, and never forces an update unless the server sets a minimum
+  supported build. Separate App Store link for iPhone users.
+
+### Fixed
+- Variation options show names (e.g. roman numerals) instead of term IDs.
+- Vendor banner shows the whole image; Trending "All" varies on each launch;
+  faster, more relevant search; startup crash fixed (Firebase init order).
+
+---
+
 ## [3.2.0] — 2026-08-19
 
 ### Added
