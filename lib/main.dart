@@ -24,7 +24,7 @@ import 'providers/theme_provider.dart';
 import 'providers/currency_provider.dart';
 import 'screens/main_screen.dart';
 import 'screens/auth/forgot_password_screen.dart';
-import 'screens/profile_screen.dart' show LoginPage, RegisterPage;
+import 'screens/profile_screen.dart' show RegisterPage;
 
 final GlobalKey<NavigatorState> _appNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -302,8 +302,8 @@ class _AppRootState extends State<_AppRoot> {
     await _promptGuestToSignUp();
   }
 
-  /// Invites visitors who are not logged in to create an account for member
-  /// discounts. This is only a prompt: closing it simply continues browsing.
+  /// Gently invites visitors who are not logged in to sign up for member
+  /// discounts. Only a small dismissible bar: ignoring it just continues browsing.
   Future<void> _promptGuestToSignUp() async {
     try {
       final auth = context.read<AuthProvider>();
@@ -316,81 +316,33 @@ class _AppRootState extends State<_AppRoot> {
       }
       if (!mounted || auth.isAuthenticated) return;
 
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        showDragHandle: true,
-        backgroundColor: AppColors.creamColor,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        builder: (ctx) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Icon(Icons.local_offer_rounded,
-                    size: 40, color: AppColors.goldColor),
-                const SizedBox(height: 12),
-                const Text(
-                  'Sign up to enjoy discounts',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.inkColor,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Create a free ZZmore account to unlock member discounts '
-                  'and offers from our vendors.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.4,
-                    color: AppColors.inkSoftColor,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.goldColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const RegisterPage()),
-                    );
-                  },
-                  child: const Text('Sign up free',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                ),
-                const SizedBox(height: 4),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const LoginPage()),
-                    );
-                  },
-                  child: const Text('I already have an account'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Maybe later',
-                      style: TextStyle(color: AppColors.inkSoftColor)),
-                ),
-              ],
-            ),
+      // A slim, dismissible bar — deliberately minimal. It does not cover
+      // the screen and disappears on its own.
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: AppColors.inkColor,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          duration: const Duration(seconds: 10),
+          showCloseIcon: true,
+          closeIconColor: Colors.white60,
+          content: const Text(
+            'Sign up for member discounts',
+            style: TextStyle(color: Colors.white, fontSize: 14),
+          ),
+          action: SnackBarAction(
+            label: 'SIGN UP',
+            textColor: AppColors.goldColor,
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const RegisterPage()),
+              );
+            },
           ),
         ),
       );
