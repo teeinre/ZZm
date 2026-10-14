@@ -100,7 +100,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       final attributes = raw['attributes'] as List<dynamic>? ?? [];
       Map<String, String> initialSelections = {};
       for (final attr in attributes) {
-        if (attr is Map<String, dynamic>) {
+        // Only attributes used for variations need a selection (display-only
+        // attributes like "Brand" must not block Add to cart).
+        if (attr is Map<String, dynamic> && attr['variation'] == true) {
           final name = attr['name']?.toString() ?? '';
           if (name.isNotEmpty) {
             initialSelections[name] = '';
@@ -125,6 +127,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   // ─── Variation matching ───────────────────────────────────────────────────
+
+  String _norm(String v) => v.trim().toLowerCase();
 
   void _onAttributeChanged(String attributeName, String? value) {
     if (value == null) return;
@@ -151,10 +155,35 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       bool matches = true;
       for (final varAttr in varAttrs) {
         if (varAttr is Map<String, dynamic>) {
-          final varName = varAttr['name']?.toString() ?? '';
-          final varOption = varAttr['option']?.toString() ?? '';
-          if (_selectedAttributes.containsKey(varName) &&
-              _selectedAttributes[varName] != varOption) {
+          final varOption = _norm(varAttr['option']?.toString() ?? '');
+          // An empty option means "any value" in WooCommerce → always OK.
+          if (varOption.isEmpty) continue;
+
+          // Find which selected attribute this variation attribute is:
+          // prefer the stable `key` (e.g. pa_size), else compare names.
+          final varKey = _norm(varAttr['key']?.toString() ?? '');
+          final varName = _norm(varAttr['name']?.toString() ?? '');
+          String? selectedName;
+          for (final a in _productAttributes) {
+            final aName = a['name']?.toString() ?? '';
+            final aKey = _norm(a['key']?.toString() ?? '');
+            if ((varKey.isNotEmpty && aKey == varKey) ||
+                _norm(aName) == varName) {
+              selectedName = aName;
+              break;
+            }
+          }
+          selectedName ??= _selectedAttributes.keys.firstWhere(
+            (k) => _norm(k) == varName,
+            orElse: () => '',
+          );
+          if (selectedName.isEmpty ||
+              !_selectedAttributes.containsKey(selectedName)) {
+            continue;
+          }
+          final slug = _norm(varAttr['slug']?.toString() ?? '');
+          final selected = _norm(_selectedAttributes[selectedName] ?? '');
+          if (selected != varOption && (slug.isEmpty || selected != slug)) {
             matches = false;
             break;
           }

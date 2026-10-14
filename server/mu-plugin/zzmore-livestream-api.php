@@ -57,6 +57,18 @@ function zzmore_register_livestream_endpoints(): void
         },
     ]);
 
+    // Vendor: Explicit go-live / end-stream toggle. Separate from the
+    // create/edit save above so "End Stream" doesn't need to resubmit the
+    // URL, and — critically — so ending a stream in the app actually clears
+    // it from the customer-facing feed (see zzmore_set_vendor_livestream_status).
+    register_rest_route('app/v1', '/livestreams/vendor/status', [
+        'methods'             => 'POST',
+        'callback'            => 'zzmore_set_vendor_livestream_status',
+        'permission_callback' => function () {
+            return current_user_can('dokandar') || current_user_can('seller') || is_user_logged_in();
+        },
+    ]);
+
     // Back compat: /dokan/v1/livestreams → delegate to vendor endpoint
     register_rest_route('dokan/v1', '/livestreams', [
         'methods'             => 'GET',
@@ -352,15 +364,28 @@ function zzmore_fetch_from_vendor_meta(): array
             'dokan_livestream_data',
         ];
 
+        // NOTE: meta keys are listed in priority order (DLS plugin's
+        // 'dls_stream_url' first). We must stop at the FIRST non-empty match
+        // for each of url/status — previously this kept looping and let a
+        // later, lower-priority (and possibly stale/leftover) key silently
+        // overwrite a correct earlier value, showing the wrong stream URL.
         $live_url = '';
         $live_status = '';
+        $url_found = false;
+        $status_found = false;
         foreach ($meta_keys as $key) {
+            $is_status_key = in_array($key, ['dokan_live_status', 'vendor_live_status'], true);
+            if ($is_status_key && $status_found) continue;
+            if (!$is_status_key && $url_found) continue;
+
             $value = get_user_meta($user_id, $key, true);
             if (!empty($value)) {
-                if (in_array($key, ['dokan_live_status', 'vendor_live_status'])) {
+                if ($is_status_key) {
                     $live_status = $value;
+                    $status_found = true;
                 } else {
                     $live_url = $value;
+                    $url_found = true;
                 }
             }
         }
@@ -378,7 +403,16 @@ function zzmore_fetch_from_vendor_meta(): array
         $status = strtolower($live_status);
         if (!empty($live_url) && ($status === 'live' || $status === '1' || $status === 'yes' || $status === '')) {
             $vendor_info = get_userdata($user_id);
-            $store_info = dokan()->vendor->get($user_id)->get_shop_info() ?: [];
+            // BUG FIX: dokan()->vendor->get() can return null (e.g. a user
+            // matched by dokan_get_sellers() whose vendor record is stale or
+            // mid-migration). Calling ->get_shop_info() on null was a PHP
+            // fatal error that crashed the ENTIRE /app/v1/livestreams
+            // response (a 500) for every vendor, not just this one — so a
+            // single bad seller record could take down livestreams
+            // store-wide. Skip just this vendor instead.
+            $dokan_vendor = dokan()->vendor->get($user_id);
+            if (!$dokan_vendor) continue;
+            $store_info = $dokan_vendor->get_shop_info() ?: [];
             $store_name = $store_info['store_name'] ?? ($vendor_info ? $vendor_info->display_name : '');
             $store_avatar = $store_info['gravatar'] ?? '';
 
@@ -573,6 +607,7 @@ function zzmore_save_vendor_livestream(WP_REST_Request $request): array
     $stream_url = sanitize_text_field($params['stream_url'] ?? $params['url'] ?? '');
     $title = sanitize_text_field($params['title'] ?? '');
     $description = sanitize_textarea_field($params['description'] ?? '');
+    $requested_status = sanitize_text_field($params['status'] ?? '');
 
     if (empty($stream_url)) {
         return new WP_Error('missing_url', 'Stream URL is required.', ['status' => 400]);
@@ -580,10 +615,22 @@ function zzmore_save_vendor_livestream(WP_REST_Request $request): array
 
     update_user_meta($vendor_id, 'dls_stream_url', $stream_url);
 
-    // Clear any suspension
-    $current_status = get_user_meta($vendor_id, 'dls_stream_status', true);
-    if ($current_status === 'suspended') {
-        delete_user_meta($vendor_id, 'dls_stream_status');
+    // BUG FIX: this used to unconditionally clear any 'suspended' flag on
+    // every save, so the app's "Schedule Stream" action (which sends
+    // status: 'scheduled' for a future date) made the vendor show up as
+    // LIVE to customers immediately — there was no way to save a stream
+    // for later without it going live on the spot. Now: a client that
+    // explicitly says 'scheduled' keeps the stream suspended until the
+    // vendor taps "Go Live" (POST .../livestreams/vendor/status); anything
+    // else (including no status field, for back-compat with older/other
+    // Dokan clients) keeps the previous clear-suspension-on-save behavior.
+    if ($requested_status === 'scheduled') {
+        update_user_meta($vendor_id, 'dls_stream_status', 'suspended');
+    } else {
+        $current_status = get_user_meta($vendor_id, 'dls_stream_status', true);
+        if ($current_status === 'suspended') {
+            delete_user_meta($vendor_id, 'dls_stream_status');
+        }
     }
 
     // If a product ID is provided, set it as active
@@ -604,8 +651,56 @@ function zzmore_save_vendor_livestream(WP_REST_Request $request): array
         'url'         => $stream_url,
         'title'       => $title,
         'platform'    => zzmore_detect_platform($stream_url),
-        'status'      => 'live',
+        'status'      => $requested_status === 'scheduled' ? 'scheduled' : 'live',
         'product_ids' => $product_id > 0 ? [$product_id] : [],
+    ];
+}
+
+/**
+ * POST /app/v1/livestreams/vendor/status — Explicitly go live / end the
+ * vendor's stream.
+ *
+ * BUG FIX: previously the app's "Go Live" / "End Stream" toggle
+ * (VendorLivestreamScreen._toggleLive) only flipped a LOCAL Hive flag and
+ * never called the server at all. Since zzmore_get_vendor_livestream() /
+ * zzmore_fetch_from_vendor_meta() treat any vendor with a saved
+ * dls_stream_url as "live" unless dls_stream_status is explicitly
+ * 'suspended', a vendor tapping "End Stream" never actually stopped
+ * appearing live to customers — the stream stayed in the public feed
+ * indefinitely. This endpoint is what the client now calls to actually
+ * flip that server-side flag.
+ */
+function zzmore_set_vendor_livestream_status(WP_REST_Request $request)
+{
+    $vendor_id = get_current_user_id();
+    $params = $request->get_json_params();
+    $status = sanitize_text_field($params['status'] ?? '');
+
+    if (!in_array($status, ['live', 'ended', 'suspended'], true)) {
+        return new WP_Error('invalid_status', "status must be one of: live, ended, suspended.", ['status' => 400]);
+    }
+
+    $stream_url = get_user_meta($vendor_id, 'dls_stream_url', true);
+    if (empty($stream_url)) {
+        return new WP_Error('no_stream', 'No stream URL is configured yet — save a stream first.', ['status' => 400]);
+    }
+
+    if ($status === 'live') {
+        delete_user_meta($vendor_id, 'dls_stream_status');
+    } else {
+        // 'ended' and 'suspended' both map to the DLS plugin's 'suspended'
+        // status, which is what the read paths above treat as "not live".
+        update_user_meta($vendor_id, 'dls_stream_status', 'suspended');
+    }
+
+    if (class_exists('LiteSpeed_Cache_API')) {
+        LiteSpeed_Cache_API::purge('dls_stream_' . $vendor_id);
+    }
+
+    return [
+        'success'   => true,
+        'vendor_id' => $vendor_id,
+        'status'    => $status === 'live' ? 'live' : 'ended',
     ];
 }
 

@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
@@ -669,12 +670,21 @@ class ApiService {
   /// section. Reuses the same direct-SQL endpoint as [getProductsByCategory]
   /// (with `category_id=0`) so every product type — simple, variable,
   /// booking, subscription, etc. — is returned consistently.
+  ///
+  /// The list is shuffled: [_shuffleSeed] is generated once per app launch,
+  /// so every time the user opens the app they see a different mix, while
+  /// paging inside one launch stays consistent (no repeats). The server
+  /// shuffles with `shuffle_seed`; we also shuffle each page locally so the
+  /// order still varies if the server file hasn't been updated yet.
+  static final int _shuffleSeed = math.Random().nextInt(1 << 30);
+
   Future<List<Product>> getAllProducts({
     int page = 1,
     int perPage = 60,
   }) async {
     final url = '${ApiConstants.vendorApiBase}?action=get_products_by_category'
-        '&category_id=0&page=$page&per_page=$perPage';
+        '&category_id=0&page=$page&per_page=$perPage'
+        '&shuffle_seed=$_shuffleSeed';
     final response = await _get(url, useWcAuth: false);
     if (response.statusCode != 200) {
       throw Exception(
@@ -682,9 +692,11 @@ class ApiService {
     }
     final body = jsonDecode(response.body);
     final List list = body['products'] ?? [];
-    return list
+    final products = list
         .map((json) => Product.fromJson(Map<String, dynamic>.from(json as Map)))
         .toList();
+    products.shuffle(math.Random(_shuffleSeed + page));
+    return products;
   }
 
   /// Fetches the latest app version info from the server (vendor-api.php).
@@ -736,142 +748,131 @@ class ApiService {
   ///   products WITHOUT a search filter and perform our own substring match
   ///   on: name, description, shortDescription, category names, vendor name,
   ///   and SKU.
+  // Small in-memory cache so repeating a search (or going back to results)
+  // is instant instead of hitting the server again.
+  static final Map<String, _CachedSearch> _searchCache = {};
+
   Future<List<Product>> searchProducts(String query, {int perPage = 100}) async {
     final q = query.toLowerCase().trim();
+    if (q.isEmpty) return [];
+
+    final cached = _searchCache['$q|$perPage'];
+    if (cached != null &&
+        DateTime.now().difference(cached.at) < const Duration(minutes: 3)) {
+      return List<Product>.from(cached.products);
+    }
+
     final merged = <int, Product>{};
     bool strategy0Failed = false;
     bool strategy1Failed = false;
-    bool strategy3Failed = false;
     bool anyStrategyRan = false;
 
-    if (q.isEmpty) return [];
-
-    // ── Strategy 0: vendor-api.php search_products (WAF-proof primary) ──
-    try {
+    // ── Primary search: our own fast server endpoint. ───────────────────
+    final s0 = () async {
       final url = '${ApiConstants.vendorApiBase}?action=search_products'
           '&q=${Uri.encodeQueryComponent(query)}'
           '&per_page=$perPage';
       final response = await _get(url, useWcAuth: false);
-      anyStrategyRan = true;
       final body = jsonDecode(response.body);
+      final out = <Product>[];
       if (body is Map && body['products'] is List) {
         for (final raw in (body['products'] as List<dynamic>)) {
           if (raw is! Map<String, dynamic>) continue;
           try {
-            final p = Product.fromJson(raw);
-            merged[p.id] = p;
+            out.add(Product.fromJson(raw));
           } catch (_) {}
         }
-        debugPrint('[search:S0] vendor-api returned ${merged.length} hits for "$q"');
       }
-    } catch (e, st) {
+      return out;
+    }();
+    List<Product> r0 = const [];
+    List<Product> r1 = const [];
+    try {
+      r0 = await s0;
+      anyStrategyRan = true;
+    } catch (e) {
       strategy0Failed = true;
       debugPrint('[search:S0] vendor-api search_products failed: $e');
-      debugPrint('[search:S0] StackTrace: $st');
     }
-
-    // ── Strategy 1: Title / excerpt via WC REST `search` ────────────────
-    try {
-      final byText = await getProducts(search: query, perPage: perPage);
-      anyStrategyRan = true;
-      for (final p in byText) {
-        merged[p.id] = p;
+    // WooCommerce's own search is only a backup for when our fast search
+    // endpoint is unavailable (it used to ALWAYS run too, adding delay and
+    // loosely-related results).
+    if (strategy0Failed) {
+      try {
+        r1 = await getProducts(search: query, perPage: math.min(perPage, 40));
+        anyStrategyRan = true;
+      } catch (e) {
+        strategy1Failed = true;
+        debugPrint('[search:S1] WC title search failed: $e');
       }
-      debugPrint('[search:S1] WC ?search= returned ${byText.length} for "$q"');
-    } catch (e, st) {
-      // Fail open: if the server-side title search errors (timeout, WAF,
-      // 5xx), we still run Strategy 3 so "search failed" never appears
-      // when we could have found results in the description scan.
-      strategy1Failed = true;
-      debugPrint('[search:S1] WC title search failed (WAF?): $e');
-      debugPrint('[search:S1] StackTrace: $st');
+    }
+    for (final p in r0) {
+      merged[p.id] = p;
+    }
+    for (final p in r1) {
+      merged.putIfAbsent(p.id, () => p);
     }
 
-    // ── Strategy 3: Client-side title + description + short_desc pool ───
-    try {
-      final pool = <int, Product>{};
-      // Sort #1: newest first — catches recently-added service products.
+    // ── Strategy 3 (slow: downloads ~400 products) is now ONLY a safety
+    //    net for when the fast server-side search itself failed. Since
+    //    vendor-api search already scans title/description/excerpt/SKU,
+    //    it is no longer run on every search. ───────────────────────────
+    if (strategy0Failed && merged.isEmpty) {
       try {
-        final recent = await getProducts(perPage: 200, orderby: 'date', order: 'desc');
-        anyStrategyRan = true;
-        for (final p in recent) {
-          pool[p.id] = p;
-        }
-      } catch (_) {}
-      // Sort #2: most-sold first — catches popular services.
-      try {
-        final popular = await getProducts(perPage: 200, orderby: 'popularity', order: 'desc');
-        anyStrategyRan = true;
-        for (final p in popular) {
-          pool[p.id] = p;
-        }
-      } catch (_) {}
-      // If both specific-sort fetches are rejected (some WAFs block
-      // arbitrary orderby), fall back to one generic 200-item fetch so we
-      // at least scan something.
-      if (pool.isEmpty) {
-        try {
-          final fallback = await getProducts(perPage: 200);
-          anyStrategyRan = true;
-          for (final p in fallback) {
+        final pools = await Future.wait<List<Product>>([
+          getProducts(perPage: 100, orderby: 'date', order: 'desc')
+              .catchError((_) => <Product>[]),
+          getProducts(perPage: 100, orderby: 'popularity', order: 'desc')
+              .catchError((_) => <Product>[]),
+        ]);
+        final pool = <int, Product>{};
+        for (final list in pools) {
+          for (final p in list) {
             pool[p.id] = p;
           }
-        } catch (e2) {
-          debugPrint('[search:S3] Even generic pool fetch failed: $e2');
         }
-      }
-
-      if (pool.isNotEmpty) {
-        final terms = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
-        int scannedMatches = 0;
+        if (pool.isNotEmpty) anyStrategyRan = true;
+        final terms =
+            q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
         for (final p in pool.values) {
-          if (merged.containsKey(p.id)) continue;
-
-          final name = p.name.toLowerCase();
-          final desc = (p.description ?? '').toLowerCase();
-          final short = (p.shortDescription ?? '').toLowerCase();
-          final vendor = (p.vendorName ?? '').toLowerCase();
-          final sku = (p.sku ?? '').toLowerCase();
-          final catNames = p.categories
-              .map((c) => (c.name ?? '').toLowerCase())
-              .join(' ');
-          final allText = '$name $desc $short $vendor $sku $catNames';
-
+          final allText = '${p.name} ${p.description ?? ''} '
+                  '${p.shortDescription ?? ''} ${p.vendorName ?? ''} '
+                  '${p.sku ?? ''} '
+                  '${p.categories.map((c) => c.name ?? '').join(' ')}'
+              .toLowerCase();
           bool matches = allText.contains(q);
           if (!matches && terms.length > 1) {
             matches = terms.every((t) => allText.contains(t));
           }
-          if (matches) {
-            merged[p.id] = p;
-            scannedMatches++;
-          }
+          if (matches) merged[p.id] = p;
         }
-        debugPrint('[search:S3] Pool size=${pool.length}, scanned-matches=$scannedMatches for "$q"');
+      } catch (e) {
+        debugPrint('[search:S3] fallback pool scan failed: $e');
       }
-    } catch (e, st) {
-      strategy3Failed = true;
-      debugPrint('[search:S3] Description pool scan failed: $e');
-      debugPrint('[search:S3] StackTrace: $st');
     }
 
-    debugPrint('[search:summary] query="$q" merged=${merged.length} '
-        'failures={S0:$strategy0Failed, S1:$strategy1Failed, S3:$strategy3Failed} '
-        'anyRan=$anyStrategyRan');
-
-    // ONLY surface an error if we literally could not talk to the server at
-    // all — every single path threw an exception AND no pool was ever
-    // built.  In that one case we have zero confidence in the result set.
-    // Otherwise, even an EMPTY result set is a legit "no matches" answer
-    // that the UI should display as "No results found" (not an error).
-    final allFailedWithExceptions =
-        strategy0Failed && strategy1Failed && strategy3Failed;
-    final neverTalked = !anyStrategyRan;
-
-    if (merged.isEmpty && allFailedWithExceptions && neverTalked) {
+    // Only surface an error when the server could not be reached at all.
+    if (merged.isEmpty &&
+        strategy0Failed &&
+        strategy1Failed &&
+        !anyStrategyRan) {
       throw Exception('Search could not reach the server. Please try again.');
     }
 
-    return merged.values.toList();
+    // RELEVANCE GATE: keep only products where EVERY typed word appears at
+    // the start of a word in the name, category, vendor, SKU or description,
+    // then rank the best matches first (title hits above description hits).
+    final result = merged.values
+        .where((p) => _searchRelevance(p, q) > 0)
+        .toList()
+      ..sort((a, b) => _searchRelevance(b, q) - _searchRelevance(a, q));
+    if (!(strategy0Failed && strategy1Failed)) {
+      _searchCache['$q|$perPage'] = _CachedSearch(result, DateTime.now());
+      if (_searchCache.length > 40) {
+        _searchCache.remove(_searchCache.keys.first);
+      }
+    }
+    return result;
   }
 
   Future<Product?> getProduct(int id) async {
@@ -2966,6 +2967,25 @@ class ApiService {
     }
   }
 
+  /// Explicitly flip the current vendor's livestream to 'live' or
+  /// 'ended'/'suspended' server-side. Throws on failure so the caller can
+  /// revert its optimistic local UI state — silently swallowing this the
+  /// way the rest of this file does for best-effort calls would let the
+  /// vendor believe "End Stream" worked when it actually didn't reach the
+  /// server (see zzmore_set_vendor_livestream_status on the server).
+  Future<void> setVendorLivestreamStatus(String status) async {
+    final response = await _post(
+      ApiConstants.appLivestreamVendorStatusEndpoint,
+      {'status': status},
+      useWcAuth: false,
+      requireAuth: true,
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+          'Failed to update livestream status (${response.statusCode}): ${response.body}');
+    }
+  }
+
   /// Fetch public live streams for the home page (no auth required).
   /// Queries the mu-plugin bridge endpoint which pulls data from the DLS
   /// (Dokan Live Stream) plugin's vendor user-meta storage.
@@ -3482,4 +3502,47 @@ class UnauthorizedException extends ApiException {
 
 class NotFoundException extends ApiException {
   NotFoundException(String message) : super(message, 404);
+}
+
+/// 0 = not relevant. Every word in [q] must match the START of a word in the
+/// product's text (so "bag" matches "Leather bag" but not "garbage"; "acc"
+/// still matches "accountancy" while the user is typing).
+int _searchRelevance(Product p, String q) {
+  final terms = q.split(RegExp(r'\s+')).where((t) => t.length >= 2).toList();
+  if (terms.isEmpty) return q.isEmpty ? 0 : 1;
+
+  bool hasWordStart(String text, String term) =>
+      RegExp(r'(^|[^a-z0-9])' + RegExp.escape(term)).hasMatch(text);
+
+  final name = p.name.toLowerCase();
+  final cats = p.categories.map((c) => c.name.toLowerCase()).join(' | ');
+  final vendor = (p.vendorName ?? '').toLowerCase();
+  final sku = (p.sku ?? '').toLowerCase();
+  final shortDesc = (p.shortDescription ?? '').toLowerCase();
+  final desc = (p.description ?? '').toLowerCase();
+
+  var score = 0;
+  for (final t in terms) {
+    if (hasWordStart(name, t)) {
+      score += 30;
+    } else if (hasWordStart(cats, t) || hasWordStart(sku, t)) {
+      score += 15;
+    } else if (hasWordStart(vendor, t) || hasWordStart(shortDesc, t)) {
+      score += 8;
+    } else if (hasWordStart(desc, t)) {
+      score += 3;
+    } else {
+      return 0; // a typed word matched nowhere → not relevant
+    }
+  }
+  if (name == q) score += 100;
+  else if (name.startsWith(q)) score += 60;
+  else if (name.contains(q)) score += 30;
+  return score;
+}
+
+class _CachedSearch {
+  final List<Product> products;
+  final DateTime at;
+  _CachedSearch(this.products, this.at);
 }

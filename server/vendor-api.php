@@ -694,64 +694,114 @@ if ( $action === 'search_products' ) {
     $page     = max( 1, (int) ( $_GET['page'] ?? 1 ) );
     $offset   = ( $page - 1 ) * $per_page;
 
-    // Log the search attempt to a plain-text file so we can debug
-    // WAF / parser failures without the WP debug log.  Max 1 MB.
-    $log_file = __DIR__ . '/vendor-api-search.log';
-    if ( function_exists( 'ini_get' ) ) {
-        $log_max = 1048576; // 1 MB
-        if ( @is_file( $log_file ) && @filesize( $log_file ) > $log_max ) {
-            @unlink( $log_file );
-        }
-    }
-    $log_line = sprintf(
-        "[%s] ip=%s q=%s ua=%s\n",
-        date( 'Y-m-d H:i:s' ),
-        $_SERVER['REMOTE_ADDR'] ?? 'unknown',
-        $q_raw !== '' ? $q_raw : '(empty)',
-        substr( preg_replace( '/\s+/', ' ', $_SERVER['HTTP_USER_AGENT'] ?? '' ), 0, 120 )
-    );
-    @file_put_contents( $log_file, $log_line, FILE_APPEND );
+    // NOTE: the per-search log file write was removed (disk I/O on every
+    // keystroke-triggered request made search slower).
 
     // Quick return for empty query (keep HTTP 200)
     if ( $q_raw === '' ) {
         vendor_api_respond( [ 'products' => [], 'total' => 0, 'note' => 'empty query' ] );
     }
 
-    global $wpdb;
-    $q_like = '%' . $wpdb->esc_like( $q_raw ) . '%';
-
-    // Count matches first (cheaper than fetching rows if nothing matches)
-    $count_sql = "
-        SELECT COUNT(DISTINCT p.ID)
-        FROM {$wpdb->posts} p
-        LEFT JOIN {$wpdb->postmeta} pm
-               ON pm.post_id = p.ID
-              AND pm.meta_key IN ('_sku', 'total_sales', '_wc_average_rating', '_wc_review_count')
-        WHERE p.post_type = 'product'
-          AND p.post_status = 'publish'
-          AND (
-              p.post_title    LIKE %s
-           OR p.post_content  LIKE %s
-           OR p.post_excerpt  LIKE %s
-           OR (pm.meta_key = '_sku' AND pm.meta_value LIKE %s)
-          )
-    ";
-    $total = (int) $wpdb->get_var( $wpdb->prepare(
-        $count_sql,
-        $q_like, $q_like, $q_like, $q_like
-    ) );
-
-    if ( $total === 0 ) {
-        vendor_api_respond( [ 'products' => [], 'total' => 0, 'q' => $q_raw, 'note' => 'no matches' ] );
+    // Fast path: identical searches within 2 minutes come straight from cache.
+    $cache_key = 'zz_srch_' . md5( strtolower( $q_raw ) . '|' . $page . '|' . $per_page );
+    $cached    = get_transient( $cache_key );
+    if ( is_array( $cached ) ) {
+        vendor_api_respond( $cached );
     }
 
-    // Fetch matched products with basic meta (mirrors WC REST shape closely
-    // enough that Product.fromJson can ingest it after a light transform
-    // on the client — OR the client can use ids to call the regular
-    // products endpoint; we return both: raw row + product IDs list).
+    global $wpdb;
+    $q_like  = '%' . $wpdb->esc_like( $q_raw ) . '%';
+    $q_first = '%' . $wpdb->esc_like( preg_replace( '/\s+.*/', '', $q_raw ) ) . '%';
+
+    // STEP 1 — find matching IDs only. No 8-table postmeta join, no
+    // DISTINCT over wide rows: SKU is checked with a cheap EXISTS sub-query
+    // and total_sales is read only for the rows that matched (for ranking).
+    // RELEVANCE: split the query into words and require EVERY word to match
+    // somewhere meaningful (title, excerpt, description, SKU or category
+    // name). "red leather bag" no longer returns anything that merely
+    // contains the word "red".
+    $terms = preg_split( '/\s+/', mb_strtolower( $q_raw ), -1, PREG_SPLIT_NO_EMPTY );
+    $terms = array_values( array_unique( array_filter( (array) $terms, function ( $t ) {
+        return mb_strlen( $t ) >= 2;
+    } ) ) );
+    $terms = array_slice( $terms, 0, 5 );
+    if ( empty( $terms ) ) {
+        $terms = [ mb_strtolower( $q_raw ) ];
+    }
+
+    $where_parts = [];
+    $where_args  = [];
+    foreach ( $terms as $t ) {
+        $tl = '%' . $wpdb->esc_like( $t ) . '%';
+        $where_parts[] = "(
+              p.post_title   LIKE %s
+           OR p.post_excerpt LIKE %s
+           OR p.post_content LIKE %s
+           OR EXISTS ( SELECT 1 FROM {$wpdb->postmeta} ps
+                        WHERE ps.post_id = p.ID AND ps.meta_key = '_sku'
+                          AND ps.meta_value LIKE %s )
+           OR EXISTS ( SELECT 1 FROM {$wpdb->term_relationships} tr
+                         JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
+                          AND tt.taxonomy = 'product_cat'
+                         JOIN {$wpdb->terms} tm ON tm.term_id = tt.term_id
+                        WHERE tr.object_id = p.ID AND tm.name LIKE %s )
+        )";
+        array_push( $where_args, $tl, $tl, $tl, $tl, $tl );
+    }
+    $where_sql = implode( ' AND ', $where_parts );
+
+    $ids_sql = "
+        SELECT p.ID
+        FROM {$wpdb->posts} p
+        WHERE p.post_type = 'product'
+          AND p.post_status = 'publish'
+          AND ( {$where_sql} )
+        ORDER BY
+            CASE WHEN p.post_title LIKE %s THEN 1 ELSE 2 END,
+            CASE WHEN p.post_title LIKE %s THEN 0 ELSE 1 END,
+            CASE WHEN p.post_title LIKE %s THEN 0 ELSE 1 END,
+            CAST(COALESCE(( SELECT pt.meta_value FROM {$wpdb->postmeta} pt
+                             WHERE pt.post_id = p.ID AND pt.meta_key = 'total_sales'
+                             LIMIT 1 ), '0') AS DECIMAL(18,4)) DESC,
+            p.ID DESC
+        LIMIT %d OFFSET %d
+    ";
+    $ids = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare(
+        $ids_sql,
+        array_merge(
+            $where_args,
+            [ $q_like, $q_first, $wpdb->esc_like( $q_raw ) . '%', $per_page, $offset ]
+        )
+    ) ) );
+
+    if ( empty( $ids ) ) {
+        $empty = [ 'products' => [], 'total' => 0, 'q' => $q_raw, 'note' => 'no matches' ];
+        set_transient( $cache_key, $empty, 120 );
+        vendor_api_respond( $empty );
+    }
+
+    // Total: exact count only when a full page came back (rare need).
+    $total = $offset + count( $ids );
+    if ( count( $ids ) >= $per_page ) {
+        $total = (int) $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+              WHERE p.post_type = 'product' AND p.post_status = 'publish'
+                AND ( {$where_sql} )",
+            $where_args
+        ) );
+    }
+
+    // Warm WP object caches for all matched products in 2 queries instead
+    // of several per product (meta, terms, thumbnails).
+    if ( function_exists( '_prime_post_caches' ) ) {
+        _prime_post_caches( $ids, true, true );
+    }
+
+    // STEP 2 — fetch display columns for just those IDs.
+    $id_list  = implode( ',', $ids );
     $rows_sql = "
         SELECT
-            DISTINCT p.ID,
+            p.ID,
             p.post_title        AS name,
             p.post_name         AS slug,
             p.post_content      AS description,
@@ -774,28 +824,10 @@ if ( $action === 'search_products' ) {
         LEFT JOIN {$wpdb->postmeta} pm_rating  ON pm_rating.post_id = p.ID  AND pm_rating.meta_key = '_wc_average_rating'
         LEFT JOIN {$wpdb->postmeta} pm_reviews ON pm_reviews.post_id = p.ID AND pm_reviews.meta_key = '_wc_review_count'
         LEFT JOIN {$wpdb->postmeta} pm_sales   ON pm_sales.post_id = p.ID   AND pm_sales.meta_key = 'total_sales'
-        WHERE p.post_type = 'product'
-          AND p.post_status = 'publish'
-          AND (
-              p.post_title    LIKE %s
-           OR p.post_content  LIKE %s
-           OR p.post_excerpt  LIKE %s
-           OR (pm_sku.meta_value IS NOT NULL AND pm_sku.meta_value LIKE %s)
-          )
-        ORDER BY
-            CASE WHEN p.post_title LIKE %s THEN 1 ELSE 2 END,
-            CASE WHEN p.post_title LIKE %s THEN 0 ELSE 1 END,
-            CAST(COALESCE(pm_sales.meta_value, '0') AS DECIMAL(18,4)) DESC,
-            p.ID DESC
-        LIMIT %d OFFSET %d
+        WHERE p.ID IN ({$id_list})
+        ORDER BY FIELD(p.ID, {$id_list})
     ";
-    $rows = $wpdb->get_results( $wpdb->prepare(
-        $rows_sql,
-        $q_like, $q_like, $q_like, $q_like,      // WHERE LIKEs
-        $q_like,                                 // ORDER BY CASE 1 — exact-ish prefix
-        '%' . $wpdb->esc_like( preg_replace( '/\s+.*/', '', $q_raw ) ) . '%',  // ORDER BY CASE 2 — first-word prefix
-        $per_page, $offset
-    ) );
+    $rows = $wpdb->get_results( $rows_sql );
 
     $products = [];
     foreach ( (array) $rows as $r ) {
@@ -873,13 +905,15 @@ if ( $action === 'search_products' ) {
         ];
     }
 
-    vendor_api_respond( [
+    $payload = [
         'products' => $products,
         'total'    => $total,
         'page'     => $page,
         'per_page' => $per_page,
         'q'        => $q_raw,
-    ] );
+    ];
+    set_transient( $cache_key, $payload, 120 );
+    vendor_api_respond( $payload );
 }
 
 // ── get_all_product_categories (no auth) ───────────────────────────────
@@ -993,11 +1027,25 @@ if ( $action === 'get_products_by_category' ) {
     }
 
     // ── 2. Fetch IDs for this page ─────────────────────────────────────
-    $ids_sql = "SELECT DISTINCT p.ID FROM {$wpdb->posts} p{$join} WHERE {$where} ORDER BY p.post_title ASC LIMIT %d OFFSET %d";
+    // Optional stable shuffle: the app sends a per-launch `shuffle_seed`.
+    // MySQL RAND(seed) is deterministic, so pages 1,2,3... of ONE app launch
+    // stay consistent (no duplicates) while every new launch sees a
+    // different order. Without a seed the old A-Z order is kept.
+    $has_seed = isset( $_GET['shuffle_seed'] ) && $_GET['shuffle_seed'] !== '';
+    $seed     = $has_seed ? (int) $_GET['shuffle_seed'] : 0;
+    if ( $has_seed ) {
+        $ids_sql = "SELECT p.ID FROM {$wpdb->posts} p{$join} WHERE {$where} GROUP BY p.ID ORDER BY RAND({$seed}) LIMIT %d OFFSET %d";
+    } else {
+        $ids_sql = "SELECT DISTINCT p.ID FROM {$wpdb->posts} p{$join} WHERE {$where} ORDER BY p.post_title ASC LIMIT %d OFFSET %d";
+    }
     if ( $category_id > 0 ) {
         $ids = $wpdb->get_col( $wpdb->prepare( $ids_sql, $category_id, $per_page, $offset ) );
     } else {
         $ids = $wpdb->get_col( $wpdb->prepare( $ids_sql, $per_page, $offset ) );
+    }
+
+    if ( ! empty( $ids ) && function_exists( '_prime_post_caches' ) ) {
+        _prime_post_caches( array_map( 'intval', $ids ), true, true );
     }
 
     $products = [];
@@ -1119,16 +1167,44 @@ if ( $action === 'get_product' ) {
     $store_name = $store_name ?: get_the_author_meta( 'display_name', $author_id );
 
     // Attributes — mirror the WC REST shape (name / options / variation).
+    // For GLOBAL (taxonomy) attributes WooCommerce stores term IDs, so
+    // get_options() returns numbers like 8091. The app must show the term
+    // NAMES (e.g. "VIII" / "Medium") exactly like the website does, so we
+    // resolve IDs → names here and also expose each option's slug.
     $attributes = [];
     foreach ( $wc_product->get_attributes() as $attr ) {
         if ( ! is_object( $attr ) ) continue;
+
+        $raw_name    = $attr->get_name();
+        $is_taxonomy = method_exists( $attr, 'is_taxonomy' ) ? (bool) $attr->is_taxonomy() : false;
+        $option_names  = [];
+        $option_detail = [];
+
+        if ( $is_taxonomy ) {
+            $label = wc_attribute_label( $raw_name );
+            $terms = wc_get_product_terms( $product_id, $raw_name, [ 'fields' => 'all' ] );
+            foreach ( (array) $terms as $term ) {
+                if ( ! is_object( $term ) ) continue;
+                $option_names[]  = $term->name;
+                $option_detail[] = [ 'name' => $term->name, 'slug' => $term->slug ];
+            }
+        } else {
+            $label = $raw_name;
+            foreach ( (array) $attr->get_options() as $opt ) {
+                $option_names[]  = (string) $opt;
+                $option_detail[] = [ 'name' => (string) $opt, 'slug' => sanitize_title( (string) $opt ) ];
+            }
+        }
+
         $attributes[] = [
             'id'        => method_exists( $attr, 'get_id' ) ? (int) $attr->get_id() : 0,
-            'name'      => $attr->get_name(),
+            'key'       => sanitize_title( $raw_name ),
+            'name'      => $label,
             'position'  => method_exists( $attr, 'get_position' ) ? (int) $attr->get_position() : 0,
             'visible'   => method_exists( $attr, 'get_visible' ) ? (bool) $attr->get_visible() : true,
             'variation' => method_exists( $attr, 'get_variation' ) ? (bool) $attr->get_variation() : false,
-            'options'   => $attr->get_options(),
+            'options'   => $option_names,
+            'options_detail' => $option_detail,
         ];
     }
 
@@ -1142,9 +1218,25 @@ if ( $action === 'get_product' ) {
             $vimg_id = $v->get_image_id();
             $vimg    = $vimg_id ? wp_get_attachment_image_url( $vimg_id, 'woocommerce_single' ) : null;
 
+            // Variation attributes come back as  attribute_pa_size => 'viii'
+            // (a term SLUG, or '' meaning "any"). Convert slug → term name so
+            // it matches the option names sent in `attributes` above.
             $var_attrs = [];
             foreach ( $v->get_variation_attributes() as $k => $val ) {
-                $var_attrs[] = [ 'name' => wc_attribute_label( $k ), 'option' => $val ];
+                $tax_key = preg_replace( '/^attribute_/', '', $k );
+                $display = (string) $val;
+                if ( $display !== '' && taxonomy_exists( $tax_key ) ) {
+                    $term = get_term_by( 'slug', $display, $tax_key );
+                    if ( $term && ! is_wp_error( $term ) ) {
+                        $display = $term->name;
+                    }
+                }
+                $var_attrs[] = [
+                    'key'    => sanitize_title( $tax_key ),
+                    'name'   => wc_attribute_label( $tax_key ),
+                    'option' => $display,
+                    'slug'   => (string) $val,
+                ];
             }
 
             $variations[] = [

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 
 class AuthProvider with ChangeNotifier {
@@ -59,6 +60,10 @@ class AuthProvider with ChangeNotifier {
                 (int.tryParse(userData['vendor_store_id'] ?? '') ?? 0) > 0;
             debugPrint('[Auth] Restored cached auth. '
                 'Token lifetime: ${apiService.debugTokenLifetime}');
+            // Re-sync the FCM token now that we have a valid, authenticated
+            // ApiService — the cold-start registration attempt in main.dart
+            // ran before login and had no user to attach the token to.
+            NotificationService().registerCurrentToken();
           } else {
             await storageService.deleteAuthToken();
             apiService.clearAuthToken();
@@ -130,6 +135,9 @@ class AuthProvider with ChangeNotifier {
             'vendor_store_id': _user!.vendorStoreId?.toString(),
           },
         );
+        // Tie this device's FCM token to the now-authenticated user so
+        // order-update / livestream push notifications reach them.
+        NotificationService().registerCurrentToken();
         _isLoading = false;
         notifyListeners();
         return true;
@@ -161,6 +169,10 @@ class AuthProvider with ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // Unregister this device's FCM token while the JWT is still attached —
+    // otherwise a shared/reinstalled device keeps receiving the previous
+    // user's push notifications after they log out.
+    await NotificationService().unregisterDeviceToken();
     _user = null;
     _isAuthenticated = false;
     _isVendor = false;

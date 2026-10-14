@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
@@ -488,6 +489,7 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
                 ),
               ],
               flexibleSpace: FlexibleSpaceBar(
+                collapseMode: CollapseMode.pin,
                 background: _buildBannerHeader(),
               ),
             ),
@@ -539,11 +541,39 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Banner image
-        if (_bannerUrl != null)
+        // Banner image — shown in FULL, never stretched or cropped:
+        //   • back layer: same image, cover-fit and blurred (fills any
+        //     leftover space so there are no empty bars, looks natural)
+        //   • front layer: the image at its true aspect ratio (BoxFit.contain)
+        if (_bannerUrl != null && _bannerUrl!.isNotEmpty) ...[
+          ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: Image.network(
+              _bannerUrl!,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: double.infinity,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            ),
+          ),
           Image.network(
             _bannerUrl!,
-            fit: BoxFit.cover,
+            fit: BoxFit.contain,
+            alignment: Alignment.center,
+            width: double.infinity,
+            height: double.infinity,
+            filterQuality: FilterQuality.high,
+            loadingBuilder: (context, child, progress) => progress == null
+                ? child
+                : Container(
+                    color: AppColors.indigoPaleColor,
+                    alignment: Alignment.center,
+                    child: const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
             errorBuilder: (_, __, ___) => Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -553,8 +583,8 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
                 ),
               ),
             ),
-          )
-        else
+          ),
+        ] else
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -569,9 +599,10 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
-                Colors.black.withOpacity(0.2),
-                Colors.black.withOpacity(0.6),
+                Colors.black.withOpacity(0.05),
+                Colors.black.withOpacity(0.55),
               ],
+              stops: const [0.45, 1.0],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
             ),
@@ -1521,8 +1552,6 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
   // ─── Contact Tab ───
 
   Widget _buildContactTab() {
-    final phone = _vendorData?['phone']?.toString();
-    final email = _vendorData?['email']?.toString();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -1543,14 +1572,6 @@ class _VendorProfileScreenState extends State<VendorProfileScreen>
           const SizedBox(height: 20),
 
           // Contact info cards
-          if (phone != null && phone.isNotEmpty) ...[
-            _buildContactCard(Icons.phone_outlined, 'Phone', phone),
-            const SizedBox(height: 10),
-          ],
-          if (email != null && email.isNotEmpty) ...[
-            _buildContactCard(Icons.email_outlined, 'Email', email),
-            const SizedBox(height: 10),
-          ],
           if (_address != null) ...[
             _buildContactCard(Icons.location_on_outlined, 'Address', _address!),
             const SizedBox(height: 10),

@@ -62,6 +62,10 @@ class ApiConstants {
   static const String dokanLiveStreamsEndpoint = '$dokanV1Base/livestreams';
   static const String dokanLiveStreamsAltEndpoint = '$dokanV1Base/live-streams';
   static const String appLivestreamsEndpoint = '$appV1Base/livestreams';
+  // Explicit go-live / end-stream toggle — separate from the create/edit
+  // form save so ending a stream doesn't require resubmitting the URL.
+  static const String appLivestreamVendorStatusEndpoint =
+      '$appV1Base/livestreams/vendor/status';
 
   // Push Notifications (device token registration)
   static const String registerDeviceEndpoint = '$appV1Base/register-device';

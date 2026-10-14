@@ -82,6 +82,9 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
             // Force consumer rebuild so restored stats paint immediately
             // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
             vendor.notifyListeners();
+            // Show the cached dashboard right away; fresh data keeps loading
+            // in the background and updates the tiles when it lands.
+            if (!_initComplete) setState(() => _initComplete = true);
             debugPrint('Vendor dashboard restored from Hive cache for vendor $resolvedStoreId');
           }
           // 2) Then load fresh store info (network)
@@ -99,8 +102,23 @@ class _VendorDashboardScreenState extends State<VendorDashboardScreen> {
 
       // ── STEP 1: Run data loads -- each with a hard timeout so a single
       //    stuck HTTP call can never hold the batch (and spinner) hostage. ──
+      //
+      // BUG FIX: loadDashboard() (stats) used to share the same 12s cap as
+      // the simpler single-source loads below. But it internally chains up
+      // to FOUR fallback report sources (vendor-api.php bypass -> Dokan/WC
+      // REST -> Woo Report plugin -> Woo Report vendor stats), each with its
+      // own ~10s timeout, tried in sequence whenever the previous one comes
+      // back empty. Its real worst case is well over a minute, so the outer
+      // 12s cap routinely fired before the real numbers came back — the
+      // screen would paint all-zero stats it had (correctly!) stopped
+      // waiting for, while the abandoned network call kept running in the
+      // background and only updated the screen later (on a manual
+      // pull-to-refresh, which calls this same function with NO timeout at
+      // all and so patiently waits it out — which is why refreshing always
+      // "fixed" it). Give this one call as much time as it can legitimately
+      // need instead of an arbitrary cap shorter than its own fallback chain.
       final futures = <Future<void>>[
-        vendor.loadDashboard().timeout(const Duration(seconds: 12), onTimeout: () {
+        vendor.loadDashboard().timeout(const Duration(seconds: 45), onTimeout: () {
           debugPrint('[Dashboard] loadDashboard TIMED OUT');
         }),
         vendor.loadOrders().timeout(const Duration(seconds: 12), onTimeout: () {

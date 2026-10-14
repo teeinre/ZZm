@@ -1749,7 +1749,7 @@ class _SearchResultsPageState extends State<SearchResultsPage> {
     });
 
     try {
-      final results = await _api.searchProducts(query, perPage: 100);
+      final results = await _api.searchProducts(query, perPage: 40);
       if (!mounted || seq != _searchSeq) return; // stale response, ignore
       // Filter out excluded vendor products from search results
       final filtered = results.where((p) =>

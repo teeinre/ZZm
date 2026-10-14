@@ -64,30 +64,42 @@ void main() async {
   final hiveService = HiveService();
   await hiveService.init();
 
-  // Initialize Firebase (required for push notifications on Android only).
-  // Requires google-services.json from Firebase Console placed at:
-  //   android/app/google-services.json
-  if (defaultTargetPlatform == TargetPlatform.android) {
-    try {
-      await Firebase.initializeApp();
-      // Initialize push notifications (non-blocking)
-      NotificationService().initialize();
-    } catch (e) {
-      // Firebase not configured — push notifications disabled
-      debugPrint('Firebase not configured. Push notifications disabled.');
-    }
+  // Single shared ApiService instance for the whole app (providers +
+  // NotificationService). Previously NotificationService created its own
+  // throwaway ApiService that never carried the user's JWT, so device-token
+  // registration silently 401'd and push notifications never worked — see
+  // notification_service.dart for the full explanation.
+  final apiService = ApiService();
+  NotificationService().attachApiService(apiService);
+
+  // Initialize Firebase (required for push notifications). Requires
+  // google-services.json (Android) at android/app/google-services.json and
+  // GoogleService-Info.plist (iOS) at ios/Runner/GoogleService-Info.plist.
+  // Wrapped in try/catch so a platform missing its config file just disables
+  // push there instead of crashing startup.
+  try {
+    await Firebase.initializeApp();
+    // Initialize push notifications (non-blocking)
+    NotificationService().initialize();
+  } catch (e) {
+    // Firebase not configured for this platform — push notifications disabled
+    debugPrint('Firebase not configured. Push notifications disabled: $e');
   }
 
-  runApp(ZZmoreStoreApp(hiveService: hiveService));
+  runApp(ZZmoreStoreApp(hiveService: hiveService, apiService: apiService));
 }
 
 class ZZmoreStoreApp extends StatelessWidget {
   final HiveService hiveService;
-  const ZZmoreStoreApp({super.key, required this.hiveService});
+  final ApiService apiService;
+  const ZZmoreStoreApp({
+    super.key,
+    required this.hiveService,
+    required this.apiService,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final apiService = ApiService();
     final storageService = StorageService();
     return MultiProvider(
       providers: [

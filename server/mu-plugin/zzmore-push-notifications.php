@@ -27,12 +27,27 @@
 defined('ABSPATH') || exit;
 
 // ─── Configuration ───────────────────────────────────────────────────────────
-
-// Set your Firebase Cloud Messaging server key here or via wp-config.php.
-// Get this from Firebase Console > Project Settings > Cloud Messaging > Server key.
-if (!defined('FCM_SERVER_KEY')) {
-    // define('FCM_SERVER_KEY', 'YOUR_FCM_SERVER_KEY_HERE');
-}
+//
+// CRITICAL: this plugin used to send via the FCM *legacy* HTTP API
+// (fcm.googleapis.com/fcm/send with an `Authorization: key=<server key>`
+// header). Google fully retired that API in mid-2024 — it now rejects every
+// request, so every push this plugin tried to send (order updates,
+// livestream-start alerts, promotions) was silently failing regardless of
+// whether device tokens were registered. Sending has been rewritten below to
+// use the current FCM HTTP v1 API, which is a completely different auth
+// model: a short-lived OAuth2 access token minted from a Firebase *service
+// account*, not a static server key.
+//
+// To configure, get a service account key from Firebase Console → Project
+// Settings → Service Accounts → "Generate new private key" (downloads a
+// JSON file), then set ONE of:
+//   define('ZZMORE_FCM_SERVICE_ACCOUNT_JSON', file_get_contents('/path/outside/webroot/service-account.json'));
+//   define('ZZMORE_FCM_SERVICE_ACCOUNT_PATH', '/path/outside/webroot/service-account.json');
+//   update_option('zzmore_fcm_service_account_json', file_get_contents('...'));
+// in wp-config.php (preferred — keeps the key out of the database) or via a
+// one-off wp-cli snippet. The project id, signing key, and OAuth client
+// email are all read from that JSON; there is no separate "server key"
+// setting any more.
 
 // ─── Register device token endpoint ──────────────────────────────────────────
 
@@ -302,33 +317,154 @@ function zzmore_send_push_to_vendor_followers(int $vendor_id, string $title, str
 }
 
 /**
- * Core FCM v1 (HTTP) send function.
- * Uses the legacy FCM HTTP API — compatible with server key auth.
+ * Read + validate the configured Firebase service account (see the
+ * Configuration block at the top of this file). Result is cached for the
+ * lifetime of the request.
+ */
+function zzmore_fcm_service_account(): ?array
+{
+    static $checked = false;
+    static $account = null;
+    if ($checked) return $account;
+    $checked = true;
+
+    $json = '';
+    if (defined('ZZMORE_FCM_SERVICE_ACCOUNT_JSON') && ZZMORE_FCM_SERVICE_ACCOUNT_JSON) {
+        $json = ZZMORE_FCM_SERVICE_ACCOUNT_JSON;
+    } elseif (defined('ZZMORE_FCM_SERVICE_ACCOUNT_PATH') && ZZMORE_FCM_SERVICE_ACCOUNT_PATH && is_readable(ZZMORE_FCM_SERVICE_ACCOUNT_PATH)) {
+        $json = (string) file_get_contents(ZZMORE_FCM_SERVICE_ACCOUNT_PATH);
+    } else {
+        $json = (string) get_option('zzmore_fcm_service_account_json', '');
+    }
+
+    if (empty($json)) {
+        return null;
+    }
+
+    $data = json_decode($json, true);
+    if (!is_array($data) || empty($data['client_email']) || empty($data['private_key']) || empty($data['project_id'])) {
+        error_log('[ZZmore Push] FCM service account JSON is missing client_email/private_key/project_id.');
+        return null;
+    }
+
+    $account = $data;
+    return $account;
+}
+
+/**
+ * Mint (and cache) a short-lived OAuth2 access token for the FCM v1 API via
+ * the service-account JWT-bearer flow (RFC 7523) — implemented with core
+ * PHP openssl functions only, no Google client library / Composer needed.
+ */
+function zzmore_fcm_access_token(): ?string
+{
+    $account = zzmore_fcm_service_account();
+    if (!$account) return null;
+
+    $cache_key = 'zzmore_fcm_access_token_' . md5($account['client_email']);
+    $cached = get_transient($cache_key);
+    if (is_string($cached) && $cached !== '') return $cached;
+
+    $now = time();
+    $b64url = function (string $s): string {
+        return rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
+    };
+
+    $jwt_unsigned = $b64url(wp_json_encode(['alg' => 'RS256', 'typ' => 'JWT'])) . '.' . $b64url(wp_json_encode([
+        'iss'   => $account['client_email'],
+        'scope' => 'https://www.googleapis.com/auth/firebase.messaging',
+        'aud'   => 'https://oauth2.googleapis.com/token',
+        'iat'   => $now,
+        'exp'   => $now + 3600,
+    ]));
+
+    $signature = '';
+    if (!openssl_sign($jwt_unsigned, $signature, $account['private_key'], 'SHA256')) {
+        error_log('[ZZmore Push] Failed to sign FCM OAuth2 JWT — check the private_key field in the service account JSON.');
+        return null;
+    }
+    $jwt = $jwt_unsigned . '.' . $b64url($signature);
+
+    $response = wp_remote_post('https://oauth2.googleapis.com/token', [
+        'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
+        'body'    => [
+            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            'assertion'  => $jwt,
+        ],
+        'timeout' => 10,
+    ]);
+
+    if (is_wp_error($response)) {
+        error_log('[ZZmore Push] FCM OAuth2 token request error: ' . $response->get_error_message());
+        return null;
+    }
+    if (wp_remote_retrieve_response_code($response) !== 200) {
+        error_log('[ZZmore Push] FCM OAuth2 token HTTP ' . wp_remote_retrieve_response_code($response) . ': ' . wp_remote_retrieve_body($response));
+        return null;
+    }
+
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+    $token = $body['access_token'] ?? null;
+    if (!$token) return null;
+
+    $expires_in = (int) ($body['expires_in'] ?? 3600);
+    // Cache for a bit less than the real lifetime so we never hand out a
+    // token that expires mid-flight.
+    set_transient($cache_key, $token, max(60, $expires_in - 120));
+
+    return $token;
+}
+
+/**
+ * Core FCM v1 (HTTP) send function — one message to one device token.
  */
 function zzmore_send_fcm_message(string $token, string $title, string $body, array $data = []): bool
 {
-    $server_key = defined('FCM_SERVER_KEY') ? FCM_SERVER_KEY : '';
-    if (empty($server_key)) {
-        error_log('[ZZmore Push] FCM_SERVER_KEY not defined. Skipping push.');
+    $account = zzmore_fcm_service_account();
+    if (!$account) {
+        error_log('[ZZmore Push] FCM service account not configured. Skipping push.');
         return false;
     }
 
+    $access_token = zzmore_fcm_access_token();
+    if (!$access_token) {
+        error_log('[ZZmore Push] Could not obtain FCM OAuth2 access token. Skipping push.');
+        return false;
+    }
+
+    // FCM v1 requires every `data` value to be a string.
+    $string_data = array_merge($data, ['click_action' => 'FLUTTER_NOTIFICATION_CLICK']);
+    foreach ($string_data as $k => $v) {
+        $string_data[$k] = is_string($v) ? $v : (string) wp_json_encode($v);
+    }
+
     $payload = [
-        'to'           => $token,
-        'notification' => [
-            'title'          => $title,
-            'body'           => $body,
-            'sound'          => 'default',
-            'android_channel_id' => 'zzmore_notifications',
+        'message' => [
+            'token'        => $token,
+            'notification' => [
+                'title' => $title,
+                'body'  => $body,
+            ],
+            'data'    => $string_data,
+            'android' => [
+                'notification' => [
+                    'sound'      => 'default',
+                    'channel_id' => 'zzmore_notifications',
+                ],
+            ],
+            'apns' => [
+                'payload' => [
+                    'aps' => ['sound' => 'default'],
+                ],
+            ],
         ],
-        'data' => array_merge($data, [
-            'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
-        ]),
     ];
 
-    $response = wp_remote_post('https://fcm.googleapis.com/fcm/send', [
+    $url = 'https://fcm.googleapis.com/v1/projects/' . rawurlencode($account['project_id']) . '/messages:send';
+
+    $response = wp_remote_post($url, [
         'headers' => [
-            'Authorization' => 'key=' . $server_key,
+            'Authorization' => 'Bearer ' . $access_token,
             'Content-Type'  => 'application/json',
         ],
         'body'    => wp_json_encode($payload),
@@ -342,14 +478,15 @@ function zzmore_send_fcm_message(string $token, string $title, string $body, arr
 
     $code = wp_remote_retrieve_response_code($response);
     if ($code !== 200) {
-        error_log('[ZZmore Push] FCM HTTP ' . $code . ': ' . wp_remote_retrieve_body($response));
-        return false;
-    }
-
-    $result = json_decode(wp_remote_retrieve_body($response), true);
-    if (!empty($result['failure'])) {
-        // Token may be invalid — clean it up
-        zzmore_cleanup_invalid_token($token);
+        $resp_body = wp_remote_retrieve_body($response);
+        error_log('[ZZmore Push] FCM HTTP ' . $code . ': ' . $resp_body);
+        // Unregistered/invalid tokens come back as 404 NOT_FOUND or 400
+        // INVALID_ARGUMENT under v1 — clean those up so we stop retrying them.
+        $decoded = json_decode($resp_body, true);
+        $error_status = $decoded['error']['status'] ?? '';
+        if (in_array($error_status, ['UNREGISTERED', 'NOT_FOUND', 'INVALID_ARGUMENT'], true)) {
+            zzmore_cleanup_invalid_token($token);
+        }
         return false;
     }
 
