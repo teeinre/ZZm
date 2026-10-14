@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:app_links/app_links.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'constants/app_colors.dart';
@@ -23,6 +24,7 @@ import 'providers/theme_provider.dart';
 import 'providers/currency_provider.dart';
 import 'screens/main_screen.dart';
 import 'screens/auth/forgot_password_screen.dart';
+import 'screens/profile_screen.dart' show LoginPage, RegisterPage;
 
 final GlobalKey<NavigatorState> _appNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -45,49 +47,147 @@ void _handleResetUri(Uri uri) {
   });
 }
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+/// Shown instead of a blank white screen if something fails while the app
+/// is starting, so the real cause is visible (and can be reported).
+class _StartupErrorApp extends StatelessWidget {
+  final String message;
+  const _StartupErrorApp(this.message);
 
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 40),
+                  const Text('ZZmore could not start',
+                      style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black)),
+                  const SizedBox(height: 12),
+                  const Text(
+                      'Please send a screenshot of this screen to support.',
+                      style: TextStyle(fontSize: 14, color: Colors.black87)),
+                  const SizedBox(height: 20),
+                  SelectableText(message,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.black54,
+                          fontFamily: 'monospace')),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> main() async {
+  // Any error that escapes — including async ones — is caught here instead of
+  // leaving the user on a blank white screen.
+  await runZonedGuarded<Future<void>>(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      debugPrint('FlutterError: ${details.exceptionAsString()}');
+    };
+
+    try {
+      await _startApp();
+    } catch (e, st) {
+      debugPrint('Startup failed: $e\n$st');
+      runApp(_StartupErrorApp('$e\n\n$st'));
+    }
+  }, (error, stack) {
+    debugPrint('Uncaught error: $error\n$stack');
+  });
+}
+
+Future<void> _startApp() async {
   // Android 15+ edge-to-edge: system bars are transparent by default
   // when using SystemUiMode.edgeToEdge. Only set icon brightness to ensure
   // visibility against the app's background. Avoid deprecated color properties
   // (statusBarColor, systemNavigationBarColor, systemNavigationBarDividerColor)
   // which trigger the deprecated setStatusBarColor / setNavigationBarColor APIs.
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarIconBrightness: Brightness.dark,
-    systemNavigationBarIconBrightness: Brightness.dark,
-  ));
-
-  // Allow content to draw edge-to-edge behind system bars
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-
-  final hiveService = HiveService();
-  await hiveService.init();
-
-  // Initialize Firebase (required for push notifications on Android only).
-  // Requires google-services.json from Firebase Console placed at:
-  //   android/app/google-services.json
-  if (defaultTargetPlatform == TargetPlatform.android) {
-    try {
-      await Firebase.initializeApp();
-      // Initialize push notifications (non-blocking)
-      NotificationService().initialize();
-    } catch (e) {
-      // Firebase not configured — push notifications disabled
-      debugPrint('Firebase not configured. Push notifications disabled.');
-    }
+  try {
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarIconBrightness: Brightness.dark,
+    ));
+    // Allow content to draw edge-to-edge behind system bars
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  } catch (e) {
+    debugPrint('System UI setup skipped: $e');
   }
 
-  runApp(ZZmoreStoreApp(hiveService: hiveService));
+  final hiveService = HiveService();
+  try {
+    await hiveService.init().timeout(const Duration(seconds: 15));
+  } catch (e) {
+    // A damaged local cache (for example after updating over an old install)
+    // must never stop the app from opening: wipe the cache and try again.
+    debugPrint('Hive init failed ($e) — resetting local cache and retrying.');
+    for (final box in const [
+      HiveService.productsBox,
+      HiveService.categoriesBox,
+      HiveService.cartBox,
+      HiveService.settingsBox,
+    ]) {
+      try {
+        await Hive.deleteBoxFromDisk(box);
+      } catch (_) {}
+    }
+    await hiveService.init().timeout(const Duration(seconds: 15));
+  }
+
+  // Single shared ApiService instance for the whole app (providers +
+  // NotificationService). Previously NotificationService created its own
+  // throwaway ApiService that never carried the user's JWT, so device-token
+  // registration silently 401'd and push notifications never worked — see
+  // notification_service.dart for the full explanation.
+  final apiService = ApiService();
+  NotificationService().attachApiService(apiService);
+
+  // Initialize Firebase (required for push notifications). Requires
+  // google-services.json (Android) at android/app/google-services.json and
+  // GoogleService-Info.plist (iOS) at ios/Runner/GoogleService-Info.plist.
+  // Wrapped in try/catch (with a timeout) so a platform missing its config
+  // file, or a device without Google Play services, just disables push
+  // instead of blocking or crashing startup.
+  try {
+    await Firebase.initializeApp().timeout(const Duration(seconds: 10));
+    // Initialize push notifications (non-blocking)
+    NotificationService().initialize();
+  } catch (e) {
+    // Firebase not configured for this platform — push notifications disabled
+    debugPrint('Firebase not configured. Push notifications disabled: $e');
+  }
+
+  runApp(ZZmoreStoreApp(hiveService: hiveService, apiService: apiService));
 }
 
 class ZZmoreStoreApp extends StatelessWidget {
   final HiveService hiveService;
-  const ZZmoreStoreApp({super.key, required this.hiveService});
+  final ApiService apiService;
+  const ZZmoreStoreApp({
+    super.key,
+    required this.hiveService,
+    required this.apiService,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final apiService = ApiService();
     final storageService = StorageService();
     return MultiProvider(
       providers: [
@@ -186,7 +286,117 @@ class _AppRootState extends State<_AppRoot> {
   void initState() {
     super.initState();
     _initDeepLinks();
-    _checkForUpdate();
+    _runStartupPrompts();
+  }
+
+  /// Shown at most once per app launch, one after another (never stacked):
+  ///   1. "Update available" (throttled — see [_checkForUpdate])
+  ///   2. A friendly invitation for guests to create an account.
+  /// Neither one blocks the app; the user can always dismiss and carry on.
+  Future<void> _runStartupPrompts() async {
+    // Let the home screen paint before anything pops up.
+    await Future<void>.delayed(const Duration(seconds: 3));
+    if (!mounted) return;
+    await _checkForUpdate();
+    if (!mounted) return;
+    await _promptGuestToSignUp();
+  }
+
+  /// Invites visitors who are not logged in to create an account for member
+  /// discounts. This is only a prompt: closing it simply continues browsing.
+  Future<void> _promptGuestToSignUp() async {
+    try {
+      final auth = context.read<AuthProvider>();
+      // Wait (briefly) for the saved session to be restored so a returning,
+      // logged-in user never sees the invitation.
+      var waited = 0;
+      while (mounted && auth.isLoading && waited < 10000) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        waited += 200;
+      }
+      if (!mounted || auth.isAuthenticated) return;
+
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        backgroundColor: AppColors.creamColor,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(Icons.local_offer_rounded,
+                    size: 40, color: AppColors.goldColor),
+                const SizedBox(height: 12),
+                const Text(
+                  'Sign up to enjoy discounts',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.inkColor,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Create a free ZZmore account to unlock member discounts '
+                  'and offers from our vendors.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.4,
+                    color: AppColors.inkSoftColor,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.goldColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const RegisterPage()),
+                    );
+                  },
+                  child: const Text('Sign up free',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+                const SizedBox(height: 4),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const LoginPage()),
+                    );
+                  },
+                  child: const Text('I already have an account'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Maybe later',
+                      style: TextStyle(color: AppColors.inkSoftColor)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Sign-up prompt skipped: $e');
+    }
   }
 
   Future<void> _initDeepLinks() async {
@@ -204,54 +414,91 @@ class _AppRootState extends State<_AppRoot> {
     _subscription = _appLinks!.uriLinkStream.listen(_handleResetUri);
   }
 
-  /// Best-effort check for a newer app build. When the server reports a
-  /// version code higher than the installed build, prompt the user to open
-  /// the store listing. Silently no-ops on any failure.
+  /// Best-effort check for a newer app build. NEVER blocks the user:
+  ///  * An older app keeps working exactly as before.
+  ///  * The reminder is dismissible ("Later") and is shown at most once every
+  ///    3 days for the same new version (so it never nags).
+  ///  * Only if the server explicitly sets a minimum supported build, and this
+  ///    install is below it, is the prompt non-dismissible (reserved for the
+  ///    rare case where an old build can no longer work with the server).
+  /// Silently no-ops on any failure.
   Future<void> _checkForUpdate() async {
     try {
       final info = await ApiService().getLatestAppVersion();
       if (info == null) return;
 
       final latestCode = (info['latest_version_code'] as num?)?.toInt() ?? 0;
+      final minCode =
+          (info['min_supported_version_code'] as num?)?.toInt() ?? 0;
       if (latestCode <= ApiConstants.appVersionCode) return;
 
-      // Let the main UI settle before interrupting the user.
-      await Future<void>.delayed(const Duration(seconds: 2));
+      final mustUpdate = minCode > 0 && ApiConstants.appVersionCode < minCode;
+
+      // Pick the right store link for this platform. iOS has no default link,
+      // so without one configured on the server we simply don't prompt there.
+      final isIos = defaultTargetPlatform == TargetPlatform.iOS;
+      final updateUrl = isIos
+          ? info['update_url_ios']?.toString() ?? ''
+          : info['update_url']?.toString() ?? ApiConstants.appUpdateUrl;
+      if (updateUrl.isEmpty) return;
+
+      // Throttle the optional reminder (not the mandatory one).
+      final hive = HiveService();
+      final key = 'update_prompt_$latestCode';
+      if (!mustUpdate) {
+        try {
+          final last = int.tryParse(hive.getString(key) ?? '') ?? 0;
+          final age = DateTime.now().millisecondsSinceEpoch - last;
+          if (last > 0 && age < const Duration(days: 3).inMilliseconds) return;
+        } catch (_) {}
+      }
       if (!mounted) return;
 
       final latestName = info['latest_version_name']?.toString();
-      final updateUrl =
-          info['update_url']?.toString() ?? ApiConstants.appUpdateUrl;
+      final custom = info['update_message']?.toString() ?? '';
+      final message = custom.isNotEmpty
+          ? custom
+          : (latestName != null && latestName.isNotEmpty)
+              ? 'A newer version ($latestName) of ZZmore is available with '
+                  'the latest features and fixes. You can keep using the app '
+                  'and update whenever you like.'
+              : 'A newer version of ZZmore is available with the latest '
+                  'features and fixes. You can keep using the app and update '
+                  'whenever you like.';
 
-      showDialog<void>(
+      try {
+        await hive.saveString(
+            key, DateTime.now().millisecondsSinceEpoch.toString());
+      } catch (_) {}
+
+      await showDialog<void>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Update available'),
-          content: Text(
-            (latestName != null && latestName.isNotEmpty)
-                ? 'A newer version ($latestName) of ZZmore is available. '
-                    'Please update to get the latest features and fixes.'
-                : 'A newer version of ZZmore is available. Please update to '
-                    'get the latest features and fixes.',
+        barrierDismissible: !mustUpdate,
+        builder: (ctx) => PopScope(
+          canPop: !mustUpdate,
+          child: AlertDialog(
+            title: const Text('Update available'),
+            content: Text(message),
+            actions: [
+              if (!mustUpdate)
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Later'),
+                ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (!mustUpdate) Navigator.pop(ctx);
+                  try {
+                    await launchUrl(
+                      Uri.parse(updateUrl),
+                      mode: LaunchMode.externalApplication,
+                    );
+                  } catch (_) {}
+                },
+                child: const Text('Update'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Later'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                try {
-                  await launchUrl(
-                    Uri.parse(updateUrl),
-                    mode: LaunchMode.externalApplication,
-                  );
-                } catch (_) {}
-              },
-              child: const Text('Update'),
-            ),
-          ],
         ),
       );
     } catch (_) {

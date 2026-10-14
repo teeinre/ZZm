@@ -17,10 +17,33 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._();
 
-  final FirebaseMessaging _fcm = FirebaseMessaging.instance;
+  // Lazy: FirebaseMessaging.instance throws if Firebase.initializeApp() has not
+  // finished yet. Creating this singleton early (to attach the shared
+  // ApiService) must never touch Firebase, so resolve it only when used.
+  FirebaseMessaging get _fcm => FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _local = FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+
+  // ─── Shared, authenticated ApiService ─────────────────────────────────────
+  //
+  // BUG FIX: this service used to create a brand-new, throwaway `ApiService()`
+  // for every device-token call. That instance never had the user's JWT
+  // (auth tokens live on the single ApiService shared by AuthProvider /
+  // ProductsProvider / etc via Provider), so `/app/v1/register-device` was
+  // always called unauthenticated and silently 401'd — meaning the FCM token
+  // was NEVER actually persisted server-side and no push notification
+  // (order updates, livestream alerts, promotions) could ever be delivered.
+  //
+  // The app now calls [attachApiService] once, at startup, with the single
+  // shared instance so registration calls carry the real JWT.
+  ApiService? _apiService;
+
+  /// Attach the app's single shared [ApiService] instance so device-token
+  /// registration calls are authenticated with the current user's JWT.
+  void attachApiService(ApiService apiService) {
+    _apiService = apiService;
+  }
 
   // Callbacks
   void Function(String type, Map<String, String> data)? onNotificationOpened;
@@ -171,7 +194,12 @@ class NotificationService {
 
   Future<void> _registerDeviceToken(String token) async {
     try {
-      final api = ApiService();
+      final api = _apiService ?? ApiService();
+      // requireAuth: true — the server route's permission_callback is
+      // `is_user_logged_in()`, so this MUST carry the user's JWT (Authorization
+      // header, with the ?token= query-param fallback for LiteSpeed hosts that
+      // strip the header — see wc-proxy.php's `determine_current_user` filter)
+      // or the request 401s and the token is never actually stored.
       await api.post(
         ApiConstants.registerDeviceEndpoint,
         {
@@ -179,6 +207,7 @@ class NotificationService {
           'platform': Platform.isIOS ? 'ios' : 'android',
         },
         useWcAuth: false,
+        requireAuth: true,
       );
       debugPrint('[Notify] Device token registered with server');
     } catch (e) {
@@ -186,15 +215,30 @@ class NotificationService {
     }
   }
 
+  /// Re-sync the current FCM token with the server. Call this after a
+  /// successful login (and when restoring a cached, still-valid session) so
+  /// the token gets tied to the now-authenticated user — registration at
+  /// cold start (before login) has no user to attach it to and will 401.
+  Future<void> registerCurrentToken() async {
+    try {
+      final token = await _fcm.getToken();
+      if (token == null) return;
+      await _registerDeviceToken(token);
+    } catch (e) {
+      debugPrint('[Notify] Failed to resync device token: $e');
+    }
+  }
+
   Future<void> unregisterDeviceToken() async {
     try {
       final token = await _fcm.getToken();
       if (token == null) return;
-      final api = ApiService();
+      final api = _apiService ?? ApiService();
       await api.post(
         ApiConstants.unregisterDeviceEndpoint,
         {'token': token},
         useWcAuth: false,
+        requireAuth: true,
       );
       debugPrint('[Notify] Device token unregistered');
     } catch (e) {

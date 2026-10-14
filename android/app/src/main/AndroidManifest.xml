@@ -59,6 +59,13 @@
             android:name="flutterEmbedding"
             android:value="2"/>
 
+        <!-- Some phones (certain GPUs / Android builds) show a blank white screen
+             with Flutter's Impeller renderer. Use the classic renderer, which
+             works on every device. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false"/>
+
         <!-- Firebase Cloud Messaging service for background message handling -->
         <service
             android:name="com.google.firebase.messaging.FlutterFirebaseMessagingService"

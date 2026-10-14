@@ -463,6 +463,16 @@ class VendorProvider with ChangeNotifier {
     _isLoadingStats = true;
     notifyListeners();
 
+    // Tracks whether THIS call fetched fresh data. Cached stats restored from
+    // Hive stay on screen the whole time (never blanked to zero) and are only
+    // replaced when a source returns real numbers.
+    bool gotFreshData = false;
+    bool gotFresh() =>
+        gotFreshData &&
+        (_dashboardStats['sales'] != null ||
+            _dashboardStats['orders'] != null ||
+            _dashboardStats['total_sales'] != null);
+
     // ── Primary: vendor-api.php bypass ──────────────────────────────
     // Reads sales/orders/products/balance directly from WooCommerce + Dokan
     // and is immune to intermittent REST auth failures and security-plugin
@@ -472,21 +482,23 @@ class VendorProvider with ChangeNotifier {
           .timeout(const Duration(seconds: 10));
       if (vendorApiData != null && vendorApiData.isNotEmpty) {
         _dashboardStats = Map<String, dynamic>.from(vendorApiData);
+        gotFreshData = true;
+        notifyListeners();
         debugPrint('[VendorProvider] Loaded dashboard from vendor-api.php bypass. Keys: ${_dashboardStats.keys.take(10)}');
       }
     } catch (e) {
       debugPrint('[VendorProvider] vendor-api.php reports failed/timed out: $e');
-      _dashboardStats = {};
     }
 
     // ── Fallback: Dokan/WC REST chain (WC Analytics → Dokan → aggregate) ──
-    if (_dashboardStats.isEmpty ||
-        (_dashboardStats['sales'] == null && _dashboardStats['orders'] == null && _dashboardStats['total_sales'] == null)) {
+    if (!gotFresh()) {
       try {
         final restData = await _api.getVendorReports(vendorId: _vendorId ?? vendorUserId)
             .timeout(const Duration(seconds: 10));
         if (restData.isNotEmpty) {
           _dashboardStats = Map<String, dynamic>.from(restData);
+          gotFreshData = true;
+          notifyListeners();
           debugPrint('[VendorProvider] Loaded dashboard from Dokan/WC REST chain. Keys: ${_dashboardStats.keys.take(10)}');
         }
       } catch (e) {
@@ -495,25 +507,27 @@ class VendorProvider with ChangeNotifier {
     }
 
     // ── Fallback: Woo Report plugin ──────────────────────────────────
-    if (_dashboardStats.isEmpty ||
-        (_dashboardStats['sales'] == null && _dashboardStats['orders'] == null && _dashboardStats['total_sales'] == null)) {
+    if (!gotFresh()) {
       try {
         final wooData = await _api.getWooReportDashboard()
             .timeout(const Duration(seconds: 10));
         if (wooData != null && wooData.isNotEmpty) {
           _dashboardStats = Map<String, dynamic>.from(wooData);
+          gotFreshData = true;
+          notifyListeners();
           debugPrint('[VendorProvider] Loaded dashboard from Woo Report plugin.');
         }
       } catch (_) {}
     }
 
-    if (_dashboardStats.isEmpty ||
-        (_dashboardStats['sales'] == null && _dashboardStats['orders'] == null && _dashboardStats['total_sales'] == null)) {
+    if (!gotFresh()) {
       try {
         final wooStats = await _api.getWooReportVendorStats()
             .timeout(const Duration(seconds: 10));
         if (wooStats != null && wooStats.isNotEmpty) {
           _dashboardStats = Map<String, dynamic>.from(wooStats);
+          gotFreshData = true;
+          notifyListeners();
           debugPrint('[VendorProvider] Loaded dashboard from Woo Report vendor stats.');
         }
       } catch (_) {}

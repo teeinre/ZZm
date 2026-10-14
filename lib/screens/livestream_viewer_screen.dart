@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -37,30 +36,22 @@ class _LivestreamViewerScreenState extends State<LivestreamViewerScreen> {
   final Map<int, bool> _pageErrored = {};
   final Map<int, String> _pageStreamType = {}; // tracks 'youtube', 'twitch', etc per page
 
-  bool _isStreamLoading = true;
-  bool _hasStreamError = false;
-  int _viewerCount = 0;
-  Timer? _heartbeatTimer;
-
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex.clamp(0, widget.streams.length - 1);
     _pageController = PageController(initialPage: _currentIndex);
-
-    // Simulate viewer heartbeat every 30 seconds
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) {
-        setState(() {
-          _viewerCount += 1;
-        });
-      }
-    });
+    // NOTE: this used to also run a 30-second Timer.periodic that
+    // incremented a `_viewerCount` field via setState — forcing a full
+    // rebuild of the entire viewer (all cached WebViews + the stream
+    // switcher list) every 30 seconds for the whole time a stream was
+    // open. The count it incremented was never actually displayed
+    // anywhere (the info bar shows the real `viewers` value from the
+    // stream data), so it was pure wasted rebuild/battery cost. Removed.
   }
 
   @override
   void dispose() {
-    _heartbeatTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -97,13 +88,11 @@ class _LivestreamViewerScreenState extends State<LivestreamViewerScreen> {
           onPageStarted: (_) {
             if (mounted) setState(() {
               _pageLoaded[index] = false;
-              _isStreamLoading = true;
             });
           },
           onPageFinished: (_) {
             if (mounted) setState(() {
               _pageLoaded[index] = true;
-              _isStreamLoading = false;
             });
           },
           onWebResourceError: (error) {
@@ -111,8 +100,6 @@ class _LivestreamViewerScreenState extends State<LivestreamViewerScreen> {
               setState(() {
                 _pageErrored[index] = true;
                 _pageLoaded[index] = true;
-                _isStreamLoading = false;
-                _hasStreamError = true;
               });
             }
           },
@@ -163,7 +150,13 @@ class _LivestreamViewerScreenState extends State<LivestreamViewerScreen> {
       var id = '';
       final uri = Uri.tryParse(rawUrl);
       if (uri != null) {
-        id = uri.queryParameters['v'] ?? uri.pathSegments.where((s) => s.isNotEmpty).last;
+        final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+        // BUG FIX: `.last` on an empty iterable throws StateError, which was
+        // unhandled here and would crash the whole viewer screen's build()
+        // for any YouTube URL with no ?v= param and no path segments (e.g.
+        // a bare "https://www.youtube.com/" saved by mistake).
+        id = uri.queryParameters['v'] ??
+            (segments.isNotEmpty ? segments.last : '');
       }
       if (id.isEmpty) return rawUrl;
       // Priority 1: regular youtube.com/embed (less restrictive than nocookie for some videos)
@@ -174,7 +167,9 @@ class _LivestreamViewerScreenState extends State<LivestreamViewerScreen> {
       var channel = '';
       final uri = Uri.tryParse(rawUrl);
       if (uri != null) {
-        channel = uri.pathSegments.where((s) => s.isNotEmpty).last;
+        final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+        // Same StateError-on-empty-iterable fix as the YouTube branch above.
+        channel = segments.isNotEmpty ? segments.last : '';
       }
       return 'https://player.twitch.tv/?channel=$channel&parent=zzmore.store&autoplay=true';
     }

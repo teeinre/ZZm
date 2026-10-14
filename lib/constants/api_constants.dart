@@ -62,6 +62,10 @@ class ApiConstants {
   static const String dokanLiveStreamsEndpoint = '$dokanV1Base/livestreams';
   static const String dokanLiveStreamsAltEndpoint = '$dokanV1Base/live-streams';
   static const String appLivestreamsEndpoint = '$appV1Base/livestreams';
+  // Explicit go-live / end-stream toggle — separate from the create/edit
+  // form save so ending a stream doesn't require resubmitting the URL.
+  static const String appLivestreamVendorStatusEndpoint =
+      '$appV1Base/livestreams/vendor/status';
 
   // Push Notifications (device token registration)
   static const String registerDeviceEndpoint = '$appV1Base/register-device';
@@ -132,8 +136,8 @@ class ApiConstants {
   // the integer after the `+`). The server returns the latest version via
   // vendor-api.php?action=get_app_version; when its version code is higher
   // than [appVersionCode] we prompt the user to update.
-  static const int appVersionCode = 16;
-  static const String appVersionName = '3.3.7';
+  static const int appVersionCode = 17;
+  static const String appVersionName = '3.3.8';
   static const String appUpdateUrl =
       'https://play.google.com/store/apps/details?id=store.zzmore.app';
 }

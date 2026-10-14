@@ -655,17 +655,48 @@ class _VendorLivestreamScreenState extends State<VendorLivestreamScreen> {
 
   Future<void> _toggleLive(int index) async {
     final isLive = _streams[index]['status']?.toString() == 'live';
+    final newStatus = isLive ? 'ended' : 'live';
+
+    // Optimistic local update for a snappy UI…
     setState(() {
-      _streams[index]['status'] = isLive ? 'ended' : 'live';
+      _streams[index]['status'] = newStatus;
     });
     await _persist();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(isLive ? 'Stream ended' : 'Stream is now live!'),
-          backgroundColor: AppColors.goldColor,
-        ),
-      );
+
+    // …but this MUST also reach the server: zzmore_get_vendor_livestream()/
+    // zzmore_fetch_from_vendor_meta() (the endpoints customers' feeds read
+    // from) only ever look at the server's dls_stream_status meta, never
+    // this device's local Hive cache. Without this call, "End Stream" was a
+    // no-op as far as customers were concerned — the stream stayed visible
+    // as live indefinitely, and "Go Live" never made a merely-scheduled
+    // stream actually show up either.
+    try {
+      final api = context.read<VendorProvider>().apiService;
+      await api.setVendorLivestreamStatus(newStatus);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isLive ? 'Stream ended' : 'Stream is now live!'),
+            backgroundColor: AppColors.goldColor,
+          ),
+        );
+      }
+    } catch (e) {
+      // Revert the optimistic update — the server never got the change.
+      if (mounted) {
+        setState(() {
+          _streams[index]['status'] = isLive ? 'live' : 'ended';
+        });
+      }
+      await _persist();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not update stream status. Check your connection and try again.'),
+            backgroundColor: AppColors.coralColor,
+          ),
+        );
+      }
     }
   }
 
