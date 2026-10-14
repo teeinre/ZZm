@@ -4,6 +4,14 @@ All notable changes to ZZmore Store mobile app.
 
 ---
 
+## [3.3.9] — 2026-10-14
+
+### Changed
+- Sign-up prompt for visitors is now a slim, dismissible bar with a small
+  "SIGN UP" action instead of a large sheet.
+
+---
+
 ## [3.3.8] — 2026-10-14
 
 ### Added
