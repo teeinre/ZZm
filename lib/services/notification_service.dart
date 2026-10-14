@@ -17,7 +17,10 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._();
 
-  final FirebaseMessaging _fcm = FirebaseMessaging.instance;
+  // Lazy: FirebaseMessaging.instance throws if Firebase.initializeApp() has not
+  // finished yet. Creating this singleton early (to attach the shared
+  // ApiService) must never touch Firebase, so resolve it only when used.
+  FirebaseMessaging get _fcm => FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _local = FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
