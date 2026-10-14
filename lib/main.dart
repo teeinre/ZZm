@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:app_links/app_links.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'constants/app_colors.dart';
@@ -45,24 +46,109 @@ void _handleResetUri(Uri uri) {
   });
 }
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+/// Shown instead of a blank white screen if something fails while the app
+/// is starting, so the real cause is visible (and can be reported).
+class _StartupErrorApp extends StatelessWidget {
+  final String message;
+  const _StartupErrorApp(this.message);
 
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 40),
+                  const Text('ZZmore could not start',
+                      style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black)),
+                  const SizedBox(height: 12),
+                  const Text(
+                      'Please send a screenshot of this screen to support.',
+                      style: TextStyle(fontSize: 14, color: Colors.black87)),
+                  const SizedBox(height: 20),
+                  SelectableText(message,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.black54,
+                          fontFamily: 'monospace')),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> main() async {
+  // Any error that escapes — including async ones — is caught here instead of
+  // leaving the user on a blank white screen.
+  await runZonedGuarded<Future<void>>(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      debugPrint('FlutterError: ${details.exceptionAsString()}');
+    };
+
+    try {
+      await _startApp();
+    } catch (e, st) {
+      debugPrint('Startup failed: $e\n$st');
+      runApp(_StartupErrorApp('$e\n\n$st'));
+    }
+  }, (error, stack) {
+    debugPrint('Uncaught error: $error\n$stack');
+  });
+}
+
+Future<void> _startApp() async {
   // Android 15+ edge-to-edge: system bars are transparent by default
   // when using SystemUiMode.edgeToEdge. Only set icon brightness to ensure
   // visibility against the app's background. Avoid deprecated color properties
   // (statusBarColor, systemNavigationBarColor, systemNavigationBarDividerColor)
   // which trigger the deprecated setStatusBarColor / setNavigationBarColor APIs.
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarIconBrightness: Brightness.dark,
-    systemNavigationBarIconBrightness: Brightness.dark,
-  ));
-
-  // Allow content to draw edge-to-edge behind system bars
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  try {
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarIconBrightness: Brightness.dark,
+    ));
+    // Allow content to draw edge-to-edge behind system bars
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  } catch (e) {
+    debugPrint('System UI setup skipped: $e');
+  }
 
   final hiveService = HiveService();
-  await hiveService.init();
+  try {
+    await hiveService.init().timeout(const Duration(seconds: 15));
+  } catch (e) {
+    // A damaged local cache (for example after updating over an old install)
+    // must never stop the app from opening: wipe the cache and try again.
+    debugPrint('Hive init failed ($e) — resetting local cache and retrying.');
+    for (final box in const [
+      HiveService.productsBox,
+      HiveService.categoriesBox,
+      HiveService.cartBox,
+      HiveService.settingsBox,
+    ]) {
+      try {
+        await Hive.deleteBoxFromDisk(box);
+      } catch (_) {}
+    }
+    await hiveService.init().timeout(const Duration(seconds: 15));
+  }
 
   // Single shared ApiService instance for the whole app (providers +
   // NotificationService). Previously NotificationService created its own
@@ -75,10 +161,11 @@ void main() async {
   // Initialize Firebase (required for push notifications). Requires
   // google-services.json (Android) at android/app/google-services.json and
   // GoogleService-Info.plist (iOS) at ios/Runner/GoogleService-Info.plist.
-  // Wrapped in try/catch so a platform missing its config file just disables
-  // push there instead of crashing startup.
+  // Wrapped in try/catch (with a timeout) so a platform missing its config
+  // file, or a device without Google Play services, just disables push
+  // instead of blocking or crashing startup.
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp().timeout(const Duration(seconds: 10));
     // Initialize push notifications (non-blocking)
     NotificationService().initialize();
   } catch (e) {
