@@ -148,3 +148,6 @@ codemagic_*.yaml
 /vendor profile on website sourcecode.php
 /bookingproductcreation.php
 
+
+# Local build helper (kept on this computer only)
+/build_release.bat

@@ -1145,6 +1145,60 @@ if ( $action === 'get_products_by_category' ) {
 // images, etc.) so the product-detail screen can render variable /
 // booking / subscription products without depending on the WC REST proxy
 // (which may be unavailable or unconfigured).
+// ── Product video (set in Dokan vendor dashboard / wp-admin) ─────────
+// Meta keys: _dokan_product_video (url) and _dokan_product_video_type (url|upload).
+// Returns null when the product has no (usable) video.
+function vendor_api_product_video( $pid ) {
+    $url = trim( (string) get_post_meta( $pid, '_dokan_product_video', true ) );
+    if ( $url === '' ) {
+        return null;
+    }
+    $type = (string) get_post_meta( $pid, '_dokan_product_video_type', true );
+    $out  = [
+        'url'       => $url,
+        'type'      => $type ?: 'url',
+        'provider'  => 'file',
+        'video_id'  => '',
+        'embed_url' => $url,
+        'thumbnail' => '',
+        'is_short'  => false,
+    ];
+    if ( stripos( $url, 'youtube.com' ) !== false || stripos( $url, 'youtu.be' ) !== false ) {
+        $id = '';
+        if ( strpos( $url, '/shorts/' ) !== false ) {
+            if ( preg_match( '~/shorts/([^/?&#]+)~', $url, $m ) ) {
+                $id = $m[1];
+                $out['is_short'] = true;
+            }
+        } elseif ( preg_match( '~(?:v=|v/|embed/|youtu\.be/|/live/)([^&?/#]+)~', $url, $m ) ) {
+            $id = $m[1];
+        }
+        if ( $id === '' ) {
+            return null;
+        }
+        $out['provider']  = 'youtube';
+        $out['video_id']  = $id;
+        $out['embed_url'] = 'https://www.youtube.com/embed/' . rawurlencode( $id ) . '?playsinline=1&rel=0';
+        $out['thumbnail'] = 'https://img.youtube.com/vi/' . rawurlencode( $id ) . '/hqdefault.jpg';
+    } elseif ( stripos( $url, 'vimeo.com' ) !== false ) {
+        if ( ! preg_match( '~vimeo\.com/(?:.*?/)?(\d+)~', $url, $m ) ) {
+            return null;
+        }
+        $out['provider']  = 'vimeo';
+        $out['video_id']  = $m[1];
+        $out['embed_url'] = 'https://player.vimeo.com/video/' . $m[1];
+    }
+    return $out;
+}
+
+if ( $action === 'get_product_video' ) {
+    $product_id = (int) ( $_GET['product_id'] ?? $_GET['id'] ?? 0 );
+    if ( $product_id <= 0 ) {
+        vendor_api_respond( [ 'error' => 'product_id is required.', 'code' => 'bad_request' ], 400 );
+    }
+    vendor_api_respond( [ 'product_video' => vendor_api_product_video( $product_id ) ] );
+}
+
 if ( $action === 'get_product' ) {
     $product_id = (int) ( $_GET['product_id'] ?? $_GET['id'] ?? 0 );
     if ( $product_id <= 0 ) {
@@ -1294,6 +1348,7 @@ if ( $action === 'get_product' ) {
         'categories'        => $cats,
         'vendor_id'         => $author_id,
         'vendor_name'       => $store_name,
+        'product_video'     => vendor_api_product_video( $product_id ),
     ] );
 }
 

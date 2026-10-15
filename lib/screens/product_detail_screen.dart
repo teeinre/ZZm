@@ -11,6 +11,7 @@ import '../providers/currency_provider.dart';
 import '../providers/cart_provider.dart';
 import '../screens/vendor_profile_screen.dart';
 import '../screens/webview_page.dart';
+import '../widgets/product_video_player.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final Product product;
@@ -49,6 +50,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   List<Map<String, dynamic>> _productReviews = [];
   bool _isLoadingReviews = true;
 
+  // Product video (shown under the description)
+  Map<String, dynamic>? _productVideo;
+
   @override
   void initState() {
     super.initState();
@@ -75,6 +79,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         raw = widget.rawProduct!;
       } else {
         raw = await _apiService.getProductJson(widget.product.id);
+      }
+
+      // Product video: the detail endpoint includes it; when the product JSON
+      // came from somewhere else (e.g. a list), fetch it separately.
+      final rawVideo = raw['product_video'];
+      if (rawVideo is Map) {
+        _productVideo = Map<String, dynamic>.from(rawVideo);
+      } else if (!raw.containsKey('product_video')) {
+        _apiService.getProductVideo(widget.product.id).then((v) {
+          if (!mounted) return;
+          setState(() => _productVideo = v);
+        }).catchError((_) {});
       }
 
       List<Map<String, dynamic>> variations = [];
@@ -657,6 +673,17 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               _buildRating(),
               const SizedBox(height: 16),
               _buildPrice(),
+              if (_shortDescriptionText.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _shortDescriptionText,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    height: 1.55,
+                    color: AppColors.inkSoftColor,
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               const Divider(color: AppColors.sandColor),
               const SizedBox(height: 12),
@@ -675,6 +702,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               const Divider(color: AppColors.sandColor),
               const SizedBox(height: 12),
               _buildDescription(),
+              if (_productVideo != null) ...[
+                const SizedBox(height: 20),
+                ProductVideoPlayer(
+                  key: ValueKey(_productVideo!['url']),
+                  video: _productVideo!,
+                ),
+              ],
             ],
           ),
         ),
@@ -1526,6 +1560,22 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ),
       ),
     );
+  }
+
+  // ─── Short description ────────────────────────────────────────────────────
+
+  /// The product's short description as plain text (shown under the price).
+  /// Taken from the loaded product JSON, falling back to the list data.
+  String get _shortDescriptionText {
+    final html = (_rawProduct?['short_description'] ??
+                widget.product.shortDescription)
+            ?.toString() ??
+        '';
+    final text = _stripHtml(html);
+    if (text.isEmpty) return '';
+    // Skip it when it just repeats the full description.
+    if (text == _stripHtml(widget.product.description ?? '')) return '';
+    return text;
   }
 
   // ─── Description ──────────────────────────────────────────────────────────

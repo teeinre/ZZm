@@ -901,6 +901,19 @@ class ApiService {
     return Map<String, dynamic>.from(jsonDecode(response.body));
   }
 
+  /// Fetches the product video (if any) shown on the product page.
+  Future<Map<String, dynamic>?> getProductVideo(int id) async {
+    final url =
+        '${ApiConstants.vendorApiBase}?action=get_product_video&product_id=$id';
+    final response = await _get(url, useWcAuth: false);
+    if (response.statusCode != 200) return null;
+    final body = jsonDecode(response.body);
+    if (body is Map && body['product_video'] is Map) {
+      return Map<String, dynamic>.from(body['product_video'] as Map);
+    }
+    return null;
+  }
+
   /// Fetches all variations for a variable product.
   Future<List<Map<String, dynamic>>> getProductVariations(int productId) async {
     // Primary: vendor-api.php get_product already embeds `variations`.
