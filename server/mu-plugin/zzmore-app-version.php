@@ -48,9 +48,11 @@ function zzmore_app_version_page(): void
         $name = (string) get_option('zzmore_latest_app_version_name', '');
         $title = 'ZZmore update available';
         $body  = $name ? "Version $name is out with new features and fixes. Update when you're ready." : 'A new version of ZZmore is out. Update when you\'re ready.';
-        update_option('zzmore_update_push_queue', ['offset' => 0, 'title' => $title, 'body' => $body, 'version' => (int) get_option('zzmore_latest_app_version_code', 0)], false);
+        $plat = isset($_POST['zzmore_push_platform']) ? sanitize_key(wp_unslash($_POST['zzmore_push_platform'])) : 'android';
+        if (!in_array($plat, ['android', 'ios', 'all'], true)) $plat = 'android';
+        update_option('zzmore_update_push_queue', ['offset' => 0, 'title' => $title, 'body' => $body, 'platform' => $plat, 'version' => (int) get_option('zzmore_latest_app_version_code', 0)], false);
         if (!wp_next_scheduled('zzmore_update_push_batch')) wp_schedule_single_event(time() + 5, 'zzmore_update_push_batch');
-        $notice = 'Update notification queued. It is sent in small batches in the background.';
+        $notice = 'Update notification queued for: ' . ($plat === 'all' ? 'all devices' : ($plat === 'ios' ? 'iPhone devices only' : 'Android devices only')) . '. It is sent in small batches in the background.';
     }
 
     echo '<div class="wrap"><h1>ZZmore App Version</h1>';
@@ -63,8 +65,9 @@ function zzmore_app_version_page(): void
             esc_attr($key), esc_html($f[0]), $f[1] === 'int' ? 'number' : 'text', esc_attr((string) get_option($key, '')), esc_html($f[2]));
     }
     echo '</table><p><button class="button button-primary" name="zzmore_save" value="1">Save version settings</button></p>';
-    echo '<hr><h2>Notify app users</h2><p>Sends a push notification to logged-in app users telling them an update is available. Only do this after the new version is live in the stores. Sending is throttled and runs in the background.</p>';
-    echo '<p><button class="button" name="zzmore_push" value="1" onclick="return confirm(\'Send the update notification to all app users?\');">Send update notification</button></p>';
+    echo '<hr><h2>Notify app users</h2><p>Sends a push notification telling app users an update is available. Choose the platform whose new version is already live in its store: an iPhone user must not be told to update before Apple has approved the build. Sending is throttled and runs in the background.</p>';
+    echo '<p><label for="zzmore_push_platform"><strong>Send to:</strong></label> <select id="zzmore_push_platform" name="zzmore_push_platform"><option value="android" selected>Android devices only</option><option value="ios">iPhone devices only</option><option value="all">All devices (only when both stores are live)</option></select></p>';
+    echo '<p><button class="button" name="zzmore_push" value="1" onclick="return confirm(\'Send the update notification to the selected devices?\');">Send update notification</button></p>';
     echo '</form></div>';
 }
 
@@ -78,8 +81,18 @@ add_action('zzmore_update_push_batch', function () {
         'meta_key' => '_fcm_tokens', 'meta_compare' => 'EXISTS',
         'fields' => 'ID', 'number' => 100, 'offset' => (int) $q['offset'], 'orderby' => 'ID',
     ]);
+    $plat = isset($q['platform']) ? $q['platform'] : 'all';
     foreach ($users as $uid) {
-        zzmore_send_push_to_user((int) $uid, $q['title'], $q['body'], ['type' => 'app_update', 'version_code' => (string) $q['version']]);
+        $tokens = get_user_meta((int) $uid, '_fcm_tokens', true);
+        if (!is_array($tokens)) continue;
+        foreach ($tokens as $entry) {
+            if (empty($entry['token'])) continue;
+            $dev = isset($entry['platform']) ? strtolower((string) $entry['platform']) : 'android';
+            if ($plat !== 'all' && $dev !== $plat) continue;
+            if (function_exists('zzmore_send_fcm_message')) {
+                zzmore_send_fcm_message($entry['token'], $q['title'], $q['body'], ['type' => 'app_update', 'version_code' => (string) $q['version']]);
+            }
+        }
     }
     if (count($users) < 100) {
         delete_option('zzmore_update_push_queue');
