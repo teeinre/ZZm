@@ -673,6 +673,17 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               _buildRating(),
               const SizedBox(height: 16),
               _buildPrice(),
+              if (_shortDescriptionText.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _shortDescriptionText,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    height: 1.55,
+                    color: AppColors.inkSoftColor,
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               const Divider(color: AppColors.sandColor),
               const SizedBox(height: 12),
@@ -1549,6 +1560,22 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ),
       ),
     );
+  }
+
+  // ─── Short description ────────────────────────────────────────────────────
+
+  /// The product's short description as plain text (shown under the price).
+  /// Taken from the loaded product JSON, falling back to the list data.
+  String get _shortDescriptionText {
+    final html = (_rawProduct?['short_description'] ??
+                widget.product.shortDescription)
+            ?.toString() ??
+        '';
+    final text = _stripHtml(html);
+    if (text.isEmpty) return '';
+    // Skip it when it just repeats the full description.
+    if (text == _stripHtml(widget.product.description ?? '')) return '';
+    return text;
   }
 
   // ─── Description ──────────────────────────────────────────────────────────
