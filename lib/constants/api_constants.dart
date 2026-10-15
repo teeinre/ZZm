@@ -136,8 +136,8 @@ class ApiConstants {
   // the integer after the `+`). The server returns the latest version via
   // vendor-api.php?action=get_app_version; when its version code is higher
   // than [appVersionCode] we prompt the user to update.
-  static const int appVersionCode = 18;
-  static const String appVersionName = '3.3.9';
+  static const int appVersionCode = 19;
+  static const String appVersionName = '3.3.10';
   static const String appUpdateUrl =
       'https://play.google.com/store/apps/details?id=store.zzmore.app';
 }

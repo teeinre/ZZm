@@ -4,6 +4,14 @@ All notable changes to ZZmore Store mobile app.
 
 ---
 
+## [3.3.10] — 2026-10-15
+
+### Added
+- Product videos now show on the product page under the description
+  (YouTube, YouTube Shorts, Vimeo and uploaded videos). Tap the poster to play.
+
+---
+
 ## [3.3.9] — 2026-10-14
 
 ### Changed
